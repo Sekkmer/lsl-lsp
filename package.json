@@ -1,0 +1,21 @@
+{
+	"private": true,
+	"packageManager": "pnpm@10.12.1",
+	"type": "module",
+	"license": "MIT",
+	"author": { "name": "Sekkmer", "email": "sekkmer@gmail.com" },
+	"scripts": {
+		"build": "pnpm -r build",
+		"watch": "pnpm -r watch",
+		"lint": "pnpm -r lint",
+		"lint:fix": "pnpm -r lint:fix",
+		"crawl:defs": "pnpm -C crawler build && node crawler/out/index.js defs-all && cp -f out/lsl-defs.json common/lsl-defs.json"
+	},
+	"devDependencies": {
+		"@eslint/js": "^9.9.0",
+		"@typescript-eslint/eslint-plugin": "^8.6.0",
+		"@typescript-eslint/parser": "^8.6.0",
+		"eslint": "^9.9.0",
+		"typescript-eslint": "^8.40.0"
+	}
+}

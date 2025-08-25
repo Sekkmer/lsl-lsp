@@ -1,0 +1,27 @@
+# Exclude everything by default
+**/*
+
+# Include only built extension runtime and assets
+!out/**
+!server/out/**
+!common/lsl-defs.json
+!media/**
+!syntaxes/**
+!language-configuration.json
+!README.md
+!LICENSE
+!CHANGELOG.md
+!package.json
+
+# Exclude maps/tests/sources
+**/*.map
+src/**
+server/src/**
+server/tests/**
+common/*.schema.json
+scripts/**
+.vscode/**
+.git/**
+.github/**
+.vscode-test/**
+node_modules/**

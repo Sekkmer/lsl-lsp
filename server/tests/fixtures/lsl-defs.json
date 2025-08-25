@@ -1,0 +1,77 @@
+{
+	"version": "test",
+	"types": [
+		"integer",
+		"float",
+		"string",
+		"key",
+		"vector",
+		"rotation",
+		"list",
+		"void"
+	],
+	"keywords": [
+		"if",
+		"else",
+		"for",
+		"while",
+		"do",
+		"return",
+		"state",
+		"default",
+		"jump",
+		"label"
+	],
+	"constants": [
+		{
+			"name": "TRUE",
+			"type": "integer",
+			"value": 1
+		},
+		{
+			"name": "FALSE",
+			"type": "integer",
+			"value": 0
+		},
+		{
+			"name": "NULL_KEY",
+			"type": "key"
+		}
+	],
+	"events": [
+		{
+			"name": "state_entry",
+			"params": []
+		},
+		{
+			"name": "touch_start",
+			"params": [
+				{
+					"name": "total_number",
+					"type": "integer"
+				}
+			]
+		}
+	],
+	"functions": [
+		{
+			"name": "llSay",
+			"returns": "void",
+			"params": [
+				{
+					"name": "channel",
+					"type": "integer"
+				},
+				{
+					"name": "msg",
+					"type": "string"
+				}
+			]
+		},
+		{
+			"name": "llGetOwner",
+			"returns": "key",
+			"params": []
+		}
+	]
+}

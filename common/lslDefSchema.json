@@ -1,0 +1,160 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"$id": "https://example.com/lslDef.schema.json",
+	"title": "LSL Definition File",
+	"type": "object",
+	"required": [
+		"version",
+		"types",
+		"constants",
+		"events",
+		"functions"
+	],
+	"properties": {
+		"version": {
+			"type": "string"
+		},
+		"types": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		},
+		"constants": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": [
+					"name",
+					"type"
+				],
+				"properties": {
+					"name": {
+						"type": "string"
+					},
+					"type": {
+						"type": "string"
+					},
+					"value": {
+						"type": [
+							"string",
+							"number",
+							"boolean"
+						]
+					},
+					"doc": {
+						"type": "string"
+					},
+					"deprecated": {
+						"type": "boolean"
+					}
+				}
+			}
+		},
+		"events": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": [
+					"name",
+					"params"
+				],
+				"properties": {
+					"name": {
+						"type": "string"
+					},
+					"params": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"required": [
+								"name",
+								"type"
+							],
+							"properties": {
+								"name": {
+									"type": "string"
+								},
+								"type": {
+									"type": "string"
+								},
+								"doc": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"doc": {
+						"type": "string"
+					}
+				}
+			}
+		},
+		"functions": {
+			"type": "array",
+			"items": {
+				"type": "object",
+				"required": [
+					"name",
+					"returns",
+					"params"
+				],
+				"properties": {
+					"name": {
+						"type": "string"
+					},
+					"returns": {
+						"type": "string"
+					},
+					"params": {
+						"type": "array",
+						"items": {
+							"type": "object",
+							"required": [
+								"name",
+								"type"
+							],
+							"properties": {
+								"name": {
+									"type": "string"
+								},
+								"type": {
+									"type": "string"
+								},
+								"default": {
+									"type": [
+										"string",
+										"number",
+										"boolean",
+										"null"
+									]
+								},
+								"doc": {
+									"type": "string"
+								}
+							}
+						}
+					},
+					"doc": {
+						"type": "string"
+					},
+					"deprecated": {
+						"type": "boolean"
+					},
+					"overloads": {
+						"type": "array",
+						"items": {
+							"$ref": "#/properties/functions/items"
+						}
+					}
+				}
+			}
+		},
+		"keywords": {
+			"type": "array",
+			"items": {
+				"type": "string"
+			}
+		}
+	}
+}

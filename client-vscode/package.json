@@ -1,0 +1,120 @@
+{
+	"name": "vscode-lsl-lsp",
+	"displayName": "LSL LSP",
+	"description": "LSL (Linden Scripting Language) support with #include/#ifdef, semantics, and diagnostics.",
+	"version": "0.1.0",
+	"license": "MIT",
+	"publisher": "Sekkmer",
+	"author": {
+		"name": "Sekkmer",
+		"email": "sekkmer@gmail.com"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/sekkmer/lsl-lsp.git"
+	},
+	"engines": {
+		"vscode": "^1.90.0"
+	},
+	"icon": "media/icon.png",
+	"categories": [
+		"Programming Languages"
+	],
+	"keywords": [
+		"lsl",
+		"linden",
+		"secondlife",
+		"language server",
+		"lsp",
+		"syntax",
+		"formatter"
+	],
+	"galleryBanner": {
+		"color": "#0B1220",
+		"theme": "dark"
+	},
+	"main": "./out/extension.js",
+	"contributes": {
+		"languages": [
+			{
+				"id": "lsl",
+				"aliases": [
+					"LSL",
+					"lsl"
+				],
+				"extensions": [
+					".lsl",
+					".lslp",
+					".lsli"
+				],
+				"configuration": "./language-configuration.json"
+			}
+		],
+		"grammars": [
+			{
+				"language": "lsl",
+				"scopeName": "source.lsl",
+				"path": "./syntaxes/lsl.tmLanguage.json"
+			}
+		],
+		"configuration": {
+			"title": "LSL",
+			"properties": {
+				"lsl.definitionsPath": {
+					"type": "string",
+					"default": "",
+					"description": "Path to LSL definition file (JSON/YAML). Leave empty to use the bundled common/lsl-defs.json."
+				},
+				"lsl.includePaths": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [],
+					"description": "Additional include search paths for #include."
+				},
+				"lsl.macros": {
+					"type": "object",
+					"default": {},
+					"description": "Project-wide predefined macros for #ifdef."
+				},
+				"lsl.enableSemanticTokens": {
+					"type": "boolean",
+					"default": true
+				},
+				"lsl.debugLogging": {
+					"type": "boolean",
+					"default": false,
+					"description": "Enable verbose LSL extension logging in the Output panel (LSL Debug)."
+				},
+				"lsl.trace": {
+					"type": "string",
+					"enum": ["off", "messages", "verbose"],
+					"default": "off",
+					"description": "Language client protocol trace level. Off by default."
+				}
+			}
+		}
+	},
+	"dependencies": {
+		"vscode-languageclient": "^9.0.1"
+	},
+	"devDependencies": {
+		"@types/node": "^24.3.0",
+		"@types/vscode": "^1.90.0",
+		"@vscode/vsce": "^3.1.0",
+		"esbuild": "^0.25.9",
+		"typescript": "^5.9.2"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"bundle": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --outfile=out/extension.js --sourcemap",
+		"bundle:server": "esbuild ../server/src/index.ts --bundle --platform=node --target=node18 --outfile=server/out/index.js --sourcemap",
+		"vscode:prepublish": "pnpm -C ../server build && node scripts/copy-server.cjs && pnpm run bundle:server && pnpm run bundle",
+		"package": "pnpm exec vsce package --no-dependencies",
+		"publish": "pnpm exec vsce publish",
+		"watch": "tsc -w -p tsconfig.json",
+		"lint": "eslint --ext .ts src",
+		"lint:fix": "eslint --ext .ts src --fix"
+	}
+}

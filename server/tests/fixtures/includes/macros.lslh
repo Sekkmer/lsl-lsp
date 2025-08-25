@@ -1,0 +1,3 @@
+// macros fixture for tests
+#define MY_CONST 123
+#define ADD(a,b) ((a)+(b))

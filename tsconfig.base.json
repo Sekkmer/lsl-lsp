@@ -1,0 +1,21 @@
+{
+	"compilerOptions": {
+		"target": "ES2024",
+		"lib": ["ESNext"],
+		"types": [],
+		"module": "NodeNext",
+		"moduleResolution": "nodenext",
+		"allowImportingTsExtensions": true,
+		"resolveJsonModule": true,
+		"esModuleInterop": true,
+		"baseUrl": "./src",
+		"noEmit": true,
+		"noEmitOnError": true,
+		"sourceMap": true,
+		"removeComments": true,
+		"strict": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"isolatedModules": true
+	}
+}

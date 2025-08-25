@@ -1,0 +1,27 @@
+# Enforce LF line endings for text files
+* text=auto eol=lf
+
+# Treat these as binary (no EOL conversions)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tgz binary
+*.vsix binary
+
+# Keep JSON/YAML/TS/JS as text with LF
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.js   text eol=lf
+*.cjs  text eol=lf
+*.mjs  text eol=lf
+*.css  text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf

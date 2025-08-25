@@ -1,0 +1,297 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build client",
+			"type": "shell",
+			"command": "pnpm -C client-vscode build",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build server",
+			"type": "shell",
+			"command": "pnpm -C server build",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build all",
+			"dependsOn": [
+				"build client",
+				"build server"
+			],
+			"group": "build"
+		},
+		{
+			"label": "watch all",
+			"type": "shell",
+			"command": "pnpm watch",
+			"isBackground": true,
+			"problemMatcher": [
+				"$tsc-watch"
+			]
+		},
+		{
+			"label": "build server",
+			"type": "shell",
+			"command": "pnpm -C server build",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build client",
+			"type": "shell",
+			"command": "pnpm -C client-vscode build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build client",
+			"type": "shell",
+			"command": "pnpm -C client-vscode build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build client",
+			"type": "shell",
+			"command": "pnpm -C client-vscode build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build client",
+			"type": "shell",
+			"command": "pnpm -C client-vscode build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build client",
+			"type": "shell",
+			"command": "pnpm -C client-vscode build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build server",
+			"type": "shell",
+			"command": "pnpm -C server build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "build server",
+			"type": "shell",
+			"command": "pnpm -C server build",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"isBackground": false,
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "test"
+		},
+		{
+			"label": "build all",
+			"type": "shell",
+			"command": "pnpm -C server build && pnpm -C client-vscode build",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
+			"label": "build server",
+			"type": "shell",
+			"command": "pnpm -C server build"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test"
+		},
+		{
+			"label": "build server",
+			"type": "shell",
+			"command": "pnpm -C server build"
+		},
+		{
+			"label": "build and test",
+			"type": "shell",
+			"command": "pnpm -C server build && pnpm -C server test"
+		},
+		{
+			"label": "test server",
+			"type": "shell",
+			"command": "pnpm -C server test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test"
+		},
+		{
+			"label": "server tests",
+			"type": "shell",
+			"command": "pnpm -C server test"
+		},
+		{
+			"label": "lint server",
+			"type": "shell",
+			"command": "pnpm -C server lint",
+			"group": "build"
+		},
+		{
+			"label": "lint server (fix)",
+			"type": "shell",
+			"command": "pnpm -C server lint:fix",
+			"group": "build"
+		},
+		{
+			"label": "test server (new)",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"group": "test"
+		},
+		{
+			"label": "test server (rerun)",
+			"type": "shell",
+			"command": "pnpm -C server test",
+			"group": "test"
+		},
+		{
+			"label": "build and test",
+			"type": "shell",
+			"command": "pnpm -C server build && pnpm -C server lint && pnpm -C server test"
+		}
+	]
+}

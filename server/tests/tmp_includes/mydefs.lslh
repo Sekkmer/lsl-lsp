@@ -1,0 +1,2 @@
+#define FOO 123
+#define BAR(x) (x+1)
