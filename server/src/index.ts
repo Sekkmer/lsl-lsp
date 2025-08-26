@@ -246,7 +246,8 @@ async function validateTextDocument(doc: TextDocument) {
 connection.onCompletion((params: CompletionParams, token): CompletionItem[] => {
 	if (token?.isCancellationRequested) return [];
 	const doc = documents.get(params.textDocument.uri); if (!doc || !defs) return [];
-	return lslCompletions(doc, params, defs, { includePaths: settings.includePaths });
+	const entry = getPipeline(doc); if (!entry) return [];
+	return lslCompletions(doc, params, defs, entry.tokens, entry.analysis, entry.pre, { includePaths: settings.includePaths });
 });
 connection.onCompletionResolve(resolveCompletion);
 

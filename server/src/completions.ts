@@ -5,25 +5,36 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs, normalizeType } from './defs';
 import { Token } from './lexer';
+import type { Analysis } from './parser';
+import type { PreprocResult } from './preproc';
 import path from 'node:path';
 import fs from 'node:fs';
 
-export function lslCompletions(doc: TextDocument, params: CompletionParams, defs: Defs, opts?: { includePaths?: string[] }): CompletionItem[] {
+export function lslCompletions(
+	doc: TextDocument,
+	params: CompletionParams,
+	defs: Defs,
+	tokens: Token[],
+	analysis: Analysis,
+	pre: PreprocResult,
+	opts?: { includePaths?: string[] }
+): CompletionItem[] {
 	const items: CompletionItem[] = [];
 	const pos = params.position;
 	const text = doc.getText();
 	const offset = doc.offsetAt(pos);
 	const lineStart = text.lastIndexOf('\n', offset - 1) + 1;
 	const lineText = text.slice(lineStart, offset);
+	const wordPrefix = extractWordPrefix(text, offset);
 
 	// Keywords
-	for (const k of defs.keywords) items.push({ label: k, kind: CompletionItemKind.Keyword });
+	for (const k of defs.keywords) items.push(scored({ label: k, kind: CompletionItemKind.Keyword }));
 	// Types
-	for (const t of defs.types) items.push({ label: t, kind: CompletionItemKind.Class, detail: 'type' });
+	for (const t of defs.types) items.push(scored({ label: t, kind: CompletionItemKind.Class, detail: 'type' }));
 	// Constants
-	for (const c of defs.consts.values()) items.push({ label: c.name, kind: CompletionItemKind.EnumMember, detail: c.type, documentation: c.doc });
+	for (const c of defs.consts.values()) items.push(typeScored({ label: c.name, kind: CompletionItemKind.EnumMember, detail: c.type, documentation: c.doc }, c.type));
 	// Events
-	for (const e of defs.events.values()) items.push({ label: e.name, kind: CompletionItemKind.Event, documentation: e.doc });
+	for (const e of defs.events.values()) items.push(scored({ label: e.name, kind: CompletionItemKind.Event, documentation: e.doc }));
 	// Contextual: include path after #include "
 	const mInc = lineText.match(/^\s*#\s*include\s+"([^"\n]*)$/);
 	if (mInc) {
@@ -74,32 +85,95 @@ export function lslCompletions(doc: TextDocument, params: CompletionParams, defs
 		return items;
 	}
 
-	// Contextual: member access .x .y .z .s after identifier '.'
+	// Contextual: member access .x .y .z .s after identifier '.' -> type-aware
 	if (/\.\s*$/.test(lineText)) {
-		// offer common components regardless; analyzer refines types elsewhere
-		for (const m of ['x', 'y', 'z', 's']) items.push({ label: m, kind: CompletionItemKind.Property });
+		const base = findMemberBase(tokens, offset);
+		let comps: string[] | null = null;
+		if (base?.kind === 'vector') comps = ['x', 'y', 'z'];
+		else if (base?.kind === 'rotation') comps = ['x', 'y', 'z', 's'];
+		if (!comps) comps = ['x', 'y', 'z', 's']; // fallback
+		for (const m of comps) items.push(scored({ label: m, kind: CompletionItemKind.Property }));
 		return items;
 	}
 
-	// Functions (snippet completions)
+	// Determine expected type at cursor (call argument, assignment, etc.)
+	const ctx = findCallContext(doc, tokens, pos);
+	let expectedType: string | 'any' = 'any';
+	if (ctx) {
+		const overloads = defs.funcs.get(ctx.name) || [];
+		const chosen = chooseBestOverload(overloads, ctx, doc, tokens);
+		expectedType = chosen?.params?.[ctx.argIndex]?.type || 'any';
+	}
+
+	// Locals/params visible before this position
+	const seenNames = new Set<string>();
+	for (const d of analysis.decls) {
+		if ((d.kind === 'var' || d.kind === 'param') && doc.offsetAt(d.range.start) <= offset) {
+			if (!seenNames.has(d.name)) {
+				items.push(typeScored({ label: d.name, kind: CompletionItemKind.Variable, detail: d.type }, d.type || 'any', { local: true, boost: 5 }));
+				seenNames.add(d.name);
+			}
+		}
+	}
+
+	// Functions from this document
+	for (const [name, decl] of analysis.functions) {
+		const sig = `${decl.type || 'void'} ${name}(${(decl.params || []).map(p => `${p.type || 'any'} ${p.name}`).join(', ')})`;
+		items.push(typeScored({ label: name, kind: CompletionItemKind.Function, detail: sig }, decl.type || 'any'));
+	}
+
+	// Include-provided globals and functions
+	if (pre && pre.includeSymbols) {
+		for (const [file, info] of pre.includeSymbols) {
+			void file;
+			for (const [gname] of info.globals) {
+				if (!seenNames.has(gname)) items.push(scored({ label: gname, kind: CompletionItemKind.Variable }));
+			}
+			for (const [fname, f] of info.functions) {
+				const sig = `${f.returns} ${fname}(${f.params.map(p => `${p.type}${p.name ? ' ' + p.name : ''}`).join(', ')})`;
+				items.push(typeScored({ label: fname, kind: CompletionItemKind.Function, detail: sig }, f.returns));
+			}
+		}
+	}
+
+	// Macros
+	if (pre) {
+		for (const [mname, mval] of Object.entries(pre.macros || {})) {
+			const t = macroValueType(mval);
+			items.push(typeScored({ label: mname, kind: CompletionItemKind.Constant, detail: t }, t));
+		}
+		for (const mname of Object.keys(pre.funcMacros || {})) {
+			items.push(scored({ label: mname, kind: CompletionItemKind.Function }));
+		}
+		// Macros from includes too
+		for (const info of pre.includeSymbols?.values() || []) {
+			for (const [mname] of info.macroObjs) items.push(scored({ label: mname, kind: CompletionItemKind.Constant }));
+			for (const [mname] of info.macroFuncs) items.push(scored({ label: mname, kind: CompletionItemKind.Function }));
+		}
+	}
+
+	// Built-in functions (snippet completions), filtered by expected return type when known
 	for (const [name, overloads] of defs.funcs.entries()) {
 		const sig = overloads[0];
 		const detail = `${sig.returns} ${sig.name}(${sig.params.map(p => `${p.type} ${p.name}`).join(', ')})`;
 		const insert = `${name}(${sig.params.map((p, i) => `\${${i + 1}:${p.name}}`).join(', ')})`;
-		items.push({
+		const item = {
 			label: name,
 			kind: CompletionItemKind.Function,
 			detail,
 			documentation: sig.doc,
 			data: { name },
-			insertTextFormat: 2, // Snippet
+			insertTextFormat: 2 as const, // Snippet
 			insertText: insert,
 			command: { title: 'trigger parameter hints', command: 'editor.action.triggerParameterHints' }
-		});
+		};
+		// If expectedType is set, include all but give higher score to matching return type
+		items.push(typeScored(item, sig.returns));
 	}
 
-	// Simple context aware: if after '(' propose parameters etc. (can be expanded)
-	return items;
+	// Rank by type match and name prefix
+	const scoredItems = rankAndFinalize(items, expectedType, wordPrefix);
+	return scoredItems;
 }
 
 export function resolveCompletion(item: CompletionItem): CompletionItem {
@@ -239,4 +313,75 @@ function dirnameOfDoc(doc: TextDocument): string {
 		if (u.protocol === 'file:') return path.dirname(decodeURIComponent(u.pathname));
 	} catch { /* ignore */ }
 	return path.dirname(doc.uri.replace(/^file:\/\//, ''));
+}
+
+function chooseBestOverload(overloads: { params: { type: string }[] }[], ctx: { argIndex: number; argRange?: { start: Position; end: Position } }, doc: TextDocument, tokens: Token[]) {
+	if (!overloads || overloads.length === 0) return null as any;
+	const candidates = overloads.filter(fn => ctx.argIndex < fn.params.length);
+	const list = (candidates.length > 0 ? candidates : overloads)
+		.slice().sort((a, b) => scoreSignature(b, ctx, doc, tokens) - scoreSignature(a, ctx, doc, tokens));
+	return list[0];
+}
+
+// Helpers for type-aware ranking and context
+function extractWordPrefix(text: string, offset: number): string {
+	let i = offset;
+	while (i > 0 && /[A-Za-z0-9_]/.test(text[i - 1]!)) i--;
+	return text.slice(i, offset);
+}
+
+function macroValueType(v: any): string {
+	if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'float';
+	if (typeof v === 'boolean') return 'integer'; // TRUE/FALSE treated as integer in LSL
+	if (typeof v === 'string') return 'string';
+	return 'any';
+}
+
+type ScoredItem = CompletionItem & { _score?: number };
+
+function scored(item: CompletionItem, base = 0): ScoredItem { (item as ScoredItem)._score = base; return item as ScoredItem; }
+function typeScored(item: CompletionItem, itemType: string, opts?: { local?: boolean; boost?: number }): ScoredItem {
+	const it = item as ScoredItem;
+	it._score = (opts?.boost ?? 0) + (opts?.local ? 2 : 0);
+	// defer exact type match scoring until rank stage where expectedType is known
+	(it as any)._itemType = itemType;
+	return it;
+}
+
+function rankAndFinalize(items: CompletionItem[], expectedType: string | 'any', prefix: string): CompletionItem[] {
+	const out: ScoredItem[] = [];
+	for (const it of items as ScoredItem[]) {
+		let s = it._score || 0;
+		const itemType = (it as any)._itemType as string | undefined;
+		if (itemType && expectedType && expectedType !== 'any') {
+			if (typeMatches(expectedType, itemType)) s += 50;
+		}
+		// name prefix boost
+		if (prefix && typeof it.label === 'string' && (it.label as string).toLowerCase().startsWith(prefix.toLowerCase())) s += 10;
+		// small tie-break by kind
+		if (it.kind === CompletionItemKind.Variable) s += 1;
+		(it as any).sortText = String(1000000 - s).padStart(7, '0');
+		out.push(it);
+	}
+	return out;
+}
+
+function findMemberBase(tokens: Token[], offset: number): { kind: 'vector' | 'rotation' | 'other' } | null {
+	// Find the '.' token immediately before offset and inspect the token before it
+	let dotIdx = -1;
+	for (let i = 0; i < tokens.length; i++) {
+		const t = tokens[i];
+		if (t.start <= offset && t.end <= offset && t.value === '.') dotIdx = i;
+		if (t.start > offset) break;
+	}
+	if (dotIdx <= 0) return null;
+	const prev = tokens[dotIdx - 1];
+	if (!prev) return null;
+	if (prev.kind === 'id') {
+		// We cannot fully resolve type here without full symbol table; fall back to heuristic using following member rules already validated in parser diagnostics
+		// If the identifier name hints rotation variable commonly named 'rot' or 'q', we still don't assume; return other
+		return { kind: 'other' };
+	}
+	if (prev.value === '>') return { kind: 'vector' }; // closing of <...>
+	return { kind: 'other' };
 }
