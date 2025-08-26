@@ -304,7 +304,7 @@ connection.onDefinition((params, token): Definition | LocationLink[] | null => {
 	if (!doc || !defs) return null;
 
 	const entry = getPipeline(doc); if (!entry) return null;
-	const defLoc = gotoDefinition(doc, params.position, entry.analysis, entry.pre);
+	const defLoc = gotoDefinition(doc, params.position, entry.analysis, entry.pre, defs!);
 	return (defLoc as Definition | null);
 });
 

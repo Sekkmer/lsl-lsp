@@ -11,6 +11,7 @@ export const LSL_DIAGCODES = {
 	WRONG_ARITY: 'LSL010',
 	WRONG_TYPE: 'LSL011',
 	EVENT_OUTSIDE_STATE: 'LSL020',
+	UNKNOWN_EVENT: 'LSL021',
 	UNKNOWN_STATE: 'LSL030',
 	MISSING_RETURN: 'LSL040',
 	RETURN_IN_VOID: 'LSL041',
@@ -600,7 +601,8 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 		}
 
 		// Optional-void function declaration: <name> ( ... ) { ... }
-		if (isId(t) && !defs.events.has(t.value) && peek(1)?.value === '(') {
+		// Do NOT treat this as a function when we're inside a state block; there, bareName '(' is an event handler.
+		if (isId(t) && !inState && !defs.events.has(t.value) && peek(1)?.value === '(') {
 			// Lookahead to see if this is a declaration followed by a body
 			let j = i + 2; // skip name and '('
 			let parenDepth = 1;
@@ -823,10 +825,38 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 			}
 		}
 
-		// Event handler: <eventName> ( ... ) { ... } — only valid inside state
+		// Event handler: <eventName> ( ... ) { ... } — only valid inside state; enforce known events/params
+		// 1) Guard: unknown event inside a state should not cause an infinite loop. Report and skip its form.
+		if (inState && isId(t) && peek(1)?.value === '(' && !defs.events.has(t.value) && !defs.funcs.has(t.value)) {
+			const evtName = t.value;
+			diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_EVENT, message: `Unknown event "${evtName}"`, range: mkRange(doc, t.start, t.end), severity: DiagnosticSeverity.Error });
+			// Skip over parameter list to the matching ')' and optional body '{...}' to make progress
+			let j = i + 1; // at '('
+			let pd = 0;
+			if (tokens[j]?.value === '(') { pd = 1; j++; }
+			while (j < tokens.length && pd > 0) {
+				const tk = tokens[j++];
+				if (tk.value === '(') pd++;
+				else if (tk.value === ')') pd--;
+			}
+			// Position main scanner after ')'
+			i = j;
+			// If there's a body, skip it as well
+			if (tokens[i]?.value === '{') {
+				let bd = 1; i++;
+				while (i < tokens.length && bd > 0) {
+					const tk = tokens[i++];
+					if (tk.value === '{') bd++;
+					else if (tk.value === '}') bd--;
+				}
+			}
+			continue;
+		}
+		// 2) Known event: parse and validate
 		if (isId(t) && defs.events.has(t.value) && peek(1)?.value === '(') {
+			const evtName = t.value;
 			if (!inState) {
-				diagnostics.push({ code: LSL_DIAGCODES.EVENT_OUTSIDE_STATE, message: `Event "${t.value}" must be inside a state`, range: mkRange(doc, t.start, t.end), severity: DiagnosticSeverity.Error });
+				diagnostics.push({ code: LSL_DIAGCODES.EVENT_OUTSIDE_STATE, message: `Event "${evtName}" must be inside a state`, range: mkRange(doc, t.start, t.end), severity: DiagnosticSeverity.Error });
 			}
 			const evtTok = eat()!; eat(); // (
 			pushScope();
@@ -842,7 +872,18 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 					if (peek()?.value === ',') eat();
 				} else { break; }
 			}
-			// check arity if you want strict matching (optional)
+			// Enforce exact arity and parameter types against defs
+			if (params.length !== _evt.params.length) {
+				diagnostics.push({ code: LSL_DIAGCODES.WRONG_ARITY, message: `Event "${_evt.name}" expects ${_evt.params.length} parameter(s)`, range: mkRange(doc, evtTok.start, evtTok.end), severity: DiagnosticSeverity.Error });
+			} else {
+				for (let k = 0; k < params.length; k++) {
+					const expected = normalizeType(_evt.params[k]!.type);
+					const got = normalizeType(params[k]!);
+					if (expected !== got) {
+						diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Parameter ${k + 1} of event "${_evt.name}" must be ${_evt.params[k]!.type}`, range: paramDecls[k]!.range, severity: DiagnosticSeverity.Error });
+					}
+				}
+			}
 			if (peek()?.value === ')') eat();
 			if (peek()?.value === '{') {
 				eat();

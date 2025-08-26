@@ -48,7 +48,8 @@
 			"params": [
 				{
 					"name": "total_number",
-					"type": "integer"
+					"type": "integer",
+					"doc": "Number of detected touches."
 				}
 			]
 		}
@@ -60,11 +61,13 @@
 			"params": [
 				{
 					"name": "channel",
-					"type": "integer"
+					"type": "integer",
+					"doc": "The chat channel. 0 is public chat."
 				},
 				{
 					"name": "msg",
-					"type": "string"
+					"type": "string",
+					"doc": "The message to say."
 				}
 			]
 		},

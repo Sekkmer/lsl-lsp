@@ -1,6 +1,7 @@
 import { DocumentSymbol, Location, Position, Range, SymbolKind } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Analysis } from './parser';
+import type { Defs } from './defs';
 import { PreprocResult } from './preproc';
 import { URI } from 'vscode-uri';
 
@@ -27,7 +28,7 @@ export function documentSymbols(a: Analysis): DocumentSymbol[] {
 	return out;
 }
 
-export function gotoDefinition(doc: TextDocument, pos: Position, a: Analysis, pre?: PreprocResult): Location | null {
+export function gotoDefinition(doc: TextDocument, pos: Position, a: Analysis, pre?: PreprocResult, defs?: Defs): Location | null {
 	const offset = doc.offsetAt(pos);
 	// If on an #include target, navigate to the resolved file
 	if (pre && pre.includeTargets) {
@@ -109,6 +110,10 @@ export function gotoDefinition(doc: TextDocument, pos: Position, a: Analysis, pr
 			}
 		}
 		if (best) return { uri: doc.uri, range: best.range };
+		// 3.2) If this is a built-in function or constant from defs, do not navigate
+		if (defs && (defs.funcs.has(refName) || defs.consts.has(refName))) {
+			return null;
+		}
 		// 3.5) Macros defined in this document: find #define refName
 		{
 			const text = doc.getText();
