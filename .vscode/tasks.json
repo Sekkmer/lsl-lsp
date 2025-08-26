@@ -2,15 +2,6 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "build client",
-			"type": "shell",
-			"command": "pnpm -C client-vscode build",
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
 			"label": "build server",
 			"type": "shell",
 			"command": "pnpm -C server build",
@@ -20,10 +11,19 @@
 			"group": "build"
 		},
 		{
+			"label": "build client",
+			"type": "shell",
+			"command": "pnpm -C client-vscode build",
+			"problemMatcher": [
+				"$tsc"
+			],
+			"group": "build"
+		},
+		{
 			"label": "build all",
 			"dependsOn": [
-				"build client",
-				"build server"
+				"build server",
+				"build client"
 			],
 			"group": "build"
 		},
@@ -37,232 +37,10 @@
 			]
 		},
 		{
-			"label": "build server",
-			"type": "shell",
-			"command": "pnpm -C server build",
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build client",
-			"type": "shell",
-			"command": "pnpm -C client-vscode build",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build client",
-			"type": "shell",
-			"command": "pnpm -C client-vscode build",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build client",
-			"type": "shell",
-			"command": "pnpm -C client-vscode build",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build client",
-			"type": "shell",
-			"command": "pnpm -C client-vscode build",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build client",
-			"type": "shell",
-			"command": "pnpm -C client-vscode build",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build server",
-			"type": "shell",
-			"command": "pnpm -C server build",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "test"
-		},
-		{
-			"label": "build server",
-			"type": "shell",
-			"command": "pnpm -C server build",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test",
-			"isBackground": false,
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "test"
-		},
-		{
-			"label": "build all",
-			"type": "shell",
-			"command": "pnpm -C server build && pnpm -C client-vscode build",
-			"problemMatcher": [
-				"$tsc"
-			],
-			"group": "build"
-		},
-		{
-			"label": "build server",
-			"type": "shell",
-			"command": "pnpm -C server build"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test"
-		},
-		{
-			"label": "build server",
-			"type": "shell",
-			"command": "pnpm -C server build"
-		},
-		{
-			"label": "build and test",
-			"type": "shell",
-			"command": "pnpm -C server build && pnpm -C server test"
-		},
-		{
 			"label": "test server",
 			"type": "shell",
-			"command": "pnpm -C server test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test"
-		},
-		{
-			"label": "server tests",
-			"type": "shell",
-			"command": "pnpm -C server test"
+			"command": "pnpm -C server test",
+			"group": "test"
 		},
 		{
 			"label": "lint server",
@@ -277,21 +55,88 @@
 			"group": "build"
 		},
 		{
-			"label": "test server (new)",
+			"label": "build and test server",
 			"type": "shell",
-			"command": "pnpm -C server test",
+			"command": "pnpm -C server build && pnpm -C server test",
 			"group": "test"
 		},
 		{
-			"label": "test server (rerun)",
+			"label": "build server",
 			"type": "shell",
-			"command": "pnpm -C server test",
-			"group": "test"
+			"command": "pnpm -C server build",
+			"group": "build"
 		},
 		{
-			"label": "build and test",
+			"label": "build crawler and regenerate defs",
 			"type": "shell",
-			"command": "pnpm -C server build && pnpm -C server lint && pnpm -C server test"
+			"command": "pnpm -C crawler build && node crawler/out/index.js defs-all && node -e \"const fs=require('fs');const src='out/lsl-defs.json';const dst='common/lsl-defs.json';fs.copyFileSync(src,dst);console.log('updated common/lsl-defs.json');\"",
+			"group": "build"
+		},
+		{
+			"label": "build crawler and smoke-test viewer debug",
+			"type": "shell",
+			"command": "pnpm -C crawler build && node crawler/out/index.js viewer:func:llGetPos && node crawler/out/index.js viewer:const:DEBUG_CHANNEL && node crawler/out/index.js viewer:event:timer",
+			"group": "build"
+		},
+		{
+			"label": "rebuild crawler and rerun viewer debug",
+			"type": "shell",
+			"command": "pnpm -C crawler build && node crawler/out/index.js viewer:func:llGetPos && node crawler/out/index.js viewer:const:DEBUG_CHANNEL && node crawler/out/index.js viewer:event:timer",
+			"group": "build"
+		},
+		{
+			"label": "rebuild crawler and rerun viewer debug 2",
+			"type": "shell",
+			"command": "pnpm -C crawler build && node crawler/out/index.js viewer:func:llGetPos && node crawler/out/index.js viewer:func:llGetPos | jq -r '.suggestions[0]' && node crawler/out/index.js viewer:func:llGetPos | jq -r '.resolvedName' && node crawler/out/index.js viewer:func:llGetPos && node crawler/out/index.js viewer:const:DEBUG_CHANNEL && node crawler/out/index.js viewer:event:timer",
+			"group": "build"
+		},
+		{
+			"label": "rebuild crawler and run viewer search",
+			"type": "shell",
+			"command": "pnpm -C crawler build && node crawler/out/index.js viewer:search:llgetpos && node crawler/out/index.js viewer:search:DEBUG_CHANNEL && node crawler/out/index.js viewer:search:timer && node crawler/out/index.js viewer:func:llGetPos && node crawler/out/index.js viewer:const:DEBUG_CHANNEL && node crawler/out/index.js viewer:event:timer",
+			"group": "build"
+		},
+		{
+			"label": "rebuild and test viewer debug with constants map",
+			"type": "shell",
+			"command": "pnpm -C crawler build && node crawler/out/index.js viewer:func:llGetPos && node crawler/out/index.js viewer:const:DEBUG_CHANNEL && node crawler/out/index.js viewer:event:timer",
+			"group": "build"
+		},
+		{
+			"label": "rebuild crawler and test recursive function lookup",
+			"type": "shell",
+			"command": "pnpm -C crawler build && node crawler/out/index.js viewer:func:llGetPos && node crawler/out/index.js viewer:const:DEBUG_CHANNEL && node crawler/out/index.js viewer:event:timer",
+			"group": "build"
+		},
+		{
+			"label": "build server",
+			"type": "shell",
+			"command": "pnpm -C server build",
+			"group": "build"
+		},
+		{
+			"label": "build server",
+			"type": "shell",
+			"command": "pnpm -C server build",
+			"group": "build"
+		},
+		{
+			"label": "build crawler and smoke-test viewer debug",
+			"type": "shell",
+			"command": "pnpm -C crawler build && node crawler/out/index.js defs-all && node -e \"const fs=require('fs');const src='out/lsl-defs.json';const dst='common/lsl-defs.json';fs.copyFileSync(src,dst);console.log('updated common/lsl-defs.json');\"",
+			"group": "build"
+		},
+		{
+			"label": "rebuild crawler and rerun viewer debug 2",
+			"type": "shell",
+			"command": "pnpm -C crawler build && node crawler/out/index.js defs-all && jq '.functions[0] | keys' out/lsl-defs.json && node -e \"const obj=require('./out/lsl-defs.json');const e=obj.functions.find(f=>f.name==='llGetPos');console.log(e&&e.wiki?'has wiki':'no wiki')\"",
+			"group": "build"
+		},
+		{
+			"label": "rebuild crawler and rerun viewer debug",
+			"type": "shell",
+			"command": "pnpm -C crawler build && node crawler/out/index.js defs-all && jq -r '.functions[] | select(.name==\"llGetPos\") | .wiki' out/lsl-defs.json | head -n1 && jq -r '.constants[] | select(.name==\"DEBUG_CHANNEL\") | .wiki' out/lsl-defs.json | head -n1 && jq -r '.events[] | select(.name==\"timer\") | .wiki' out/lsl-defs.json | head -n1 && cp -f out/lsl-defs.json common/lsl-defs.json && echo 'copied'",
+			"group": "build"
 		}
 	]
 }
