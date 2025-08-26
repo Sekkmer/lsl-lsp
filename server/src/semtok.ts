@@ -59,7 +59,7 @@ export function buildSemanticTokens(
 	}
 
 	// Pre-scan to find write occurrences and counts; prefer per-declaration when analysis is available.
-	const { writeCountsByDecl, writeCountsByName, firstWriteByDecl, firstWriteByName } = computeWrites(toks, analysis);
+	const { writeCountsByDecl, writeCountsByName } = computeWrites(toks, analysis);
 
 	function push(t: Token, type: number, mods = 0) {
 		const start = doc.positionAt(t.start);
@@ -147,19 +147,8 @@ export function buildSemanticTokens(
 				const target = analysis.refAt(t.start);
 				if (target && (target.kind === 'param' || target.kind === 'var')) {
 					const atWrite = isWriteUse(toks, ti);
-					// Mark readonly either when the declaration has at most one write overall,
-					// or when this use occurs before the first write (early-read before modification).
-					let ro = isReadonlyDecl(target, writeCountsByDecl, writeCountsByName);
-					if (!ro && !atWrite) {
-						const key = keyForDecl(target);
-						const first = firstWriteByDecl.get(key);
-						if (first != null) {
-							ro = t.start < first;
-						} else {
-							const fw = firstWriteByName.get(target.name);
-							if (fw != null) ro = t.start < fw;
-						}
-					}
+					// Parameters are always readonly; variables: readonly is decided per-declaration across the entire scope.
+					const ro = target.kind === 'param' ? true : isReadonlyDecl(target, writeCountsByDecl, writeCountsByName);
 					const mods = (ro ? bit('readonly') : 0) | (atWrite ? bit('modification') : 0);
 					push(t, idx(target.kind === 'param' ? 'parameter' : 'variable'), mods);
 					continue;
@@ -189,7 +178,8 @@ function keyForDecl(d: Decl): string {
 function isReadonlyDecl(decl: Decl, countsByDecl: Map<string, number>, fallbackByName: Map<string, number>): boolean {
 	const k = keyForDecl(decl);
 	const c = countsByDecl.get(k);
-	if (decl.kind === 'param') return (c ?? 0) === 0;
+	// Parameters are readonly by language semantics; always mark as readonly.
+	if (decl.kind === 'param') return true;
 	// For variables/globals: treat single write (typically initializer) as readonly
 	if (c != null) return c <= 1;
 	// Fallback on name if unresolved
