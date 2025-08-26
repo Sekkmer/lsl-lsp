@@ -42,6 +42,39 @@ A Visual Studio Code extension providing rich support for LSL (Linden Scripting 
 - `lsl.enableSemanticTokens`: Toggle semantic tokens
 - `lsl.trace`: LSP protocol trace level (`off`, `messages`, `verbose`)
 
+### Customize readonly colors (semantic tokens)
+
+The server marks parameters as readonly and variables as readonly when they’re effectively immutable. Whether this shows as a different color depends on your theme. You can enforce or tweak colors via VS Code settings:
+
+Workspace or User Settings (JSON):
+
+```
+{
+	"editor.semanticHighlighting.enabled": true,
+	"editor.semanticTokenColorCustomizations": {
+		"enabled": true,
+		"rules": {
+			// Darken readonly variables and parameters
+			"variable.readonly": { "foreground": "#4FC1FF" },
+			"parameter.readonly": { "foreground": "#4FC1FF" }
+		}
+	}
+}
+```
+
+Notes:
+- Themes may override semantic tokens. If your theme doesn’t pick up these rules, set:
+
+```
+{
+	"editor.semanticTokenColorCustomizations": {
+		"allSemanticTokens": true,
+		"rules": { /* as above */ }
+	}
+}
+```
+- The examples above use a darker gray for readonly variables and the Default Dark+ blue for readonly parameters. Adjust to taste.
+
 ## Requirements
 
 - VS Code ≥ 1.90.0
