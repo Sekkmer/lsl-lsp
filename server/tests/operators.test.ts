@@ -87,4 +87,19 @@ integer bad = <1,2,3> + 1; // bad
 		const msgs = analysis.diagnostics.map(d => d.message);
 		expect(msgs.some(m => m.includes('Operator + type mismatch'))).toBe(true);
 	});
+
+	it('casts in addition resolve to string correctly', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+string header = "hdr";
+integer listCount = 3;
+string m1 = (string)listCount + "x"; // ok
+string m2 = "a" + (string)listCount; // ok
+string m3 = header + " (" + (string)listCount + "):"; // ok
+`;
+		const doc = docFrom(code, 'file:///ops_casts.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.some(m => m.includes('Operator + type mismatch'))).toBe(false);
+	});
 });

@@ -1298,7 +1298,10 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 }
 
 // Guess a simple literal type around operator index.
-type SimpleType = 'integer' | 'float' | 'string' | 'vector' | 'list' | 'any';
+type SimpleType = 'integer' | 'float' | 'string' | 'vector' | 'list' | 'rotation' | 'any';
+function isTypeName(name: string): name is SimpleType {
+	return name === 'integer' || name === 'float' || name === 'string' || name === 'vector' || name === 'list' || name === 'rotation';
+}
 function guessRightOperandType(tokens: Token[], idx: number, symbolTypes: Map<string, string>): { type: SimpleType; zero?: boolean } {
 	let i = idx + 1;
 	// Skip unary signs on literals
@@ -1306,6 +1309,11 @@ function guessRightOperandType(tokens: Token[], idx: number, symbolTypes: Map<st
 	if (i >= tokens.length) return { type: 'any' };
 	// If the right side starts with '(', skip to the matching ')' and infer from the inner expression's first token
 	if (tokens[i].value === '(') {
+		// Cast pattern: (type) expr
+		const t1 = tokens[i + 1]; const t2 = tokens[i + 2];
+		if (t1 && t1.kind === 'id' && isTypeName(normalizeType(t1.value)) && t2 && t2.value === ')') {
+			return { type: normalizeType(t1.value) as SimpleType };
+		}
 		let pd = 1; let j = i + 1;
 		// find first non-whitespace/punc meaningful token inside
 		while (j < tokens.length && pd > 0) {
@@ -1321,8 +1329,10 @@ function guessRightOperandType(tokens: Token[], idx: number, symbolTypes: Map<st
 				if (tk.value === '<') return { type: 'vector' };
 				if (tk.value === '[') return { type: 'list' };
 				if (tk.kind === 'id') {
+					const norm = normalizeType(tk.value);
+					if (isTypeName(norm)) return { type: norm as SimpleType };
 					const ty = symbolTypes.get(tk.value);
-					if (ty === 'integer' || ty === 'float' || ty === 'string' || ty === 'vector' || ty === 'list') return { type: ty as SimpleType };
+					if (isTypeName(normalizeType(ty || ''))) return { type: normalizeType(ty!) as SimpleType };
 					return { type: 'any' };
 				}
 			}
@@ -1339,14 +1349,25 @@ function guessRightOperandType(tokens: Token[], idx: number, symbolTypes: Map<st
 		return { type: /\./.test(t.value) ? 'float' : 'integer', zero: !Number.isNaN(z) && z === 0 };
 	}
 	if (t.kind === 'id') {
+		const norm = normalizeType(t.value);
+		if (isTypeName(norm)) return { type: norm };
 		const ty = symbolTypes.get(t.value);
-		if (ty === 'string' || ty === 'vector' || ty === 'list' || ty === 'integer' || ty === 'float') return { type: ty as SimpleType };
+		if (ty) {
+			const normTy = normalizeType(ty);
+			if (isTypeName(normTy)) return { type: normTy as SimpleType };
+		}
 	}
 	return { type: 'any' };
 }
 function guessLeftOperandType(tokens: Token[], idx: number, symbolTypes: Map<string, string>): SimpleType {
 	let i = idx - 1;
 	if (i < 0) return 'any';
+	// Detect immediate cast applied to the left operand: (type) <operand>
+	const prev1 = tokens[i - 1]; const prev2 = tokens[i - 2]; const prev3 = tokens[i - 3];
+	if (prev1 && prev2 && prev3 && prev1.value === ')' && prev3.value === '(' && prev2.kind === 'id') {
+		const norm = normalizeType(prev2.value);
+		if (isTypeName(norm)) return norm as SimpleType;
+	}
 	// If we are at a closing bracket/paren/angle, jump to its opener
 	const closeToOpen: Record<string,string> = { ')': '(', ']': '[', '>': '<' };
 	if (tokens[i] && closeToOpen[tokens[i].value]) {
@@ -1374,8 +1395,13 @@ function guessLeftOperandType(tokens: Token[], idx: number, symbolTypes: Map<str
 				if (tk.value === '<') return 'vector';
 				if (tk.value === '[') return 'list';
 				if (tk.kind === 'id') {
+					const norm = normalizeType(tk.value);
+					if (isTypeName(norm)) return norm as SimpleType;
 					const ty = symbolTypes.get(tk.value);
-					if (ty === 'integer' || ty === 'float' || ty === 'string' || ty === 'vector' || ty === 'list') return ty as SimpleType;
+					if (ty) {
+						const normTy = normalizeType(ty);
+						if (isTypeName(normTy)) return normTy as SimpleType;
+					}
 					return 'any';
 				}
 			}
@@ -1389,8 +1415,13 @@ function guessLeftOperandType(tokens: Token[], idx: number, symbolTypes: Map<str
 	if (t.kind === 'str') return 'string';
 	if (t.kind === 'num') return /\./.test(t.value) ? 'float' : 'integer';
 	if (t.kind === 'id') {
+		const norm = normalizeType(t.value);
+		if (isTypeName(norm)) return norm as SimpleType;
 		const ty = symbolTypes.get(t.value);
-		if (ty === 'string' || ty === 'vector' || ty === 'list' || ty === 'integer' || ty === 'float') return ty as SimpleType;
+		if (ty) {
+			const normTy = normalizeType(ty);
+			if (isTypeName(normTy)) return normTy as SimpleType;
+		}
 	}
 	return 'any';
 }
@@ -1443,11 +1474,11 @@ function validateOperators(doc: TextDocument, tokens: Token[], diagnostics: Diag
 			}
 			continue;
 		}
-		// Addition: list concatenation if either list (ok), string+string ok, numeric combos ok, vector+vector ok; otherwise if both literals are known and mismatched, flag
+		// Addition: list concatenation if either list (ok), string+string ok, numeric combos ok, vector+vector ok, rotation+rotation ok; otherwise if both literals are known and mismatched, flag
 		if (opVal === '+') {
 			if (lt === 'list' || rt === 'list') continue; // list concatenation
 			const numeric = (x: SimpleType) => x === 'integer' || x === 'float';
-			if ((lt === 'string' && rt === 'string') || (numeric(lt) && numeric(rt)) || (lt === 'vector' && rt === 'vector')) continue;
+			if ((lt === 'string' && rt === 'string') || (numeric(lt) && numeric(rt)) || (lt === 'vector' && rt === 'vector') || (lt === 'rotation' && rt === 'rotation')) continue;
 			if (lt !== 'any' && rt !== 'any') {
 				diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator + type mismatch: ${lt} + ${rt}`, range: mkRange(doc, t.start, t.end), severity: DiagnosticSeverity.Information });
 			}
