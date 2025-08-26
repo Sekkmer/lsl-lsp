@@ -1,21 +1,21 @@
 {
 	"compilerOptions": {
-		"target": "ES2024",
-		"lib": ["ESNext"],
-		"types": [],
+		// Emit modern JS compatible with current Node LTS
+		"target": "ES2022",
+		"lib": ["ES2022"],
+		// Use Node ESM resolution for all packages
 		"module": "NodeNext",
-		"moduleResolution": "nodenext",
-		"allowImportingTsExtensions": true,
+		"moduleResolution": "NodeNext",
+		// Strictness and ergonomics
+		"strict": true,
+		"skipLibCheck": true,
 		"resolveJsonModule": true,
 		"esModuleInterop": true,
-		"baseUrl": "./src",
-		"noEmit": true,
-		"noEmitOnError": true,
 		"sourceMap": true,
 		"removeComments": true,
-		"strict": true,
 		"noImplicitOverride": true,
 		"noImplicitReturns": true,
-		"isolatedModules": true
+		"isolatedModules": true,
+		"allowImportingTsExtensions": false
 	}
 }

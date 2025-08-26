@@ -1,23 +1,13 @@
+
 {
 	"extends": "../tsconfig.base.json",
 	"compilerOptions": {
-		"outDir": "out",
 		"rootDir": "src",
-		"module": "ES2022",
-		"target": "ES2022",
-		"moduleResolution": "Bundler",
-		"lib": [
-			"ES2022"
-		],
-		"types": [
-			"node"
-		],
-		"esModuleInterop": true,
-		"resolveJsonModule": true,
-		"strict": true,
+		"outDir": "out",
+		// Crawler is a Node CLI; stick with NodeNext module/resolution from base
+		"types": ["node"],
 		"noEmit": false,
-		"noEmitOnError": false,
-		"allowImportingTsExtensions": false
+		"noEmitOnError": false
 	},
 	"include": [
 		"src/**/*"
