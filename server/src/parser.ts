@@ -63,6 +63,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 	// Very light state machine
 	let i = 0;
 	let inState: string | null = null;
+	let currentStateEvents: Set<string> | null = null;
 	let stmtStartIndex = 0; // index of the first token of the current statement
 
 	function peek(k = 0): Token | undefined { return tokens[i + k]; }
@@ -198,6 +199,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 					const d: Decl = { name: nameTok!.value, range: mkRange(doc, nameTok!.start, nameTok!.end), kind: 'state' };
 					states.set(d.name, d); decls.push(d);
 					inState = d.name;
+					currentStateEvents = new Set<string>();
 					pushScope();
 				} else {
 					diagnostics.push({ code: LSL_DIAGCODES.SYNTAX, message: 'Expected "{" after state name', range: mkRange(doc, nameTok!.end, nameTok!.end), severity: DiagnosticSeverity.Error });
@@ -214,11 +216,12 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 			const d: Decl = { name: 'default', range: mkRange(doc, t.start, t.end), kind: 'state' };
 			states.set(d.name, d); decls.push(d);
 			inState = d.name;
+			currentStateEvents = new Set<string>();
 			pushScope();
 			continue;
 		}
 		if (t.value === '}' && inState) {
-			eat(); popScope(); inState = null; continue;
+			eat(); popScope(); inState = null; currentStateEvents = null; continue;
 		}
 
 		// Function declaration: <type> <name> ( ... ) { ... }
@@ -858,9 +861,20 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 			if (!inState) {
 				diagnostics.push({ code: LSL_DIAGCODES.EVENT_OUTSIDE_STATE, message: `Event "${evtName}" must be inside a state`, range: mkRange(doc, t.start, t.end), severity: DiagnosticSeverity.Error });
 			}
+			// Duplicate event in the same state
+			if (inState && currentStateEvents) {
+				if (currentStateEvents.has(evtName)) {
+					diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Event "${evtName}" is already declared in state "${inState}"`, range: mkRange(doc, t.start, t.end), severity: DiagnosticSeverity.Error });
+				} else {
+					currentStateEvents.add(evtName);
+				}
+			}
 			const evtTok = eat()!; eat(); // (
 			pushScope();
 			const _evt = defs.events.get(evtTok.value)!;
+			// record event declaration for analysis
+			const evDecl: Decl = { name: evtTok.value, range: mkRange(doc, evtTok.start, evtTok.end), kind: 'event', params: _evt.params.map(p => ({ name: p.name, type: p.type })) };
+			decls.push(evDecl);
 			// parse params
 			const params: string[] = [];
 			const paramDecls: Decl[] = [];

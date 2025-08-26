@@ -27,6 +27,37 @@ export function lslCompletions(
 	const lineText = text.slice(lineStart, offset);
 	const wordPrefix = extractWordPrefix(text, offset);
 
+	// If we're at the top level inside a state body (not inside an event/function),
+	// suggest only events with a full typed signature snippet.
+	const stateCtx = findStateTopLevelContext(tokens, offset);
+	if (stateCtx.inStateTopLevel) {
+		// Collect events already declared in this state up to this position
+		const declaredEvents = new Set<string>();
+		for (const d of analysis.decls) {
+			if (d.kind === 'event') {
+				const s = doc.offsetAt(d.range.start);
+				if (s >= (stateCtx.stateStartOffset ?? 0) && s < offset) declaredEvents.add(d.name);
+			}
+		}
+		const out: CompletionItem[] = [];
+		for (const e of defs.events.values()) {
+			if (declaredEvents.has(e.name)) continue;
+			if (wordPrefix && !e.name.toLowerCase().startsWith(wordPrefix.toLowerCase())) continue;
+			const paramsSig = e.params.map(p => `${p.type} ${p.name}`).join(', ');
+			const detail = `event ${e.name}(${paramsSig})`;
+			const insert = `${e.name}(${paramsSig}) {\n\t$0\n}`;
+			out.push({
+				label: e.name,
+				kind: CompletionItemKind.Event,
+				detail,
+				documentation: e.doc,
+				insertTextFormat: 2 as const, // Snippet
+				insertText: insert
+			});
+		}
+		return out;
+	}
+
 	// Keywords
 	for (const k of defs.keywords) items.push(scored({ label: k, kind: CompletionItemKind.Keyword }));
 	// Types
@@ -174,6 +205,38 @@ export function lslCompletions(
 	// Rank by type match and name prefix
 	const scoredItems = rankAndFinalize(items, expectedType, wordPrefix);
 	return scoredItems;
+}
+
+// Determine if the cursor is inside a state body at top level (i.e., directly under the state's '{' and not nested
+// inside an event or other block). Returns true when the nearest enclosing construct is a state block and the
+// current brace depth equals the state's base depth.
+function findStateTopLevelContext(tokens: Token[], offset: number): { inStateTopLevel: boolean; stateStartOffset?: number } {
+	// Track brace depth and mark when we enter a state block
+	let depth = 0;
+	let inState = false;
+	let stateBaseDepth = -1;
+	let stateStartOffset: number | undefined = undefined;
+	for (let i = 0; i < tokens.length; i++) {
+		const t = tokens[i];
+		if (t.start >= offset) break;
+		// Detect state open: 'state' id '{'  or 'default' '{'
+		if (!inState) {
+			if (t.kind === 'id' && t.value === 'state' && tokens[i + 1]?.kind === 'id' && tokens[i + 2]?.value === '{') {
+				// Consume until '{'
+				i += 2; depth++; inState = true; stateBaseDepth = depth; stateStartOffset = tokens[i]?.start; continue;
+			}
+			if (t.kind === 'id' && t.value === 'default' && tokens[i + 1]?.value === '{') {
+				i += 1; depth++; inState = true; stateBaseDepth = depth; stateStartOffset = tokens[i]?.start; continue;
+			}
+		}
+		if (t.value === '{') depth++;
+		else if (t.value === '}') {
+			if (inState && depth === stateBaseDepth) { inState = false; stateBaseDepth = -1; }
+			depth = Math.max(0, depth - 1);
+		}
+	}
+	// We're in state top-level if inState is true and current depth equals the state's base depth
+	return { inStateTopLevel: inState && depth === stateBaseDepth, stateStartOffset };
 }
 
 export function resolveCompletion(item: CompletionItem): CompletionItem {
