@@ -3,6 +3,7 @@ import { fetch as undiciFetch } from 'undici';
 import * as cheerio from 'cheerio';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 
 const WIKI_BASE = 'https://wiki.secondlife.com';
@@ -19,7 +20,11 @@ const VERBOSE = (process.env.CRAWLER_VERBOSE ?? '0') !== '0';
 const CONCURRENCY = Math.max(1, Number(process.env.CRAWLER_CONCURRENCY || 8));
 const PROGRESS_ENABLED = (process.env.CRAWLER_PROGRESS ?? '1') !== '0';
 
-const CACHE_DIR = path.resolve(process.cwd(), 'out', 'cache');
+// Resolve paths relative to the crawler package directory, not process.cwd(),
+// so running from monorepo root won't pollute the root with an "out" folder.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PKG_ROOT = path.resolve(__dirname, '..');
+const CACHE_DIR = path.join(PKG_ROOT, 'out', 'cache');
 let lastRequestAt = 0;
 
 function cachePathFor(url: string) {
@@ -1630,7 +1635,7 @@ async function main() {
 	} else if (which === 'defs-all') {
 		const defs = await assembleDefs();
 		await fs.mkdir(path.resolve('out'), { recursive: true }).catch(() => void 0);
-		const file = path.resolve('out', 'lsl-defs.json');
+		const file = path.join(PKG_ROOT, 'out', 'lsl-defs.json');
 		await fs.writeFile(file, JSON.stringify(defs, null, 2), 'utf8');
 		console.log(`Wrote defs to ${file}`);
 	} else {
