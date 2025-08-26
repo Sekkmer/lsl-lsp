@@ -9,6 +9,7 @@
 		"watch": "pnpm -r watch",
 		"lint": "pnpm -r lint",
 		"lint:fix": "pnpm -r lint:fix",
+		"test": "pnpm -r test",
 		"crawl:defs": "pnpm -C crawler build && node crawler/out/index.js defs-all && cp -f out/lsl-defs.json common/lsl-defs.json"
 	},
 	"devDependencies": {
