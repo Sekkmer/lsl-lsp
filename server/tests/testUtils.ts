@@ -26,7 +26,7 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: {
 
 	const tokens = lex(doc, pre.disabledRanges);
 	const analysis = parseAndAnalyze(doc, tokens, defs, pre);
-	const sem = buildSemanticTokens(doc, tokens, defs, pre);
+	const sem = buildSemanticTokens(doc, tokens, defs, pre, analysis);
 
 	return { pre, tokens, analysis, sem };
 }

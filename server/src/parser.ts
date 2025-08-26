@@ -39,6 +39,7 @@ export interface Analysis {
 	states: Map<string, Decl>;
 	functions: Map<string, Decl>;
 	symbolAt(offset: number): Decl | null;
+	refAt(offset: number): Decl | null;
 }
 
 function mkRange(doc: TextDocument, start: number, end: number): Range {
@@ -49,6 +50,8 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 	const diagnostics: Diag[] = [];
 	const decls: Decl[] = [];
 	const refs: SymbolRef[] = [];
+	// Map identifier usage start offset -> resolved declaration for scope-aware consumers
+	const refTargets = new Map<number, Decl>();
 	const calls: { name: string; args: number; range: Range; argRanges: Range[] }[] = [];
 	const states = new Map<string, Decl>();
 	const functions = new Map<string, Decl>();
@@ -72,7 +75,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 	function isId(tok?: Token) { return tok && tok.kind === 'id'; }
 	function isKeyword(name: string) { return defs.keywords.has(name); }
 	function isKnownNonVar(name: string) {
-		// Known non-variable symbols: constants, keywords, types, macros, or globals/functions from includes
+		// Known non-variable symbols: constants, keywords, types, macros, or globals/functions from includes.
 		if (defs.consts.has(name) || defs.keywords.has(name) || defs.types.has(name) || Object.prototype.hasOwnProperty.call(pre.macros, name)) return true;
 		// Check include-derived symbols
 		if (pre.includeSymbols && pre.includeSymbols.size > 0) {
@@ -129,6 +132,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 						const found = lookup(b.value);
 						if (found) {
 							refs.push({ name: b.value, range: mkRange(doc, b.start, b.end) });
+							refTargets.set(b.start, found);
 							if (usedLocalOrParamNames && (found.kind === 'param' || found.kind === 'var')) usedLocalOrParamNames.add(found.name);
 						} else {
 							diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER, message: `Unknown identifier "${b.value}"`, range: mkRange(doc, b.start, b.end), severity: DiagnosticSeverity.Warning });
@@ -139,6 +143,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 				const found = lookup(b.value);
 				if (found) {
 					refs.push({ name: b.value, range: mkRange(doc, b.start, b.end) });
+					refTargets.set(b.start, found);
 					if (usedLocalOrParamNames && (found.kind === 'param' || found.kind === 'var')) usedLocalOrParamNames.add(found.name);
 				} else if (!isKnownNonVar(b.value)) {
 					diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER, message: `Unknown identifier "${b.value}"`, range: mkRange(doc, b.start, b.end), severity: DiagnosticSeverity.Warning });
@@ -302,6 +307,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 					if (b.kind === 'id' && b.value === 'for' && peek(1)?.value === '(') {
 						// consume 'for' and '('
 						eat(); eat();
+						const headerStart = i;
 						let pd = 1; // paren depth
 						let j = i; // scan from current i
 						let sawInit = false;
@@ -326,6 +332,8 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 							}
 							j++;
 						}
+						// Record identifier uses within for-header to avoid false "unused" and track refs
+						analyzeIdUsesInRange(headerStart, j, usedLocalOrParamNames);
 						// position main scanner after the for-header ')'
 						i = j; continue;
 					}
@@ -522,6 +530,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 						const found = lookup(b.value);
 						if (found) {
 							refs.push({ name: b.value, range: mkRange(doc, b.start, b.end) });
+							refTargets.set(b.start, found);
 							if (found.kind === 'param' || found.kind === 'var') {
 								usedLocalOrParamNames.add(found.name);
 							}
@@ -768,9 +777,9 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 							const found = lookup(b.value);
 							if (found) {
 								refs.push({ name: b.value, range: mkRange(doc, b.start, b.end) });
+								refTargets.set(b.start, found);
 								if (found.kind === 'param' || found.kind === 'var') usedLocalOrParamNames.add(found.name);
-							}
-							else if (!isKnownNonVar(b.value)) {
+							} else if (!isKnownNonVar(b.value)) {
 								diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER, message: `Unknown identifier "${b.value}"`, range: mkRange(doc, b.start, b.end), severity: DiagnosticSeverity.Warning });
 							}
 						}
@@ -966,6 +975,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 						const found = lookup(b.value);
 						if (found) {
 							refs.push({ name: b.value, range: mkRange(doc, b.start, b.end) });
+							refTargets.set(b.start, found);
 							if (found.kind === 'param' || found.kind === 'var') usedLocalOrParamNames.add(found.name);
 						} else if (!isKnownNonVar(b.value)) {
 							diagnostics.push({
@@ -1069,7 +1079,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 		// Track identifier uses to compute "unused" later
 		if (isId(t)) {
 			const d = lookup(t.value);
-			if (d) { refs.push({ name: t.value, range: mkRange(doc, t.start, t.end) }); }
+			if (d) { refs.push({ name: t.value, range: mkRange(doc, t.start, t.end) }); refTargets.set(t.start, d); }
 			else {
 				// Unknown identifier or constant? Check defs and macros
 				if (isKnownNonVar(t.value)) {
@@ -1282,7 +1292,8 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 				if (offset >= s && offset <= e) return d;
 			}
 			return null;
-		}
+		},
+		refAt(offset: number) { return refTargets.get(offset) || null; }
 	};
 }
 
@@ -1388,6 +1399,10 @@ function validateOperators(doc: TextDocument, tokens: Token[], diagnostics: Diag
 	for (let i = 0; i < tokens.length; i++) {
 		const t = tokens[i];
 		if (t.kind !== 'op') continue;
+		// Skip logical operators '||' and '&&' entirely; we don't type-check them here
+		if ((t.value === '|' && tokens[i + 1]?.value === '|') || (t.value === '&' && tokens[i + 1]?.value === '&')) {
+			continue;
+		}
 		// Merge two-char ops like <<, >> and then filter of interest
 		let opVal = t.value;
 		if ((opVal === '<' || opVal === '>') && tokens[i + 1]?.value === opVal) { opVal = opVal + opVal; }
