@@ -5,9 +5,9 @@ import Ajv2020 from 'ajv/dist/2020';
 import schema from '../../common/lslDefSchema.json';
 
 export interface DefParam { name: string; type: string; doc?: string; default?: any; }
-export interface DefFunction { name: string; returns: string; params: DefParam[]; doc?: string; deprecated?: boolean; overloads?: DefFunction[]; }
-export interface DefEvent { name: string; params: DefParam[]; doc?: string; }
-export interface DefConst { name: string; type: string; value?: any; doc?: string; deprecated?: boolean; }
+export interface DefFunction { name: string; returns: string; params: DefParam[]; doc?: string; deprecated?: boolean; overloads?: DefFunction[]; wiki?: string; }
+export interface DefEvent { name: string; params: DefParam[]; doc?: string; wiki?: string; }
+export interface DefConst { name: string; type: string; value?: any; doc?: string; deprecated?: boolean; wiki?: string; }
 export interface DefFile {
 	version: string;
 	types: string[];

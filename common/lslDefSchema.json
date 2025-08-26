@@ -35,6 +35,9 @@
 					"type": {
 						"type": "string"
 					},
+					"wiki": {
+						"type": "string"
+					},
 					"value": {
 						"type": [
 							"string",
@@ -61,6 +64,9 @@
 				],
 				"properties": {
 					"name": {
+						"type": "string"
+					},
+					"wiki": {
 						"type": "string"
 					},
 					"params": {
@@ -104,6 +110,9 @@
 						"type": "string"
 					},
 					"returns": {
+						"type": "string"
+					},
+					"wiki": {
 						"type": "string"
 					},
 					"params": {

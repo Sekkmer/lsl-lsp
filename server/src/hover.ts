@@ -81,7 +81,11 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 			}
 		}
 		const sig = `// constant\n${c.type} ${c.name}${valStr}`;
-		const body = [ '```lsl', sig, '```', c.doc ? `\n${c.doc}` : '' ].filter(Boolean).join('\n');
+		const parts = [ '```lsl', sig, '```' ];
+		if (c.doc) parts.push('', c.doc);
+		const wikiLink = (c as any).wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(c.name)}`;
+		parts.push('', `[Wiki](${wikiLink})`);
+		const body = parts.join('\n');
 		return { contents: { kind: MarkupKind.Markdown, value: body } };
 	}
 	if (defs.funcs.has(w)) {
@@ -89,7 +93,22 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		const lines = fs.map(fn => `${fn.returns} ${fn.name}(${fn.params.map(p=>`${p.type} ${p.name}`).join(', ')})`);
 		const code = ['```lsl', ...lines, '```'].join('\n');
 		const docstr = fs[0].doc ?? '';
-		return { contents: { kind: MarkupKind.Markdown, value: docstr ? `${code}\n\n${docstr}` : code } };
+		// Collect any parameter docs; prefer first overload having docs
+		let paramDocs = '';
+		for (const f of fs) {
+			const withDocs = (f.params || []).filter(p => p.doc && p.doc.trim().length > 0);
+			if (withDocs.length > 0) {
+				const bullets = withDocs.map(p => `- ${p.name}: ${p.doc}`);
+				paramDocs = bullets.join('\n');
+				break;
+			}
+		}
+		const parts = [code];
+		if (docstr) parts.push('', docstr);
+		if (paramDocs) parts.push('', 'Parameters:', paramDocs);
+		const wiki = (fs.find(f => (f as any).wiki) as any)?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
+		parts.push('', `[Wiki](${wiki})`);
+		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
 	// Include-provided function hover
 	if (pre && pre.includeSymbols && pre.includeSymbols.size > 0) {
@@ -134,7 +153,13 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		const ev = defs.events.get(w)!;
 		const sig = `event ${ev.name}(${ev.params.map(p=>`${p.type} ${p.name}`).join(', ')})`;
 		const code = ['```lsl', sig, '```'].join('\n');
-		return { contents: { kind: MarkupKind.Markdown, value: ev.doc ? `${code}\n\n${ev.doc}` : code } };
+		const paramDocs = (ev.params || []).filter(p => p.doc && p.doc.trim().length > 0).map(p => `- ${p.name}: ${p.doc}`).join('\n');
+		const parts = [code];
+		if (ev.doc) parts.push('', ev.doc);
+		if (paramDocs) parts.push('', 'Parameters:', paramDocs);
+		const wiki = (ev as any).wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(ev.name)}`;
+		parts.push('', `[Wiki](${wiki})`);
+		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
 	if (defs.types.has(w)) {
 		const code = ['```lsl', `type ${w}`, '```'].join('\n');
