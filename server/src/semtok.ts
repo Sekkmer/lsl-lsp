@@ -59,7 +59,26 @@ export function buildSemanticTokens(
 	}
 
 	// Pre-scan to find write occurrences and counts; prefer per-declaration when analysis is available.
-	const { writeCountsByDecl, writeCountsByName } = computeWrites(toks, analysis);
+	const { writeCountsByDecl, writeCountsByName, firstWriteByDecl, firstWriteByName } = computeWrites(toks, analysis);
+
+	function isReadonlyForToken(decl: Decl, tokenOffset: number): boolean {
+		// Parameters: readonly until first write; if never written, readonly everywhere
+		if (decl.kind === 'param') {
+			const k = keyForDecl(decl);
+			const cnt = writeCountsByDecl.get(k);
+			if (cnt == null) {
+				const nameCnt = writeCountsByName.get(decl.name) || 0;
+				if (nameCnt === 0) return true;
+				const first = firstWriteByName.get(decl.name);
+				return first != null ? tokenOffset < first : true;
+			}
+			if (cnt === 0) return true;
+			const first = firstWriteByDecl.get(k);
+			return first != null ? tokenOffset < first : true;
+		}
+		// Variables/globals: keep declaration-wide policy (<=1 writes considered readonly)
+		return isReadonlyDecl(decl, writeCountsByDecl, writeCountsByName);
+	}
 
 	function push(t: Token, type: number, mods = 0) {
 		const start = doc.positionAt(t.start);
@@ -113,15 +132,15 @@ export function buildSemanticTokens(
 
 		if (t.kind === 'id') {
 			// Declarations: classify var/param names where the symbolAt points to a declaration range
-			if (analysis) {
+	    if (analysis) {
 				const decl = analysis.symbolAt(t.start);
 				if (decl) {
-					const ro = isReadonlyDecl(decl, writeCountsByDecl, writeCountsByName);
+	    	const ro = isReadonlyForToken(decl, t.start);
 					const atWrite = false; // declarations are not writes
 					const mods = (ro ? bit('readonly') : 0) | (atWrite ? bit('modification') : 0);
 					if (decl.kind === 'event') { push(t, idx('function'), mods); continue; }
-					if (decl.kind === 'param') { push(t, idx('parameter'), mods); continue; }
-					if (decl.kind === 'var') { push(t, idx('variable'), mods); continue; }
+	    	if (decl.kind === 'param') { push(t, idx('parameter'), mods); continue; }
+	    	if (decl.kind === 'var') { push(t, idx('variable'), mods); continue; }
 				}
 			}
 			// Function calls: if next token is '(' treat as function/event/macro
@@ -143,12 +162,13 @@ export function buildSemanticTokens(
 			if (pre && pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, t.value)) { push(t, idx('macro')); continue; }
 			if (t.value === '__LINE__') { push(t, idx('macro')); continue; }
 			// Variable/parameter uses: prefer scope-aware classification via refAt
-			if (analysis) {
+	    if (analysis) {
 				const target = analysis.refAt(t.start);
 				if (target && (target.kind === 'param' || target.kind === 'var')) {
 					const atWrite = isWriteUse(toks, ti);
-					// Parameters are always readonly; variables: readonly is decided per-declaration across the entire scope.
-					const ro = target.kind === 'param' ? true : isReadonlyDecl(target, writeCountsByDecl, writeCountsByName);
+	    	// Readonly decided per-token for parameters (until first write),
+	    	// and per-declaration for variables/globals.
+	    	const ro = isReadonlyForToken(target, t.start);
 					const mods = (ro ? bit('readonly') : 0) | (atWrite ? bit('modification') : 0);
 					push(t, idx(target.kind === 'param' ? 'parameter' : 'variable'), mods);
 					continue;
@@ -178,8 +198,12 @@ function keyForDecl(d: Decl): string {
 function isReadonlyDecl(decl: Decl, countsByDecl: Map<string, number>, fallbackByName: Map<string, number>): boolean {
 	const k = keyForDecl(decl);
 	const c = countsByDecl.get(k);
-	// Parameters are readonly by language semantics; always mark as readonly.
-	if (decl.kind === 'param') return true;
+	// Parameters: readonly only if never written.
+	if (decl.kind === 'param') {
+		if (c != null) return c === 0;
+		const n = fallbackByName.get(decl.name) || 0;
+		return n === 0;
+	}
 	// For variables/globals: treat single write (typically initializer) as readonly
 	if (c != null) return c <= 1;
 	// Fallback on name if unresolved

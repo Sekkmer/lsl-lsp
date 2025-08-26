@@ -36,6 +36,10 @@
 		{
 			"name": "NULL_KEY",
 			"type": "key"
+		},
+		{
+			"name": "STRING_TRIM",
+			"type": "integer"
 		}
 	],
 	"events": [
@@ -51,6 +55,24 @@
 					"type": "integer",
 					"doc": "Number of detected touches."
 				}
+			]
+		},
+		{
+			"name": "http_response",
+			"params": [
+				{ "name": "id", "type": "key" },
+				{ "name": "status", "type": "integer" },
+				{ "name": "metadata", "type": "list" },
+				{ "name": "body", "type": "string" }
+			]
+		},
+		{
+			"name": "listen",
+			"params": [
+				{ "name": "channel", "type": "integer" },
+				{ "name": "name", "type": "string" },
+				{ "name": "id", "type": "key" },
+				{ "name": "message", "type": "string" }
 			]
 		}
 	],
@@ -72,9 +94,24 @@
 			]
 		},
 		{
+			"name": "llOwnerSay",
+			"returns": "void",
+			"params": [
+				{ "name": "msg", "type": "string" }
+			]
+		},
+		{
 			"name": "llGetOwner",
 			"returns": "key",
 			"params": []
+		},
+		{
+			"name": "llStringTrim",
+			"returns": "string",
+			"params": [
+				{ "name": "src", "type": "string" },
+				{ "name": "opts", "type": "integer" }
+			]
 		}
 	]
 }
