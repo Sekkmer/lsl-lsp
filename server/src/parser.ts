@@ -8,6 +8,7 @@ export const LSL_DIAGCODES = {
 	SYNTAX: 'LSL000',
 	UNKNOWN_IDENTIFIER: 'LSL001',
 	UNKNOWN_CONST: 'LSL002',
+	INVALID_ASSIGN_LHS: 'LSL050',
 	WRONG_ARITY: 'LSL010',
 	WRONG_TYPE: 'LSL011',
 	EVENT_OUTSIDE_STATE: 'LSL020',
@@ -1265,6 +1266,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 	}
 	validateOperators(doc, tokens, diagnostics, symbolTypes);
 	validateSuspiciousAssignments(doc, tokens, diagnostics);
+	validateAssignmentLHS(doc, tokens, diagnostics);
 	// Apply diagnostic suppression based on preprocessor directives
 	const dd = pre.diagDirectives;
 	let finalDiagnostics = diagnostics;
@@ -1545,6 +1547,76 @@ function validateSuspiciousAssignments(doc: TextDocument, tokens: Token[], diagn
 				break;
 			}
 			j++;
+		}
+	}
+}
+
+// Enforce: Left-hand side of assignment must be an lvalue (a variable or member like v.x), not a literal or call.
+// Heuristics: detect simple '=' where neighbors aren't '=' '!' '<' '>' to avoid '==' '<=' etc.
+// Determine LHS base token at same paren/bracket/brace/vector depth and check it isn't a literal or a call.
+function validateAssignmentLHS(doc: TextDocument, tokens: Token[], diagnostics: Diag[]) {
+	for (let i = 0; i < tokens.length; i++) {
+		const t = tokens[i];
+		if (!(t.kind === 'op' && t.value === '=')) continue;
+		const prev = tokens[i - 1]?.value || '';
+		const next = tokens[i + 1]?.value || '';
+		// skip '==', '!=', '<=', '>=', '=>', '=<', '<<=', '>>='
+		if (prev === '=' || next === '=' || prev === '!' || prev === '<' || prev === '>' || next === '<' || next === '>') continue;
+		// Find LHS start token index at same depth
+		let j = i - 1;
+		let p = 0, b = 0, c = 0, v = 0; // () [] {} <>
+		// Walk left to the first token that is separated by operators/semicolons/commas at zero depth
+		while (j >= 0) {
+			const tk = tokens[j];
+			if (!tk) break;
+			if (tk.value === ')') { p++; j--; continue; }
+			if (tk.value === '(') { if (p>0) { p--; j--; continue; } }
+			if (tk.value === ']') { b++; j--; continue; }
+			if (tk.value === '[') { if (b>0) { b--; j--; continue; } }
+			if (tk.value === '}') { c++; j--; continue; }
+			if (tk.value === '{') { if (c>0) { c--; j--; continue; } }
+			if (tk.value === '>') { v++; j--; continue; }
+			if (tk.value === '<') { if (v>0) { v--; j--; continue; } }
+			// At zero depth and we hit a separator, stop before it
+			if (p === 0 && b === 0 && c === 0 && v === 0) {
+				if (tk.kind === 'punc' && (tk.value === ';' || tk.value === ',')) { j++; break; }
+				// For binary operators, stop after it
+				if (tk.kind === 'op' && tk.value !== '.' && tk.value !== '_' ) { j++; break; }
+			}
+			j--;
+		}
+		if (j < 0) j = 0;
+		// The LHS ends at i-1; we now determine if it's a valid lvalue.
+		// Accept patterns: id, id . id, id [ ... ] (indexing), and parenthesized id/member.
+		// We don't need full lvalue detection yet; handle obvious errors conservatively.
+		// Quick checks for obvious non-lvalues: if token before '=' is a string/number literal or ')'
+		const last = tokens[i - 1];
+		let bad = false;
+		if (!last) continue;
+		if (last.kind === 'str' || last.kind === 'num') bad = true;
+		else if (last.value === ')') {
+			// Walk left to matching '('
+			let d = 1; let k = i - 2; let openIdx = -1;
+			while (k >= 0) {
+				const v = tokens[k].value;
+				if (v === ')') d++; else if (v === '(') { d--; if (d === 0) { openIdx = k; break; } }
+				k--;
+			}
+			if (openIdx >= 1) {
+				const beforeOpen = tokens[openIdx - 1];
+				// If immediately before '(' is an id, treat as call result -> invalid LHS
+				if (beforeOpen && beforeOpen.kind === 'id') bad = true;
+			}
+		}
+		// Also if last token is ']' (indexing), allow: array[index] = ...
+		if (last.value === ']') bad = false; // allow indexing writes
+		if (bad) {
+			diagnostics.push({
+				code: LSL_DIAGCODES.INVALID_ASSIGN_LHS,
+				message: 'Left-hand side of assignment must be a variable',
+				range: mkRange(doc, t.start, t.end),
+				severity: DiagnosticSeverity.Error
+			});
 		}
 	}
 }
