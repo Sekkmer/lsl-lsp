@@ -26,6 +26,7 @@ export function buildSemanticTokens(
 	analysis?: Analysis
 ): SemanticTokens {
 	const b = new SemanticTokensBuilder();
+	const hasDeclAnalysis = !!analysis;
 
 	function isWriteUse(tokens: Token[], i: number): boolean {
 		const t = tokens[i];
@@ -47,13 +48,16 @@ export function buildSemanticTokens(
 		const ops: string[] = [];
 		while (j < tokens.length && tokens[j].kind === 'op') { ops.push(tokens[j].value); j++; }
 		if (ops.length > 0) {
-			const last = ops[ops.length - 1];
-			const prev = ops.length >= 2 ? ops[ops.length - 2] : '';
-			const prev2 = ops.length >= 3 ? ops[ops.length - 3] : '';
-			const endsWithEq = last === '=';
-			const isEquality = endsWithEq && (prev === '=' || prev === '!');
-			const isRelationalLeGe = endsWithEq && ((prev === '<' && prev2 !== '<') || (prev === '>' && prev2 !== '>'));
-			if (endsWithEq && !isEquality && !isRelationalLeGe) return true;
+			// Find the first '=' in the operator run; operators after '=' belong to RHS and shouldn't influence detection
+			const eqIdx = ops.indexOf('=');
+			if (eqIdx >= 0) {
+				const prev = eqIdx >= 1 ? ops[eqIdx - 1] : '';
+				const prev2 = eqIdx >= 2 ? ops[eqIdx - 2] : '';
+				const next = eqIdx + 1 < ops.length ? ops[eqIdx + 1] : '';
+				const isEquality = (prev === '=' || prev === '!') || next === '='; // '==', '!='
+				const isRelationalLeGe = (prev === '<' && prev2 !== '<') || (prev === '>' && prev2 !== '>'); // '<=' or '>='
+				if (!isEquality && !isRelationalLeGe) return true; // '=', '+=', '-=', '*=', '/=', '%=', '<<=', '>>=', '&=', '|=', '^=' ...
+			}
 		}
 		return false;
 	}
@@ -66,18 +70,35 @@ export function buildSemanticTokens(
 		if (decl.kind === 'param') {
 			const k = keyForDecl(decl);
 			const cnt = writeCountsByDecl.get(k);
-			if (cnt == null) {
+			if (hasDeclAnalysis) {
+				// With decl-aware analysis, missing means zero writes
+				if (cnt == null || cnt === 0) return true;
+				const first = firstWriteByDecl.get(k);
+				return first != null ? tokenOffset < first : true;
+			} else {
+				// Fallback by name only when decl mapping isn’t available
 				const nameCnt = writeCountsByName.get(decl.name) || 0;
 				if (nameCnt === 0) return true;
 				const first = firstWriteByName.get(decl.name);
 				return first != null ? tokenOffset < first : true;
 			}
-			if (cnt === 0) return true;
-			const first = firstWriteByDecl.get(k);
-			return first != null ? tokenOffset < first : true;
 		}
-		// Variables/globals: keep declaration-wide policy (<=1 writes considered readonly)
-		return isReadonlyDecl(decl, writeCountsByDecl, writeCountsByName);
+		// Variables/globals: readonly only when there are NO writes except an optional declaration initializer.
+		// Any non-declaration write (assignment, ++/--) anywhere in the file should remove readonly.
+		const k = keyForDecl(decl);
+		const cnt = writeCountsByDecl.get(k);
+		if (!hasDeclAnalysis && cnt == null) {
+			// Fallback by name when declaration mapping is unavailable
+			const n = writeCountsByName.get(decl.name) || 0;
+			// If there's any write by name, assume not readonly; only zero writes => readonly
+			return n === 0;
+		}
+		if (cnt != null && cnt === 0) return true; // nothing wrote at all
+		if (cnt != null && cnt >= 2) return false; // at least one non-decl write exists in addition to potential initializer
+		// cnt === 1: readonly only if that single write is the declaration initializer
+		const declStartOffset = doc.offsetAt(decl.range.start);
+		const first = firstWriteByDecl.get(k);
+		return first === declStartOffset;
 	}
 
 	function push(t: Token, type: number, mods = 0) {
@@ -195,21 +216,7 @@ function keyForDecl(d: Decl): string {
 	return `${d.kind}:${(d.range.start.line)}:${(d.range.start.character)}-${(d.range.end.line)}:${(d.range.end.character)}:${d.name}`;
 }
 
-function isReadonlyDecl(decl: Decl, countsByDecl: Map<string, number>, fallbackByName: Map<string, number>): boolean {
-	const k = keyForDecl(decl);
-	const c = countsByDecl.get(k);
-	// Parameters: readonly only if never written.
-	if (decl.kind === 'param') {
-		if (c != null) return c === 0;
-		const n = fallbackByName.get(decl.name) || 0;
-		return n === 0;
-	}
-	// For variables/globals: treat single write (typically initializer) as readonly
-	if (c != null) return c <= 1;
-	// Fallback on name if unresolved
-	const n = fallbackByName.get(decl.name) || 0;
-	return n <= 1;
-}
+// Note: isReadonlyDecl helper removed; logic inlined in isReadonlyForToken for clarity.
 
 function computeWrites(toks: Token[], analysis?: Analysis): {
 	writeCountsByDecl: Map<string, number>;
@@ -265,24 +272,26 @@ function computeWrites(toks: Token[], analysis?: Analysis): {
 		const ops: string[] = [];
 		while (j < toks.length && toks[j].kind === 'op') { ops.push(toks[j].value); j++; }
 		if (ops.length > 0) {
-			const last = ops[ops.length - 1];
-			const prev = ops.length >= 2 ? ops[ops.length - 2] : '';
-			const prev2 = ops.length >= 3 ? ops[ops.length - 3] : '';
-			const endsWithEq = last === '=';
-			// Exclude equality (==) and inequality (!=)
-			const isEquality = endsWithEq && (prev === '=' || prev === '!');
-			// Exclude simple relational <= or >= (but allow <<=/>>= compound assigns)
-			const isRelationalLeGe = endsWithEq && ((prev === '<' && prev2 !== '<') || (prev === '>' && prev2 !== '>'));
-			if (endsWithEq && !isEquality && !isRelationalLeGe) {
-				bump(countsByName, t.value);
-				if (!firstByName.has(t.value)) firstByName.set(t.value, t.start); else { const cur = firstByName.get(t.value)!; if (t.start < cur) firstByName.set(t.value, t.start); }
-				const d = analysis ? (analysis.refAt(t.start) || analysis.symbolAt(t.start)) : null;
-				if (d) {
-					const k = keyForDecl(d);
-					bump(countsByDecl, k);
-					if (!firstByDecl.has(k) || t.start < (firstByDecl.get(k) as number)) firstByDecl.set(k, t.start);
+			const eqIdx = ops.indexOf('=');
+			if (eqIdx >= 0) {
+				const prev = eqIdx >= 1 ? ops[eqIdx - 1] : '';
+				const prev2 = eqIdx >= 2 ? ops[eqIdx - 2] : '';
+				const next = eqIdx + 1 < ops.length ? ops[eqIdx + 1] : '';
+				// Exclude equality (==) and inequality (!=)
+				const isEquality = (prev === '=' || prev === '!') || next === '=';
+				// Exclude simple relational <= or >= (but allow <<=/>>= compound assigns)
+				const isRelationalLeGe = (prev === '<' && prev2 !== '<') || (prev === '>' && prev2 !== '>');
+				if (!isEquality && !isRelationalLeGe) {
+					bump(countsByName, t.value);
+					if (!firstByName.has(t.value)) firstByName.set(t.value, t.start); else { const cur = firstByName.get(t.value)!; if (t.start < cur) firstByName.set(t.value, t.start); }
+					const d = analysis ? (analysis.refAt(t.start) || analysis.symbolAt(t.start)) : null;
+					if (d) {
+						const k = keyForDecl(d);
+						bump(countsByDecl, k);
+						if (!firstByDecl.has(k) || t.start < (firstByDecl.get(k) as number)) firstByDecl.set(k, t.start);
+					}
+					offsets.add(t.start); continue;
 				}
-				offsets.add(t.start); continue;
 			}
 		}
 	}

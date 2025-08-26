@@ -1432,8 +1432,11 @@ function validateOperators(doc: TextDocument, tokens: Token[], diagnostics: Diag
 	for (let i = 0; i < tokens.length; i++) {
 		const t = tokens[i];
 		if (t.kind !== 'op') continue;
-		// Skip logical operators '||' and '&&' entirely; we don't type-check them here
-		if ((t.value === '|' && tokens[i + 1]?.value === '|') || (t.value === '&' && tokens[i + 1]?.value === '&')) {
+		// Skip logical operators '||' and '&&' entirely (both the first and second character tokens)
+		if (
+			(t.value === '|' && (tokens[i - 1]?.value === '|' || tokens[i + 1]?.value === '|')) ||
+			(t.value === '&' && (tokens[i - 1]?.value === '&' || tokens[i + 1]?.value === '&'))
+		) {
 			continue;
 		}
 		// Merge two-char ops like <<, >> and then filter of interest
