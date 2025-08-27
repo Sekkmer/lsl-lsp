@@ -11,11 +11,16 @@ export const LSL_DIAGCODES = {
 	INVALID_ASSIGN_LHS: 'LSL050',
 	WRONG_ARITY: 'LSL010',
 	WRONG_TYPE: 'LSL011',
+	LIST_COMPARISON_LENGTH_ONLY: 'LSL012',
 	EVENT_OUTSIDE_STATE: 'LSL020',
 	UNKNOWN_EVENT: 'LSL021',
 	UNKNOWN_STATE: 'LSL030',
 	ILLEGAL_STATE_DECL: 'LSL022',
 	ILLEGAL_STATE_CHANGE: 'LSL023',
+	EMPTY_EVENT_BODY: 'LSL024',
+	EMPTY_FUNCTION_BODY: 'LSL025',
+	EMPTY_IF_BODY: 'LSL026',
+	EMPTY_ELSE_BODY: 'LSL027',
 	MISSING_RETURN: 'LSL040',
 	RETURN_IN_VOID: 'LSL041',
 	RETURN_WRONG_TYPE: 'LSL042',
@@ -333,6 +338,15 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 			if (peek()?.value === '{') {
 				const bodyOpenIndex = i; // current token is '{'
 				eat();
+				// Empty function body check
+				if (peek()?.value === '}') {
+					diagnostics.push({
+						code: LSL_DIAGCODES.EMPTY_FUNCTION_BODY,
+						message: 'Empty function body is not allowed',
+						range: mkRange(doc, tokens[i - 1].start, tokens[i - 1].end),
+						severity: DiagnosticSeverity.Error
+					});
+				}
 				currentBlockDepth = 0; // enter function body
 				inFunctionBody = true;
 				// Create scopes for params+locals already active; nested blocks will push further scopes
@@ -511,6 +525,41 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 							}
 						}
 						continue;
+					}
+					// Detect empty if-body pattern: if (<cond>) ;
+					if (b.kind === 'id' && b.value === 'if' && peek(1)?.value === '(') {
+						// scan to matching ')'
+						let j = i + 2; let pd = 1;
+						while (j < tokens.length && pd > 0) {
+							const tk = tokens[j++];
+							if (tk.value === '(') pd++; else if (tk.value === ')') pd--;
+						}
+						const after = tokens[j];
+						if (after && after.value === ';') {
+							diagnostics.push({ code: LSL_DIAGCODES.EMPTY_IF_BODY, message: 'Empty if-body (;) is not allowed', range: mkRange(doc, after.start, after.end), severity: DiagnosticSeverity.Error });
+							// advance past ';'
+							i = j + 1; continue;
+						}
+						// also flag empty block body: if (...) { }
+						if (after && after.value === '{' && tokens[j + 1]?.value === '}') {
+							diagnostics.push({ code: LSL_DIAGCODES.EMPTY_IF_BODY, message: 'Empty if-body is not allowed', range: mkRange(doc, after.start, tokens[j + 1]!.end), severity: DiagnosticSeverity.Error });
+							i = j + 2; continue;
+						}
+					}
+					// Detect empty else-body patterns: else ; and else { } (but not else if)
+					if (b.kind === 'id' && b.value === 'else') {
+						const n1 = peek(1);
+						if (n1 && n1.value === ';') {
+							diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body (;) is not allowed', range: mkRange(doc, n1.start, n1.end), severity: DiagnosticSeverity.Error });
+							// consume else ;
+							i += 2; continue;
+						}
+						// else { }
+						if (n1 && n1.value === '{' && tokens[i + 2]?.value === '}') {
+							diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body is not allowed', range: mkRange(doc, n1.start, tokens[i + 2]!.end), severity: DiagnosticSeverity.Error });
+							// consume else { }
+							i += 3; continue;
+						}
 					}
 					// state change statements: state <id> ;
 					if (b.kind === 'id' && b.value === 'state' && isId(peek(1)) && peek(2)?.value === ';') {
@@ -726,6 +775,10 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 				if (peek()?.value === '{') {
 					// current token is '{'
 					eat();
+					// Empty function body check for void functions
+					if (peek()?.value === '}') {
+						diagnostics.push({ code: LSL_DIAGCODES.EMPTY_FUNCTION_BODY, message: 'Empty function body is not allowed', range: mkRange(doc, tokens[i - 1].start, tokens[i - 1].end), severity: DiagnosticSeverity.Error });
+					}
 					currentBlockDepth = 0; // enter void function body
 					inFunctionBody = true;
 					const bodyStartOffset = tokens[i - 1].start; // '{'
@@ -757,6 +810,21 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 								j++;
 							}
 							i = j; continue;
+						}
+						// empty if-body in void function
+						if (b.kind === 'id' && b.value === 'if' && peek(1)?.value === '(') {
+							let j = i + 2; let pd = 1;
+							while (j < tokens.length && pd > 0) { const tk = tokens[j++]; if (tk.value === '(') pd++; else if (tk.value === ')') pd--; }
+							const after = tokens[j];
+							if (after && after.value === ';') { diagnostics.push({ code: LSL_DIAGCODES.EMPTY_IF_BODY, message: 'Empty if-body (;) is not allowed', range: mkRange(doc, after.start, after.end), severity: DiagnosticSeverity.Error }); i = j + 1; continue; }
+							// also flag empty block body: if (...) { }
+							if (after && after.value === '{' && tokens[j + 1]?.value === '}') { diagnostics.push({ code: LSL_DIAGCODES.EMPTY_IF_BODY, message: 'Empty if-body is not allowed', range: mkRange(doc, after.start, tokens[j + 1]!.end), severity: DiagnosticSeverity.Error }); i = j + 2; continue; }
+						}
+						// empty else-body in void function (not else if)
+						if (b.kind === 'id' && b.value === 'else') {
+							const n1 = peek(1);
+							if (n1 && n1.value === ';') { diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body (;) is not allowed', range: mkRange(doc, n1.start, n1.end), severity: DiagnosticSeverity.Error }); i += 2; continue; }
+							if (n1 && n1.value === '{' && tokens[i + 2]?.value === '}') { diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body is not allowed', range: mkRange(doc, n1.start, tokens[i + 2]!.end), severity: DiagnosticSeverity.Error }); i += 3; continue; }
 						}
 						// return statements
 						if (b.kind === 'id' && b.value === 'return') {
@@ -1005,6 +1073,10 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 			if (peek()?.value === ')') eat();
 			if (peek()?.value === '{') {
 				eat();
+				// Empty event body not allowed
+				if (peek()?.value === '}') {
+					diagnostics.push({ code: LSL_DIAGCODES.EMPTY_EVENT_BODY, message: 'Empty event body is not allowed', range: mkRange(doc, tokens[i - 1].start, tokens[i - 1].end), severity: DiagnosticSeverity.Error });
+				}
 				currentBlockDepth = 0; // enter event body
 				inEventBody = true;
 				let depth = 1;
@@ -1014,6 +1086,21 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 					const b = peek()!;
 					if (b.value === '{') { eat(); depth++; currentBlockDepth++; pushScope(); continue; }
 					if (b.value === '}') { eat(); if (depth > 1) { currentBlockDepth = Math.max(0, currentBlockDepth - 1); popScope(); } depth--; continue; }
+					// Detect empty if-body pattern: if (<cond>) ;
+					if (b.kind === 'id' && b.value === 'if' && peek(1)?.value === '(') {
+						let j = i + 2; let pd = 1;
+						while (j < tokens.length && pd > 0) { const tk = tokens[j++]; if (tk.value === '(') pd++; else if (tk.value === ')') pd--; }
+						const after = tokens[j];
+						if (after && after.value === ';') { diagnostics.push({ code: LSL_DIAGCODES.EMPTY_IF_BODY, message: 'Empty if-body (;) is not allowed', range: mkRange(doc, after.start, after.end), severity: DiagnosticSeverity.Error }); i = j + 1; continue; }
+						// also flag empty block body: if (...) { }
+						if (after && after.value === '{' && tokens[j + 1]?.value === '}') { diagnostics.push({ code: LSL_DIAGCODES.EMPTY_IF_BODY, message: 'Empty if-body is not allowed', range: mkRange(doc, after.start, tokens[j + 1]!.end), severity: DiagnosticSeverity.Error }); i = j + 2; continue; }
+					}
+					// Detect empty else-body patterns: else ; and else { } (but not else if)
+					if (b.kind === 'id' && b.value === 'else') {
+						const n1 = peek(1);
+						if (n1 && n1.value === ';') { diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body (;) is not allowed', range: mkRange(doc, n1.start, n1.end), severity: DiagnosticSeverity.Error }); i += 2; continue; }
+						if (n1 && n1.value === '{' && tokens[i + 2]?.value === '}') { diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body is not allowed', range: mkRange(doc, n1.start, tokens[i + 2]!.end), severity: DiagnosticSeverity.Error }); i += 3; continue; }
+					}
 					// state transition on a single line
 					if (b.kind === 'id' && b.value === 'state' && isId(peek(1)) && peek(2)?.value === ';') {
 						const _sTok = eat()!; const _nm = eat()!; const semi = eat()!;
@@ -1367,6 +1454,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 	validateOperators(doc, tokens, diagnostics, symbolTypes);
 	validateSuspiciousAssignments(doc, tokens, diagnostics);
 	validateAssignmentLHS(doc, tokens, diagnostics);
+	validateListComparisons(doc, tokens, diagnostics, symbolTypes);
 	// Apply diagnostic suppression based on preprocessor directives
 	const dd = pre.diagDirectives;
 	let finalDiagnostics = diagnostics;
@@ -1721,6 +1809,42 @@ function validateAssignmentLHS(doc: TextDocument, tokens: Token[], diagnostics: 
 				severity: DiagnosticSeverity.Error
 			});
 		}
+	}
+}
+
+// Warn when comparing lists with '==' or '!=' since LSL compares lengths only (and '!=' returns length difference).
+// Exception: allow comparing against an empty list literal [] for common emptiness checks (both sides allowed).
+function validateListComparisons(doc: TextDocument, tokens: Token[], diagnostics: Diag[], symbolTypes: Map<string, string>) {
+	// Helper: detect immediate empty list literal at position k (tokens[k] is '[' and tokens[k+1] is ']')
+	const isEmptyListAt = (k: number) => tokens[k]?.value === '[' && tokens[k + 1]?.value === ']';
+
+	for (let j = 0; j < tokens.length - 1; j++) {
+		const a = tokens[j], b = tokens[j + 1];
+		const isEq = a.value === '=' && b.value === '=';
+		const isNe = a.value === '!' && b.value === '=';
+		if (!isEq && !isNe) continue;
+		// For left operand, anchor at first operator token (j)
+		const lt = guessLeftOperandType(tokens, j, symbolTypes);
+		// For right operand, start after the second operator token (j+1)
+		const opIdx = j + 1;
+		const rinfo = guessRightOperandType(tokens, opIdx, symbolTypes);
+		const rt = rinfo.type;
+
+		// Check for immediate empty list literal on either side (allow)
+		const rightEmpty = isEmptyListAt(opIdx + 1);
+		const leftEmpty = tokens[j - 1]?.value === ']' && tokens[j - 2]?.value === '[';
+
+		if ((lt === 'list' || leftEmpty) && (rt === 'list' || rightEmpty)) {
+			if (leftEmpty || rightEmpty) continue; // allow comparisons to [] for emptiness checks
+			const opText = isEq ? '==' : '!=';
+			diagnostics.push({
+				code: LSL_DIAGCODES.LIST_COMPARISON_LENGTH_ONLY,
+				message: `Comparing lists with ${opText} compares only length (not contents)`,
+				range: mkRange(doc, a.start, b.end),
+				severity: DiagnosticSeverity.Information,
+			});
+		}
+		j++; // skip the next token since we consumed a two-char operator
 	}
 }
 
