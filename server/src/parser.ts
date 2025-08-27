@@ -14,6 +14,8 @@ export const LSL_DIAGCODES = {
 	EVENT_OUTSIDE_STATE: 'LSL020',
 	UNKNOWN_EVENT: 'LSL021',
 	UNKNOWN_STATE: 'LSL030',
+	ILLEGAL_STATE_DECL: 'LSL022',
+	ILLEGAL_STATE_CHANGE: 'LSL023',
 	MISSING_RETURN: 'LSL040',
 	RETURN_IN_VOID: 'LSL041',
 	RETURN_WRONG_TYPE: 'LSL042',
@@ -66,7 +68,9 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 
 	// Very light state machine
 	let i = 0;
-	let inState: string | null = null;
+	 let inState: string | null = null;
+	 let inFunctionBody = false;
+	 let inEventBody = false;
 	let currentStateEvents: Set<string> | null = null;
 	let stmtStartIndex = 0; // index of the first token of the current statement
 
@@ -193,6 +197,26 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 	while (i < tokens.length) {
 		const t = peek(); if (!t) break;
 
+		// State change statement: state <id> ; — must be handled before state declaration parsing
+		// so that we don't treat it as a malformed state declaration missing a '{'.
+		if (t.kind === 'id' && t.value === 'state' && isId(peek(1)) && peek(2)?.value === ';') {
+			// Consume 'state' and the identifier
+			eat(); const sName = eat()!; // identifier
+			// Record a reference to the state identifier
+			refs.push({ name: sName.value, range: mkRange(doc, sName.start, sName.end) });
+			// Unknown state name (except default)
+			if (sName.value !== 'default' && !states.has(sName.value)) {
+				diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_STATE, message: `Unknown state "${sName.value}"`, range: mkRange(doc, sName.start, sName.end), severity: DiagnosticSeverity.Error });
+			}
+			// Enforce: only allowed inside event handlers
+			if (!inEventBody) {
+				diagnostics.push({ code: LSL_DIAGCODES.ILLEGAL_STATE_CHANGE, message: 'State change statements are only allowed inside event handlers', range: mkRange(doc, sName.start, sName.end), severity: DiagnosticSeverity.Error });
+			}
+			// Consume trailing ';'
+			if (peek()?.value === ';') eat();
+			continue;
+		}
+
 		// State declaration: state foo { ... } or default { ... }
 		if (t.kind === 'id' && t.value === 'state') {
 			const kw = eat()!;
@@ -201,6 +225,15 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 				eat();
 				const brace = peek();
 				if (brace?.value === '{') {
+					// Enforce: state declarations only allowed at global scope
+					if (inFunctionBody || inEventBody) {
+						diagnostics.push({
+							code: LSL_DIAGCODES.ILLEGAL_STATE_DECL,
+							message: 'State declarations are only allowed at global scope',
+							range: mkRange(doc, nameTok!.start, nameTok!.end),
+							severity: DiagnosticSeverity.Error
+						});
+					}
 					eat();
 					const d: Decl = { name: nameTok!.value, range: mkRange(doc, nameTok!.start, nameTok!.end), kind: 'state' };
 					states.set(d.name, d); decls.push(d);
@@ -219,6 +252,14 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 		if (t.kind === 'id' && t.value === 'default' && peek(1)?.value === '{') {
 			eat(); // default
 			eat(); // {
+			if (inFunctionBody || inEventBody) {
+				diagnostics.push({
+					code: LSL_DIAGCODES.ILLEGAL_STATE_DECL,
+					message: 'State declarations are only allowed at global scope',
+					range: mkRange(doc, t.start, t.end),
+					severity: DiagnosticSeverity.Error
+				});
+			}
 			const d: Decl = { name: 'default', range: mkRange(doc, t.start, t.end), kind: 'state' };
 			states.set(d.name, d); decls.push(d);
 			inState = d.name;
@@ -293,6 +334,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 				const bodyOpenIndex = i; // current token is '{'
 				eat();
 				currentBlockDepth = 0; // enter function body
+				inFunctionBody = true;
 				// Create scopes for params+locals already active; nested blocks will push further scopes
 				// Walk body with brace depth tracking and record returns
 				let depth = 1;
@@ -477,7 +519,32 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 						if (sName.value !== 'default' && !states.has(sName.value)) {
 							diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_STATE, message: `Unknown state "${sName.value}"`, range: mkRange(doc, sName.start, sName.end), severity: DiagnosticSeverity.Error });
 						}
+						// Disallow state changes inside functions
+						diagnostics.push({ code: LSL_DIAGCODES.ILLEGAL_STATE_CHANGE, message: 'State change statements are only allowed inside event handlers', range: mkRange(doc, sName.start, sName.end), severity: DiagnosticSeverity.Error });
 						if (peek()?.value === ';') eat();
+						continue;
+					}
+					// Illegal state declaration inside function body: state NAME { ... }
+					if (b.kind === 'id' && b.value === 'state' && isId(peek(1)) && peek(2)?.value === '{') {
+						const _sTok = eat()!; const nameTok = eat()!; eat(); // consume '{'
+						diagnostics.push({ code: LSL_DIAGCODES.ILLEGAL_STATE_DECL, message: 'State declarations are only allowed at global scope', range: mkRange(doc, nameTok.start, nameTok.end), severity: DiagnosticSeverity.Error });
+						// skip the block
+						let bd = 1;
+						while (i < tokens.length && bd > 0) {
+							const tk = tokens[i++];
+							if (tk.value === '{') bd++; else if (tk.value === '}') bd--; 
+						}
+						continue;
+					}
+					// Illegal default { ... } inside function body
+					if (b.kind === 'id' && b.value === 'default' && peek(1)?.value === '{') {
+						const _dTok = eat()!; eat(); // '{'
+						diagnostics.push({ code: LSL_DIAGCODES.ILLEGAL_STATE_DECL, message: 'State declarations are only allowed at global scope', range: mkRange(doc, _dTok.start, _dTok.end), severity: DiagnosticSeverity.Error });
+						let bd = 1;
+						while (i < tokens.length && bd > 0) {
+							const tk = tokens[i++];
+							if (tk.value === '{') bd++; else if (tk.value === '}') bd--;
+						}
 						continue;
 					}
 					// find locals: <type> <id> ; or =
@@ -594,6 +661,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 				}
 				popScope();
 				currentBlockDepth = -1; // exit function body
+				inFunctionBody = false;
 				// Use control-flow heuristic: if/else blocks with braces both returning implies function returns on all paths
 				if (fnDecl.type && fnDecl.type !== 'void') {
 					const always = blockAlwaysReturns(tokens, bodyOpenIndex);
@@ -659,6 +727,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 					// current token is '{'
 					eat();
 					currentBlockDepth = 0; // enter void function body
+					inFunctionBody = true;
 					const bodyStartOffset = tokens[i - 1].start; // '{'
 					let depth = 1;
 					let _sawReturn = false;
@@ -763,7 +832,31 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 							if (sName.value !== 'default' && !states.has(sName.value)) {
 								diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_STATE, message: `Unknown state "${sName.value}"`, range: mkRange(doc, sName.start, sName.end), severity: DiagnosticSeverity.Error });
 							}
+							// Disallow state changes inside functions
+							diagnostics.push({ code: LSL_DIAGCODES.ILLEGAL_STATE_CHANGE, message: 'State change statements are only allowed inside event handlers', range: mkRange(doc, sName.start, sName.end), severity: DiagnosticSeverity.Error });
 							if (peek()?.value === ';') eat();
+							continue;
+						}
+						// Illegal state declaration inside void function body
+						if (b.kind === 'id' && b.value === 'state' && isId(peek(1)) && peek(2)?.value === '{') {
+							const _sTok = eat()!; const nameTok = eat()!; eat(); // '{'
+							diagnostics.push({ code: LSL_DIAGCODES.ILLEGAL_STATE_DECL, message: 'State declarations are only allowed at global scope', range: mkRange(doc, nameTok.start, nameTok.end), severity: DiagnosticSeverity.Error });
+							let bd = 1;
+							while (i < tokens.length && bd > 0) {
+								const tk = tokens[i++];
+								if (tk.value === '{') bd++; else if (tk.value === '}') bd--;
+							}
+							continue;
+						}
+						// Illegal default { ... } inside void function body
+						if (b.kind === 'id' && b.value === 'default' && peek(1)?.value === '{') {
+							const _dTok = eat()!; eat(); // '{'
+							diagnostics.push({ code: LSL_DIAGCODES.ILLEGAL_STATE_DECL, message: 'State declarations are only allowed at global scope', range: mkRange(doc, _dTok.start, _dTok.end), severity: DiagnosticSeverity.Error });
+							let bd = 1;
+							while (i < tokens.length && bd > 0) {
+								const tk = tokens[i++];
+								if (tk.value === '{') bd++; else if (tk.value === '}') bd--;
+							}
 							continue;
 						}
 						if (isType(b) && isId(peek(1)) && [';', '='].includes(peek(2)?.value || '')) {
@@ -832,6 +925,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 					}
 					popScope();
 					currentBlockDepth = -1; // exit void function body
+					inFunctionBody = false;
 					// void functions don't need return; just close
 				}
 				continue;
@@ -912,6 +1006,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 			if (peek()?.value === '{') {
 				eat();
 				currentBlockDepth = 0; // enter event body
+				inEventBody = true;
 				let depth = 1;
 				const localDecls: Decl[] = [];
 				const usedLocalOrParamNames = new Set<string>();
@@ -1026,6 +1121,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 			}
 			popScope();
 			currentBlockDepth = -1; // exit event body
+			inEventBody = false;
 			continue;
 		}
 
@@ -1072,6 +1168,10 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 			refs.push({ name: sName.value, range: mkRange(doc, sName.start, sName.end) });
 			if (sName.value !== 'default' && !states.has(sName.value)) {
 				diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_STATE, message: `Unknown state "${sName.value}"`, range: mkRange(doc, sName.start, sName.end), severity: DiagnosticSeverity.Error });
+			}
+			// Enforce: state change only allowed inside event handlers (not in functions or global scope)
+			if (!inEventBody) {
+				diagnostics.push({ code: LSL_DIAGCODES.ILLEGAL_STATE_CHANGE, message: 'State change statements are only allowed inside event handlers', range: mkRange(doc, sName.start, sName.end), severity: DiagnosticSeverity.Error });
 			}
 			if (peek()?.value === ';') eat();
 			continue;
