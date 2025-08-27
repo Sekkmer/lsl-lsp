@@ -36,6 +36,7 @@ import { DocumentLink, DocumentLinkParams, DocumentFormattingParams, TextEdit, C
 	DocumentRangeFormattingParams, DocumentOnTypeFormattingParams
 } from 'vscode-languageserver/node';
 import { URI } from 'vscode-uri';
+import { prepareRename as navPrepareRename, computeRenameEdits, findAllReferences } from './navigation';
 
 const connection: Connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -138,7 +139,9 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 			hoverProvider: true,
 			signatureHelpProvider: { triggerCharacters: ['(', ','], retriggerCharacters: [',', ')'] },
 			definitionProvider: true,
+			referencesProvider: true,
 			documentSymbolProvider: true,
+			renameProvider: { prepareProvider: true },
 			semanticTokensProvider: {
 				legend: semanticTokensLegend,
 				range: false,
@@ -359,6 +362,41 @@ connection.onDocumentOnTypeFormatting((params: DocumentOnTypeFormattingParams, t
 	return formatRangeEdits(doc, entry.pre, settings.format, range);
 });
 
+// -----------------
+// Rename providers
+// -----------------
+connection.onPrepareRename((params, token) => {
+	if (token?.isCancellationRequested) return null;
+	const doc = documents.get(params.textDocument.uri); if (!doc || !defs) return null;
+	const entry = getPipeline(doc); if (!entry) return null;
+	const offset = doc.offsetAt(params.position);
+	return navPrepareRename(doc, offset, entry.analysis, entry.pre, defs);
+});
+
+connection.onRenameRequest((params, token) => {
+	if (token?.isCancellationRequested) return { changes: {} } as any;
+	const doc = documents.get(params.textDocument.uri); if (!doc || !defs) return { changes: {} } as any;
+	const entry = getPipeline(doc); if (!entry) return { changes: {} } as any;
+	const newName = params.newName || '';
+	const offset = doc.offsetAt(params.position);
+	return computeRenameEdits(doc, offset, newName, entry.analysis, entry.pre, defs, entry.tokens as any);
+});
+
+documents.listen(connection);
+connection.listen();
+
+// --------------------
+// References provider
+// --------------------
+connection.onReferences((params, token) => {
+	if (token?.isCancellationRequested) return [];
+	const doc = documents.get(params.textDocument.uri); if (!doc || !defs) return [];
+	const entry = getPipeline(doc); if (!entry) return [];
+	const offset = doc.offsetAt(params.position);
+	const includeDecl = !!params.context?.includeDeclaration;
+	return findAllReferences(doc, offset, includeDecl, entry.analysis, entry.pre, entry.tokens as any);
+});
+
 // Quick fix for suspicious assignment -> equality
 connection.onCodeAction((params): CodeAction[] => {
 	const doc = documents.get(params.textDocument.uri);
@@ -396,6 +434,3 @@ connection.onDidChangeWatchedFiles(ev => {
 		}
 	}
 });
-
-documents.listen(connection);
-connection.listen();
