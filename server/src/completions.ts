@@ -141,7 +141,9 @@ export function lslCompletions(
 	for (const d of analysis.decls) {
 		if ((d.kind === 'var' || d.kind === 'param') && doc.offsetAt(d.range.start) <= offset) {
 			if (!seenNames.has(d.name)) {
-				items.push(typeScored({ label: d.name, kind: CompletionItemKind.Variable, detail: d.type }, d.type || 'any', { local: true, boost: 5 }));
+				// If inside a call arg with expectedType, add extra weight when types match
+				const boost = (expectedType && expectedType !== 'any' && d.type && typeMatches(expectedType, d.type)) ? 15 : 5;
+				items.push(typeScored({ label: d.name, kind: CompletionItemKind.Variable, detail: d.type }, d.type || 'any', { local: true, boost }));
 				seenNames.add(d.name);
 			}
 		}
@@ -367,6 +369,7 @@ function typeMatches(expected: string, got: string): boolean {
 	if (expected === got) return true;
 	if (expected === 'integer' && got === 'float') return true;
 	if (expected === 'float' && got === 'integer') return true;
+	if ((expected === 'key' && got === 'string') || (expected === 'string' && got === 'key')) return true;
 	return false;
 }
 
@@ -426,7 +429,18 @@ function rankAndFinalize(items: CompletionItem[], expectedType: string | 'any', 
 		(it as any).sortText = String(1000000 - s).padStart(7, '0');
 		out.push(it);
 	}
-	return out;
+	// Deduplicate by (label, kind)
+	const seen = new Set<string>();
+	const deduped: CompletionItem[] = [];
+	for (const it of out) {
+		const key = `${String(it.label)}#${it.kind ?? ''}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const { _score, ...clean } = it as any;
+		delete (clean as any)._itemType;
+		deduped.push(clean);
+	}
+	return deduped;
 }
 
 function findMemberBase(tokens: Token[], offset: number): { kind: 'vector' | 'rotation' | 'other' } | null {

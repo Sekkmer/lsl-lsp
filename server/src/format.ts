@@ -16,7 +16,7 @@ function gcd(a: number, b: number): number {
 	return Math.abs(a) || 0;
 }
 
-function detectIndent(text: string): { useTabs: boolean; size: number; unit: string } {
+export function detectIndent(text: string): { useTabs: boolean; size: number; unit: string } {
 	let tabLines = 0; let spaceLines = 0;
 	const spaceIndents: number[] = [];
 	const deltas: number[] = [];

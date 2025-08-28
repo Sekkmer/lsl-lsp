@@ -1799,8 +1799,18 @@ function validateAssignmentLHS(doc: TextDocument, tokens: Token[], diagnostics: 
 				if (beforeOpen && beforeOpen.kind === 'id') bad = true;
 			}
 		}
-		// Also if last token is ']' (indexing), allow: array[index] = ...
-		if (last.value === ']') bad = false; // allow indexing writes
+		// If last token is ']' (indexing), in LSL lists are immutable — flag as invalid LHS
+		if (last.value === ']') {
+			diagnostics.push({
+				code: LSL_DIAGCODES.INVALID_ASSIGN_LHS,
+				message: 'List elements are not assignable; use llListReplaceList / llList* helpers',
+				range: mkRange(doc, t.start, t.end),
+				severity: DiagnosticSeverity.Error
+			});
+			continue;
+		}
+		// Detect member component assignment like foo . x = ... — components are read-only
+		// Allow member component assignments like v.x = 1; r.s = 1; — these are valid in LSL.
 		if (bad) {
 			diagnostics.push({
 				code: LSL_DIAGCODES.INVALID_ASSIGN_LHS,
@@ -1955,6 +1965,8 @@ function typeMatches(expected: string, got: string): boolean {
 	if (expected === 'integer' && got === 'float') return true;
 	// - float parameters commonly accept integer literals
 	if (expected === 'float' && got === 'integer') return true;
+	// - key and string interconvert freely in LSL
+	if ((expected === 'key' && got === 'string') || (expected === 'string' && got === 'key')) return true;
 	return false;
 }
 

@@ -30,7 +30,7 @@ import { parseAndAnalyze, Analysis, LSL_DIAGCODES } from './parser';
 import { semanticTokensLegend, buildSemanticTokens } from './semtok';
 import { lslCompletions, resolveCompletion, lslSignatureHelp } from './completions';
 import { lslHover } from './hover';
-import { formatDocumentEdits, type FormatSettings, formatRangeEdits } from './format';
+import { formatDocumentEdits, type FormatSettings, formatRangeEdits, detectIndent } from './format';
 import { documentSymbols, gotoDefinition } from './symbols';
 import { DocumentLink, DocumentLinkParams, DocumentFormattingParams, TextEdit, CodeAction, CodeActionKind, Range,
 	DocumentRangeFormattingParams, DocumentOnTypeFormattingParams
@@ -150,7 +150,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 			documentLinkProvider: { resolveProvider: false },
 			documentFormattingProvider: true,
 			documentRangeFormattingProvider: true,
-			documentOnTypeFormattingProvider: { firstTriggerCharacter: ';', moreTriggerCharacter: ['}', ',', ')'] },
+			documentOnTypeFormattingProvider: { firstTriggerCharacter: ';', moreTriggerCharacter: ['}', ',', ')', '\n'] },
 			codeActionProvider: { codeActionKinds: [CodeActionKind.QuickFix] }
 		}
 	};
@@ -348,13 +348,36 @@ connection.onDocumentRangeFormatting((params: DocumentRangeFormattingParams, tok
 	return formatRangeEdits(doc, entry.pre, settings.format, params.range);
 });
 
-// On-type formatting provider: format the current line on triggers
+// On-type formatting provider: format the current line on triggers and indent on newline
 connection.onDocumentOnTypeFormatting((params: DocumentOnTypeFormattingParams, token): TextEdit[] => {
 	const doc = documents.get(params.textDocument.uri);
 	if (!doc || !settings.format.enabled) return [];
 	if (token?.isCancellationRequested) return [];
 	const entry = getPipeline(doc); if (!entry) return [];
 	const pos = params.position;
+	const ch = params.ch;
+	// Special-case newline: just compute indentation for the next line based on braces
+	if (ch === '\n') {
+		const { unit } = detectIndent(doc.getText());
+		const offset = doc.offsetAt(pos);
+		const text = doc.getText();
+		// Look back to determine current brace depth on previous line
+		let i = offset - 1;
+		let depth = 0;
+		while (i >= 0 && text[i] !== '\n') {
+			const c = text[i];
+			if (c === '}') depth++; else if (c === '{') depth = Math.max(0, depth - 1);
+			i--;
+		}
+		// If previous non-ws before the newline is '{', increase indent for the new line
+		let j = offset - 1;
+		while (j >= 0 && (text[j] === ' ' || text[j] === '\t' || text[j] === '\r' || text[j] === '\n')) j--;
+		if (j >= 0 && text[j] === '{') depth++;
+		// Insert indentation at the caret position (which is start of the new line)
+		const indentText = depth > 0 ? unit.repeat(depth) : '';
+		return indentText ? [{ range: { start: pos, end: pos }, newText: indentText }] : [];
+	}
+	// Otherwise, format just the current line
 	const line = pos.line;
 	const startOfLine = { line, character: 0 };
 	const endOfLine = { line, character: Number.MAX_SAFE_INTEGER };

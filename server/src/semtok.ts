@@ -167,18 +167,32 @@ export function buildSemanticTokens(
 			// Function calls: if next token is '(' treat as function/event/macro
 			const next = toks[ti + 1];
 			// Event handlers inside states: eventName '(' (use defs.events)
-			if (next && next.value === '(' && defs.events.has(t.value)) { push(t, idx('function')); continue; }
+			if (next && next.value === '(' && defs.events.has(t.value)) { push(t, idx('function'), bit('defaultLibrary')); continue; }
 			// Function-like macros: name '('
 			if (next && next.value === '(' && pre && pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, t.value)) {
 				push(t, idx('macro')); continue;
 			}
 			const inIncluded = pre && pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s => s.functions.has(t.value));
-			if (next && next.value === '(' && (defs.funcs.has(t.value) || (analysis && analysis.functions.has(t.value)) || inIncluded)) {
-				push(t, idx('function')); continue;
+			if (next && next.value === '(') {
+				if (defs.funcs.has(t.value)) {
+					// Built-in function: defaultLibrary and possibly deprecated
+					let mods = bit('defaultLibrary');
+					const overloads = defs.funcs.get(t.value)!;
+					if (overloads.some(o => (o as any).deprecated)) mods |= bit('deprecated');
+					push(t, idx('function'), mods); continue;
+				}
+				if ((analysis && analysis.functions.has(t.value)) || inIncluded) {
+					push(t, idx('function')); continue;
+				}
 			}
 			if (defs.types.has(t.value)) { push(t, idx('type')); continue; }
 			if (defs.keywords.has(t.value)) { push(t, idx('keyword')); continue; }
-			if (defs.consts.has(t.value)) { push(t, idx('enumMember')); continue; }
+			if (defs.consts.has(t.value)) {
+				let mods = bit('defaultLibrary');
+				const c = defs.consts.get(t.value)! as any;
+				if (c && c.deprecated) mods |= bit('deprecated');
+				push(t, idx('enumMember'), mods); continue;
+			}
 			// Object-like macros (and magic __LINE__)
 			if (pre && pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, t.value)) { push(t, idx('macro')); continue; }
 			if (t.value === '__LINE__') { push(t, idx('macro')); continue; }

@@ -6,26 +6,50 @@ import { PreprocResult } from './preproc';
 import { URI } from 'vscode-uri';
 
 export function documentSymbols(a: Analysis): DocumentSymbol[] {
-	const out: DocumentSymbol[] = [];
+	const states: Map<string, DocumentSymbol> = new Map();
+	const top: DocumentSymbol[] = [];
+
+	// First pass: create state symbols
 	for (const d of a.decls) {
-		const kind =
-			d.kind === 'func' ? SymbolKind.Function :
-				d.kind === 'state' ? SymbolKind.Namespace :
-					d.kind === 'event' ? SymbolKind.Event :
-						d.kind === 'param' ? SymbolKind.Variable :
-							SymbolKind.Variable;
-
-		const name = d.kind === 'func' ? `${d.name}(${(d.params || []).map(p=>p.name).join(', ')})` : d.name;
-
-		out.push(DocumentSymbol.create(
-			name,
-			d.type ? d.type : undefined,
-			kind,
-			d.range,
-			d.range
-		));
+		if (d.kind === 'state') {
+			const sym = DocumentSymbol.create(
+				d.name,
+				undefined,
+				SymbolKind.Namespace,
+				d.range,
+				d.range,
+				[]
+			);
+			states.set(d.name, sym);
+			top.push(sym);
+		}
 	}
-	return out;
+	// Second pass: add events under their states (best-effort by proximity: find nearest preceding state decl)
+	let lastState: DocumentSymbol | null = null;
+	for (const d of a.decls) {
+		if (d.kind === 'state') {
+			lastState = states.get(d.name) || null;
+			continue;
+		}
+		if (d.kind === 'event') {
+			const name = `${d.name}(${(d.params || []).map(p => p.name).join(', ')})`;
+			const ev = DocumentSymbol.create(name, undefined, SymbolKind.Event, d.range, d.range);
+			if (lastState) {
+				(lastState.children ||= []).push(ev);
+			} else {
+				top.push(ev);
+			}
+			continue;
+		}
+	}
+	// Remaining decls (functions, variables, params) as top-level for now
+	for (const d of a.decls) {
+		if (d.kind === 'state' || d.kind === 'event') continue;
+		const kind = d.kind === 'func' ? SymbolKind.Function : (d.kind === 'param' ? SymbolKind.Variable : SymbolKind.Variable);
+		const name = d.kind === 'func' ? `${d.name}(${(d.params || []).map(p => p.name).join(', ')})` : d.name;
+		top.push(DocumentSymbol.create(name, d.type ? d.type : undefined, kind, d.range, d.range));
+	}
+	return top;
 }
 
 export function gotoDefinition(doc: TextDocument, pos: Position, a: Analysis, pre?: PreprocResult, defs?: Defs): Location | null {
