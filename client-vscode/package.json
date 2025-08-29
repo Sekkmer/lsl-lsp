@@ -34,6 +34,7 @@
 		"theme": "dark"
 	},
 	"main": "./out/extension.js",
+	"activationEvents": [],
 	"contributes": {
 		"languages": [
 			{
@@ -56,6 +57,12 @@
 				"scopeName": "source.lsl",
 				"path": "./syntaxes/lsl.tmLanguage.json"
 			}
+		],
+		"commands": [
+			{ "command": "lsl.showServerLogs", "title": "Show Language Server Trace", "category": "LSL" },
+			{ "command": "lsl.showClientLogs", "title": "Show Client Logs", "category": "LSL" },
+			{ "command": "lsl.restartServer", "title": "Restart Language Server", "category": "LSL" },
+			{ "command": "lsl.buildServer", "title": "Build Server (repo task)", "category": "LSL" }
 		],
 		"configuration": {
 			"title": "LSL",
