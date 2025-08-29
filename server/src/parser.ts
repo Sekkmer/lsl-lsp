@@ -731,8 +731,9 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 		}
 
 		// Optional-void function declaration: <name> ( ... ) { ... }
-		// Do NOT treat this as a function when we're inside a state block; there, bareName '(' is an event handler.
-		if (isId(t) && !inState && !defs.events.has(t.value) && peek(1)?.value === '(') {
+		// Guard: not inside a state, not an event name, not a keyword, and not a primitive type
+		// Otherwise constructs like 'for (...) { ... }' could be misread as a function decl.
+		if (isId(t) && !inState && !defs.events.has(t.value) && !isKeyword(t.value) && !defs.types.has(t.value) && peek(1)?.value === '(') {
 			// Lookahead to see if this is a declaration followed by a body
 			let j = i + 2; // skip name and '('
 			let parenDepth = 1;
@@ -794,6 +795,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 						// for-loop header: disallow declarations in initializer
 						if (b.kind === 'id' && b.value === 'for' && peek(1)?.value === '(') {
 							eat(); eat();
+							const headerStart = i; // start of for(...) header content
 							let pd = 1; let j = i; let sawInit = false;
 							while (j < tokens.length && pd > 0) {
 								const tk = tokens[j];
@@ -809,6 +811,8 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 								}
 								j++;
 							}
+							// Record identifier uses within for-header to avoid false "unused" and track refs
+							analyzeIdUsesInRange(headerStart, j, usedLocalOrParamNames);
 							i = j; continue;
 						}
 						// empty if-body in void function
@@ -1126,6 +1130,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 					// for-loop header: disallow declarations in initializer
 					if (b.kind === 'id' && b.value === 'for' && peek(1)?.value === '(') {
 						eat(); eat();
+						const headerStart = i;
 						let pd = 1; let j = i; let sawInit = false;
 						while (j < tokens.length && pd > 0) {
 							const tk = tokens[j];
@@ -1141,6 +1146,7 @@ export function parseAndAnalyze(doc: TextDocument, tokens: Token[], defs: Defs, 
 							}
 							j++;
 						}
+						analyzeIdUsesInRange(headerStart, j, usedLocalOrParamNames);
 						i = j; continue;
 					}
 					if (isType(b) && isId(peek(1)) && [';', '='].includes(peek(2)?.value || '')) {
@@ -1563,16 +1569,38 @@ function guessLeftOperandType(tokens: Token[], idx: number, symbolTypes: Map<str
 	if (tokens[i] && closeToOpen[tokens[i].value]) {
 		const closer = tokens[i].value;
 		const opener = closeToOpen[closer];
-		let depth = 1; i--;
-		while (i >= 0 && depth > 0) {
-			const v = tokens[i].value;
-			if (v === opener) depth--; else if (v === closer) depth++;
-			i--;
+		let depth = 1; let k = i - 1;
+		let openIdx = -1;
+		while (k >= 0 && depth > 0) {
+			const v = tokens[k].value;
+			if (v === opener) { depth--; if (depth === 0) { openIdx = k; break; } }
+			else if (v === closer) { depth++; }
+			k--;
 		}
-		i++; // now at opener
+		// If this ')' closes a function call like ident(...) just before '(', treat the left operand as the call's result (unknown here)
+		if (openIdx >= 1) {
+			const beforeOpen = tokens[openIdx - 1];
+			if (beforeOpen && beforeOpen.kind === 'id') {
+				const norm = normalizeType(beforeOpen.value);
+				// Not a type name -> likely a function call identifier
+				if (!isTypeName(norm)) {
+					return 'any';
+				}
+			}
+		}
+		// Reposition i to the opener for generic parenthesized-expression handling below
+		i = (openIdx >= 0 ? openIdx : i);
 	}
 	// If left side ends with ')', find the inner meaningful token and type it
 	if (tokens[i] && tokens[i].value === '(') {
+		// Special-case: handle a cast immediately before this parenthesized operand: (type)(...)
+		// When the left expression is like (string)(index++), the token sequence before '+' ends with ')',
+		// where the opener of this '(' is preceded by a prior cast ')'. Detect (type) just before this '('.
+		const c1 = tokens[i - 1], c2 = tokens[i - 2], c3 = tokens[i - 3];
+		if (c1 && c2 && c3 && c1.value === ')' && c3.value === '(' && c2.kind === 'id') {
+			const norm = normalizeType(c2.value);
+			if (isTypeName(norm)) return norm as SimpleType;
+		}
 		// Move forward one to inspect inside
 		let j = i + 1; let pd = 1;
 		while (j < tokens.length && pd > 0) {
@@ -1662,7 +1690,9 @@ function validateOperators(doc: TextDocument, tokens: Token[], diagnostics: Diag
 		}
 		// Bitwise and shifts: integer-only when known
 		if (opVal === '&' || opVal === '|' || opVal === '^' || opVal === '<<' || opVal === '>>') {
-			if ((lt !== 'any' && lt !== 'integer') || (rt !== 'any' && rt !== 'integer')) {
+			// Only warn when both sides are known and at least one is not integer
+			const bothKnown = (lt !== 'any') && (rt !== 'any');
+			if (bothKnown && (lt !== 'integer' || rt !== 'integer')) {
 				diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator ${opVal} expects integer operands`, range: mkRange(doc, t.start, t.end), severity: DiagnosticSeverity.Information });
 			}
 			continue;

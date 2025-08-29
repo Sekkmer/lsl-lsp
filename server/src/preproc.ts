@@ -40,6 +40,54 @@ export interface PreprocResult {
 
 // (no-op)
 
+// Global caches to improve include resolution performance across files
+const includeCache = new Map<string, IncludeSymbols>();
+const includeDeps = new Map<string, string[]>();
+
+function parseIncludesFromText(text: string): string[] {
+	const out: string[] = [];
+	const lines = text.split(/\r?\n/);
+	for (const L of lines) {
+		const m = /^\s*#\s*include\s+(.*)$/.exec(L);
+		if (!m) continue;
+		const target = parseIncludeTarget((m[1] || '').trim());
+		if (target) out.push(target);
+	}
+	return out;
+}
+
+function loadIncludeRecursive(
+	rootFile: string,
+	includePaths: string[],
+	sinkSymbols: Map<string, IncludeSymbols>,
+	macroObjs: Set<string>,
+	macroFuncs: Set<string>,
+	seen: Set<string>
+) {
+	const fs = require('node:fs') as typeof import('node:fs');
+	if (seen.has(rootFile)) return;
+	seen.add(rootFile);
+	try {
+		let info = includeCache.get(rootFile);
+		let deps = includeDeps.get(rootFile);
+		if (!info || !deps) {
+			const text = fs.readFileSync(rootFile, 'utf8');
+			info = scanIncludeText(text);
+			deps = parseIncludesFromText(text)
+				.map(t => resolveInclude(path.dirname(rootFile), t, includePaths))
+				.filter((p): p is string => !!p);
+			includeCache.set(rootFile, info);
+			includeDeps.set(rootFile, deps);
+		}
+		sinkSymbols.set(rootFile, info);
+		for (const k of info.macroObjs.keys()) macroObjs.add(k);
+		for (const k of info.macroFuncs.keys()) macroFuncs.add(k);
+		for (const dep of deps!) {
+			loadIncludeRecursive(dep, includePaths, sinkSymbols, macroObjs, macroFuncs, seen);
+		}
+	} catch { /* ignore */ }
+}
+
 export function preprocess(
 	doc: TextDocument,
 	baseMacros: Record<string, any>,
@@ -215,14 +263,14 @@ export function preprocess(
 							if (!resolved && file) { missingIncludes.push({ start, end, file }); }
 							if (resolved) {
 								includes.push(resolved);
-								try {
-									const fs = require('node:fs') as typeof import('node:fs');
-									const itext = fs.readFileSync(resolved, 'utf8');
-									const info = scanIncludeText(itext);
-									includeSymbols.set(resolved, info);
-									for (const k of info.macroObjs.keys()) { macros[k] = 1; }
-									for (const k of info.macroFuncs.keys()) { funcMacros[k] = '(...)'; }
-								} catch (e) { void e; }
+								// Recursively collect symbols and macros with caching
+								const symMap = new Map<string, IncludeSymbols>();
+								const mObjs = new Set<string>();
+								const mFuncs = new Set<string>();
+								loadIncludeRecursive(resolved, includePaths, symMap, mObjs, mFuncs, new Set());
+								for (const [fp, info] of symMap) includeSymbols.set(fp, info);
+								for (const k of mObjs) { macros[k] = 1; }
+								for (const k of mFuncs) { funcMacros[k] = '(...)'; }
 							}
 						}
 					}
@@ -326,10 +374,11 @@ function scanIncludeText(text: string): IncludeSymbols {
   const typedefs = new Set<string>();
   const globals = new Map<string, { line: number; col: number; endCol: number }>();
 
-  const lines = text.split(/\r?\n/);
-  for (let lineNo = 0; lineNo < lines.length; lineNo++) {
-    const raw = lines[lineNo];
-    const L = raw.replace(/\/\/.*$/, ''); // strip line comments
+	const lines = text.split(/\r?\n/);
+	let braceDepth = 0;
+	for (let lineNo = 0; lineNo < lines.length; lineNo++) {
+		const raw = lines[lineNo];
+		const L = raw.replace(/\/\/.*$/, ''); // strip line comments
 		const m = /^\s*#\s*define\s+([A-Za-z_]\w*)(\s*\(([^)]*)\))?(?:\s+(.*))?$/.exec(L);
     if (m) {
       const name = m[1];
@@ -340,9 +389,11 @@ function scanIncludeText(text: string): IncludeSymbols {
 			else { macroObjs.set(name, { line: lineNo, col, endCol: col + name.length }); }
       continue;
     }
-    // Function decl: <retType> <name>(params) { or ;
-    const fdm = /^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*[{;]/.exec(L);
-    if (fdm) {
+		// Function decl at top-level (braceDepth===0):
+		// 1) With explicit return type: <retType> <name>(params) { or ;
+		// Accept the common style where '{' is on the next line by allowing end-of-line after ')'
+		const fdm = (braceDepth === 0) ? /^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:[{;]|$)/.exec(L) : null;
+		if (fdm) {
       const ret = normalizeType(fdm[1]);
       const name = fdm[2];
       const paramsRaw = fdm[3].trim();
@@ -363,6 +414,29 @@ function scanIncludeText(text: string): IncludeSymbols {
       functions.set(name, { name, returns: ret, params, line: lineNo, col, endCol: col + name.length });
       continue;
     }
+		// 2) Without explicit return type (common in some codebases): <name>(params) { or ;
+		// We treat these as functions with "integer" return by convention; only arity matters for our checks.
+		// Also allow '{' on the next line by accepting end-of-line here.
+		const fdm2 = (braceDepth === 0) ? /^\s*([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:[{;]|$)/.exec(L) : null;
+		if (fdm2) {
+			const name = fdm2[1];
+			const paramsRaw = (fdm2[2] || '').trim();
+			const whole = fdm2[0];
+			const nameRel = whole.indexOf(name);
+			const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*\s*\(/));
+			const params: IncludeFunctionParam[] = [];
+			if (paramsRaw.length > 0) {
+				for (const piece of paramsRaw.split(',')) {
+					const p = piece.trim().replace(/\s+/g, ' ');
+					if (!p) continue;
+					const parts = p.split(' ');
+					if (parts.length >= 2) params.push({ type: normalizeType(parts[0]), name: parts[1] });
+					else params.push({ type: normalizeType(parts[0]) });
+				}
+			}
+			functions.set(name, { name, returns: 'integer', params, line: lineNo, col, endCol: col + name.length });
+			// do not continue; still update braceDepth for this line below
+		}
     // Global var: <type> <name> [= ...] ;
     const gv = /^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*(?:=|;)/.exec(L);
     if (gv && !/\(/.test(L)) {
@@ -372,7 +446,13 @@ function scanIncludeText(text: string): IncludeSymbols {
       const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*/));
       globals.set(name, { line: lineNo, col, endCol: col + name.length });
     }
-  }
+		// Update brace depth after processing this line (naive, fine for headers)
+		for (let k = 0; k < L.length; k++) {
+			const ch = L[k]!;
+			if (ch === '{') braceDepth++;
+			else if (ch === '}') { if (braceDepth > 0) braceDepth--; }
+		}
+	}
   return { functions, macroObjs, macroFuncs, constants, events, typedefs, globals };
 }
 

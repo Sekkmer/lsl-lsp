@@ -102,4 +102,39 @@ string m3 = header + " (" + (string)listCount + "):"; // ok
 		const msgs = analysis.diagnostics.map(d => d.message);
 		expect(msgs.some(m => m.includes('Operator + type mismatch'))).toBe(false);
 	});
+
+	it('allows cast of parenthesized postfix in string concat', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+  state_entry() {
+    string name = "John";
+    integer index = 0;
+    name = (string)(index++) + " " + name; // should be ok
+  }
+}
+`;
+		const doc = docFrom(code, 'file:///ops_cast_postfix.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.some(m => m.includes('Operator + type mismatch'))).toBe(false);
+	});
+
+	it("doesn't flag call-result + string concat", async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+string PrintPermission(integer perm) { return ""; }
+default {
+  state_entry() {
+    integer c_Perm_Access = 0;
+    string msg = "";
+    msg += "Access: " + PrintPermission(c_Perm_Access) + "\n"; // ok
+  }
+}
+`;
+		const doc = docFrom(code, 'file:///ops_call_concat.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.some(m => m.includes('Operator + type mismatch'))).toBe(false);
+	});
 });
