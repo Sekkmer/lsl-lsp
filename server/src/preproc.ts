@@ -6,7 +6,7 @@ import { Connection } from 'vscode-languageserver/node';
 
 export interface DisabledRange { start: number; end: number; }
 export interface IncludeFunctionParam { type: string; name?: string }
-export interface IncludeFunction { name: string; returns: string; params: IncludeFunctionParam[]; line: number; col: number; endCol: number }
+export interface IncludeFunction { name: string; returns: string; params: IncludeFunctionParam[]; line: number; col: number; endCol: number; doc?: string }
 export interface IncludeSymbols {
 	functions: Map<string, IncludeFunction>;
 	macroObjs: Map<string, { line: number; col: number; endCol: number; body?: string }>;
@@ -14,7 +14,7 @@ export interface IncludeSymbols {
 	constants: Set<string>;
 	events: Set<string>;
 	typedefs: Set<string>;
-	globals: Map<string, { line: number; col: number; endCol: number }>;
+	globals: Map<string, { line: number; col: number; endCol: number; type?: string; doc?: string }>;
 }
 
 export interface PreprocResult {
@@ -377,6 +377,28 @@ function normalize(ranges: DisabledRange[]): DisabledRange[] {
 	return out;
 }
 
+// Normalize a captured block comment body into a readable doc string.
+// If jsdoc is true, strip leading '*' markers. Always trim outer blank lines.
+function cleanBlockDoc(raw: string, jsdoc: boolean): string {
+	const lines = raw.split(/\r?\n/);
+	const out: string[] = [];
+	for (let l of lines) {
+		if (jsdoc) {
+			// Remove leading spaces then optional '*'
+			const m = /^[ \t]*\*?[ \t]?(.*)$/.exec(l);
+			l = m ? m[1] : l;
+		} else {
+			// Plain block: just trim right
+			l = l.replace(/\s+$/g, '');
+		}
+		out.push(l);
+	}
+	// Trim surrounding blank lines
+	while (out.length && out[0].trim() === '') out.shift();
+	while (out.length && out[out.length - 1].trim() === '') out.pop();
+	return out.join('\n');
+}
+
 // Very light include scanner: collect macros and function names by simple regexes
 function scanIncludeText(text: string): IncludeSymbols {
 	const functions = new Map<string, IncludeFunction>();
@@ -385,13 +407,57 @@ function scanIncludeText(text: string): IncludeSymbols {
 	const constants = new Set<string>();
 	const events = new Set<string>();
 	const typedefs = new Set<string>();
-	const globals = new Map<string, { line: number; col: number; endCol: number }>();
+	const globals = new Map<string, { line: number; col: number; endCol: number; type?: string; doc?: string }>();
 
 	const lines = text.split(/\r?\n/);
 	let braceDepth = 0;
+	// Track a single preceding block comment to attach as doc to the next decl (function/global)
+	let inBlock = false;
+	let blockBuf: string[] = [];
+	let blockIsJsDoc = false;
+	let pendingDoc: string | null = null;
 	for (let lineNo = 0; lineNo < lines.length; lineNo++) {
 		const raw = lines[lineNo];
-		const L = raw.replace(/\/\/.*$/, ''); // strip line comments
+		let trimmed = raw.trimStart();
+		// Handle multi-line block comments used as docs
+		if (!inBlock && trimmed.startsWith('/*')) {
+			inBlock = true;
+			blockBuf = [];
+			blockIsJsDoc = trimmed.startsWith('/**');
+			// Remove leading opener content on this line
+			const afterOpen = raw.slice(raw.indexOf('/*') + 2);
+			const closeIdx = afterOpen.indexOf('*/');
+			if (closeIdx >= 0) {
+				// Single-line block comment
+				const inner = afterOpen.slice(0, closeIdx);
+				blockBuf.push(inner);
+				inBlock = false;
+				pendingDoc = cleanBlockDoc(blockBuf.join('\n'), blockIsJsDoc);
+				blockBuf = [];
+				// Remainder of line after */ becomes the effective line for code scanning
+				trimmed = afterOpen.slice(closeIdx + 2).trimStart();
+			} else {
+				// Multiline: take rest of line after opener and continue to next lines
+				blockBuf.push(afterOpen);
+				continue;
+			}
+		}
+		else if (inBlock) {
+			const closeIdx = raw.indexOf('*/');
+			if (closeIdx >= 0) {
+				blockBuf.push(raw.slice(0, closeIdx));
+				inBlock = false;
+				pendingDoc = cleanBlockDoc(blockBuf.join('\n'), blockIsJsDoc);
+				blockBuf = [];
+				// Remainder after */ is the effective line for code scanning
+				trimmed = raw.slice(closeIdx + 2).trimStart();
+			} else {
+				blockBuf.push(raw);
+				continue;
+			}
+		}
+		// Strip line comments for declaration matching
+		const L = trimmed.replace(/\/\/.*$/, '');
 		const m = /^\s*#\s*define\s+([A-Za-z_]\w*)(\s*\(([^)]*)\))?(?:\s+(.*))?$/.exec(L);
 		if (m) {
 			const name = m[1];
@@ -434,7 +500,9 @@ function scanIncludeText(text: string): IncludeSymbols {
 					else params.push({ type: normalizeType(parts[0]) });
 				}
 			}
-			functions.set(name, { name, returns: ret, params, line: lineNo, col, endCol: col + name.length });
+			const doc = pendingDoc || undefined;
+			pendingDoc = null;
+			functions.set(name, { name, returns: ret, params, line: lineNo, col, endCol: col + name.length, doc });
 			continue;
 		}
 		// 2) Without explicit return type (common in some codebases): <name>(params) { or ;
@@ -457,17 +525,22 @@ function scanIncludeText(text: string): IncludeSymbols {
 					else params.push({ type: normalizeType(parts[0]) });
 				}
 			}
-			functions.set(name, { name, returns: 'integer', params, line: lineNo, col, endCol: col + name.length });
+			const doc = pendingDoc || undefined;
+			pendingDoc = null;
+			functions.set(name, { name, returns: 'integer', params, line: lineNo, col, endCol: col + name.length, doc });
 			// do not continue; still update braceDepth for this line below
 		}
 		// Global var: <type> <name> [= ...] ;
 		const gv = /^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*(?:=|;)/.exec(L);
 		if (gv && !/\(/.test(L)) {
+			const gtype = normalizeType(gv[1]);
 			const name = gv[2];
 			const whole = gv[0];
 			const nameRel = whole.indexOf(name);
 			const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*/));
-			globals.set(name, { line: lineNo, col, endCol: col + name.length });
+			const doc = pendingDoc || undefined;
+			pendingDoc = null;
+			globals.set(name, { line: lineNo, col, endCol: col + name.length, type: gtype, doc });
 		}
 		// Update brace depth after processing this line (naive, fine for headers)
 		for (let k = 0; k < L.length; k++) {

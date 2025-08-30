@@ -1,0 +1,2 @@
+/* global in header */
+integer GLOB_X;

@@ -134,7 +134,16 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 			const f = info.functions.get(w);
 			if (f) {
 				const sig = `${f.returns} ${f.name}(${f.params.map(p=>`${p.type}${p.name ? ' ' + p.name : ''}`).join(', ')})`;
-				return { contents: { kind: MarkupKind.Markdown, value: ['```lsl', sig, '```'].join('\n') } };
+				const parts = ['```lsl', sig, '```'];
+				if (f.doc && f.doc.trim()) parts.push('', f.doc);
+				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
+			}
+			const g = info.globals.get(w);
+			if (g) {
+				const sig = `${g.type ?? 'any'} ${w}`;
+				const parts = ['```lsl', sig, '```'];
+				if (g.doc && g.doc.trim()) parts.push('', g.doc);
+				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 			}
 		}
 	}
