@@ -9,10 +9,10 @@ describe('list equality/inequality behavior checks', () => {
 		const defs = await loadTestDefs();
 		const code = `
 integer f() {
-  list a = [1,2];
-  list b = [3,4];
-  if (a == b) return 1;
-  return 0;
+	list a = [1,2];
+	list b = [3,4];
+	if (a == b) return 1;
+	return 0;
 }
 `;
 		const doc = docFrom(code, 'file:///list_eq1.lsl');
@@ -25,12 +25,12 @@ integer f() {
 		const defs = await loadTestDefs();
 		const code = `
 integer f() {
-  list a = [];
-  if (a == []) return 1; // allowed emptiness check
-  if ([] == a) return 2; // allowed emptiness check
-  if (a != []) return 2; // allowed emptiness check
-  if ([] != a) return 2; // allowed emptiness check
-  return 0;
+	list a = [];
+	if (a == []) return 1; // allowed emptiness check
+	if ([] == a) return 2; // allowed emptiness check
+	if (a != []) return 2; // allowed emptiness check
+	if ([] != a) return 2; // allowed emptiness check
+	return 0;
 }
 `;
 		const doc = docFrom(code, 'file:///list_eq2.lsl');

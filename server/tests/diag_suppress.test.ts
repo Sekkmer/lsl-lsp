@@ -12,28 +12,28 @@ async function analyze(code: string) {
 describe('diagnostic suppression directives', () => {
 	it('disables on the same line with lsl-disable-line', async () => {
 		const code = `integer f(){
-      return x; // lsl-disable-line LSL001
-    }`;
+		return x; // lsl-disable-line LSL001
+	}`;
 		const { analysis } = await analyze(code);
 		expect(analysis.diagnostics.find(d => d.code === 'LSL001')).toBeFalsy();
 	});
 
 	it('disables on the next line with lsl-disable-next-line', async () => {
 		const code = `integer f(){
-      // lsl-disable-next-line LSL001
-      return x;
-    }`;
+		// lsl-disable-next-line LSL001
+		return x;
+	}`;
 		const { analysis } = await analyze(code);
 		expect(analysis.diagnostics.find(d => d.code === 'LSL001')).toBeFalsy();
 	});
 
 	it('disables all until lsl-enable (no codes)', async () => {
 		const code = `integer f(){
-      // lsl-disable
-      return x; // unknown id
-      // lsl-enable
-      return y; // unknown id, should warn again
-    }`;
+		// lsl-disable
+		return x; // unknown id
+		// lsl-enable
+		return y; // unknown id, should warn again
+	}`;
 		const { analysis } = await analyze(code);
 		const diagY = analysis.diagnostics.find(d => d.code === 'LSL001');
 		expect(diagY).toBeTruthy();
@@ -44,11 +44,11 @@ describe('diagnostic suppression directives', () => {
 
 	it('disables multiple specific codes in block', async () => {
 		const code = `integer f(integer a){
-      // lsl-disable LSL102, LSL101
-      integer x; // unused local suppressed
-      return 0; // unused param suppressed
-      // lsl-enable
-    }`;
+		// lsl-disable LSL102, LSL101
+		integer x; // unused local suppressed
+		return 0; // unused param suppressed
+		// lsl-enable
+	}`;
 		const { analysis } = await analyze(code);
 		expect(analysis.diagnostics.find(d => d.code === 'LSL101')).toBeFalsy();
 		expect(analysis.diagnostics.find(d => d.code === 'LSL102')).toBeFalsy();

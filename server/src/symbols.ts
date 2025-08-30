@@ -1,6 +1,6 @@
 import { DocumentSymbol, Location, Position, Range, SymbolKind } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { Analysis } from './parser';
+import { Analysis } from './analysisTypes';
 import type { Defs } from './defs';
 import { PreprocResult } from './preproc';
 import { URI } from 'vscode-uri';
@@ -163,11 +163,11 @@ export function gotoDefinition(doc: TextDocument, pos: Position, a: Analysis, pr
 				if (!info) continue;
 				const fn = info.functions.get(refName);
 				if (fn) {
-		    	return { uri: URI.file(file).toString(), range: { start: { line: fn.line, character: fn.col }, end: { line: fn.line, character: fn.endCol } } };
+					return { uri: URI.file(file).toString(), range: { start: { line: fn.line, character: fn.col }, end: { line: fn.line, character: fn.endCol } } };
 				}
 				const g = info.globals.get(refName);
 				if (g) {
-		    	return { uri: URI.file(file).toString(), range: { start: { line: g.line, character: g.col }, end: { line: g.line, character: g.endCol } } };
+					return { uri: URI.file(file).toString(), range: { start: { line: g.line, character: g.col }, end: { line: g.line, character: g.endCol } } };
 				}
 				// Macros from includes
 				const mo = info.macroObjs.get(refName);

@@ -3,8 +3,8 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Token } from './lexer';
 import { Defs } from './defs';
 import { PreprocResult } from './preproc';
-import { Analysis } from './parser';
-import type { Decl } from './parser';
+import { Analysis } from './analysisTypes';
+import type { Decl } from './analysisTypes';
 
 const tokenTypes = [
 	'namespace', 'type', 'class', 'enum', 'interface', 'struct', 'typeParameter',
@@ -43,20 +43,26 @@ export function buildSemanticTokens(
 			if (p2.value === '+' && p1.value === '+') return true;
 			if (p2.value === '-' && p1.value === '-') return true;
 		}
-		// Assignment or compound assignment: id [op...]= ...
-		let j = i + 1;
-		const ops: string[] = [];
-		while (j < tokens.length && tokens[j].kind === 'op') { ops.push(tokens[j].value); j++; }
-		if (ops.length > 0) {
-			// Find the first '=' in the operator run; operators after '=' belong to RHS and shouldn't influence detection
-			const eqIdx = ops.indexOf('=');
-			if (eqIdx >= 0) {
-				const prev = eqIdx >= 1 ? ops[eqIdx - 1] : '';
-				const prev2 = eqIdx >= 2 ? ops[eqIdx - 2] : '';
-				const next = eqIdx + 1 < ops.length ? ops[eqIdx + 1] : '';
-				const isEquality = (prev === '=' || prev === '!') || next === '='; // '==', '!='
-				const isRelationalLeGe = (prev === '<' && prev2 !== '<') || (prev === '>' && prev2 !== '>'); // '<=' or '>='
-				if (!isEquality && !isRelationalLeGe) return true; // '=', '+=', '-=', '*=', '/=', '%=', '<<=', '>>=', '&=', '|=', '^=' ...
+		// Assignment or compound assignment: id [op...]= ... or combined token like '+=', '-=' etc.
+		const j = i + 1;
+		const t1 = tokens[j];
+		if (t1 && t1.kind === 'op') {
+			// Direct combined operators
+			if (t1.value === '=' || t1.value === '+= ' || t1.value === '+=') return true;
+			if (t1.value === '-=' || t1.value === '*=' || t1.value === '/=' || t1.value === '%=') return true;
+			// Fallback: gather a run and detect an '=' that isn't part of '==' or '<=' '>='
+			let k = j; const ops: string[] = [];
+			while (k < tokens.length && tokens[k].kind === 'op') { ops.push(tokens[k].value); k++; }
+			if (ops.length > 0) {
+				const eqIdx = ops.indexOf('=');
+				if (eqIdx >= 0) {
+					const prev = eqIdx >= 1 ? ops[eqIdx - 1] : '';
+					const prev2 = eqIdx >= 2 ? ops[eqIdx - 2] : '';
+					const next = eqIdx + 1 < ops.length ? ops[eqIdx + 1] : '';
+					const isEquality = (prev === '=' || prev === '!') || next === '=';
+					const isRelationalLeGe = (prev === '<' && prev2 !== '<') || (prev === '>' && prev2 !== '>');
+					if (!isEquality && !isRelationalLeGe) return true;
+				}
 			}
 		}
 		return false;
@@ -96,9 +102,10 @@ export function buildSemanticTokens(
 		if (cnt != null && cnt === 0) return true; // nothing wrote at all
 		if (cnt != null && cnt >= 2) return false; // at least one non-decl write exists in addition to potential initializer
 		// cnt === 1: readonly only if that single write is the declaration initializer
-		const declStartOffset = doc.offsetAt(decl.range.start);
+		// Compare against the identifier position within the declaration range, not the range start (which may include type/kw)
+		const declIdOffset = findDeclIdentifierOffset(doc, decl);
 		const first = firstWriteByDecl.get(k);
-		return first === declStartOffset;
+		return first != null && declIdOffset != null ? first === declIdOffset : false;
 	}
 
 	function push(t: Token, type: number, mods = 0) {
@@ -152,16 +159,20 @@ export function buildSemanticTokens(
 		}
 
 		if (t.kind === 'id') {
-			// Declarations: classify var/param names where the symbolAt points to a declaration range
-	    if (analysis) {
+			// Declarations: classify only when the token is exactly the declaration identifier, not merely inside its range
+			if (analysis) {
 				const decl = analysis.symbolAt(t.start);
 				if (decl) {
-	    	const ro = isReadonlyForToken(decl, t.start);
-					const atWrite = false; // declarations are not writes
-					const mods = (ro ? bit('readonly') : 0) | (atWrite ? bit('modification') : 0);
-					if (decl.kind === 'event') { push(t, idx('function'), mods); continue; }
-	    	if (decl.kind === 'param') { push(t, idx('parameter'), mods); continue; }
-	    	if (decl.kind === 'var') { push(t, idx('variable'), mods); continue; }
+					const declIdOffset = findDeclIdentifierOffset(doc, decl);
+					const isAtDeclId = declIdOffset != null && declIdOffset === t.start && (decl.name.length === (t.end - t.start));
+					if (isAtDeclId) {
+						const ro = isReadonlyForToken(decl, t.start);
+						const atWrite = false; // declarations are not writes
+						const mods = (ro ? bit('readonly') : 0) | (atWrite ? bit('modification') : 0);
+						if (decl.kind === 'event') { push(t, idx('function'), mods); continue; }
+						if (decl.kind === 'param') { push(t, idx('parameter'), mods); continue; }
+						if (decl.kind === 'var') { push(t, idx('variable'), mods); continue; }
+					}
 				}
 			}
 			// Function calls: if next token is '(' treat as function/event/macro
@@ -186,6 +197,7 @@ export function buildSemanticTokens(
 				}
 			}
 			if (defs.types.has(t.value)) { push(t, idx('type')); continue; }
+			// Recognize built-in keywords via defs (includes 'default')
 			if (defs.keywords.has(t.value)) { push(t, idx('keyword')); continue; }
 			if (defs.consts.has(t.value)) {
 				let mods = bit('defaultLibrary');
@@ -197,13 +209,13 @@ export function buildSemanticTokens(
 			if (pre && pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, t.value)) { push(t, idx('macro')); continue; }
 			if (t.value === '__LINE__') { push(t, idx('macro')); continue; }
 			// Variable/parameter uses: prefer scope-aware classification via refAt
-	    if (analysis) {
+			if (analysis) {
 				const target = analysis.refAt(t.start);
 				if (target && (target.kind === 'param' || target.kind === 'var')) {
 					const atWrite = isWriteUse(toks, ti);
-	    	// Readonly decided per-token for parameters (until first write),
-	    	// and per-declaration for variables/globals.
-	    	const ro = isReadonlyForToken(target, t.start);
+					// Readonly decided per-token for parameters (until first write),
+					// and per-declaration for variables/globals.
+					const ro = isReadonlyForToken(target, t.start);
 					const mods = (ro ? bit('readonly') : 0) | (atWrite ? bit('modification') : 0);
 					push(t, idx(target.kind === 'param' ? 'parameter' : 'variable'), mods);
 					continue;
@@ -232,6 +244,20 @@ function keyForDecl(d: Decl): string {
 
 // Note: isReadonlyDecl helper removed; logic inlined in isReadonlyForToken for clarity.
 
+function findDeclIdentifierOffset(doc: TextDocument, decl: Decl): number | null {
+	try {
+		const start = doc.offsetAt(decl.range.start);
+		const end = doc.offsetAt(decl.range.end);
+		if (end <= start) return null;
+		const text = doc.getText().slice(start, end);
+		const idx = text.indexOf(decl.name);
+		if (idx < 0) return null;
+		return start + idx;
+	} catch {
+		return null;
+	}
+}
+
 function computeWrites(toks: Token[], analysis?: Analysis): {
 	writeCountsByDecl: Map<string, number>;
 	writeCountsByName: Map<string, number>;
@@ -247,6 +273,21 @@ function computeWrites(toks: Token[], analysis?: Analysis): {
 	for (let i = 0; i < toks.length; i++) {
 		const t = toks[i];
 		if (t.kind !== 'id') continue;
+		// Direct combined compound assignment right after id: 
+		// id += expr, id -= expr, id *= expr, id /= expr, id %= expr
+		const t1 = toks[i + 1];
+		if (t1 && t1.kind === 'op' && (t1.value === '+=' || t1.value === '-=' || t1.value === '*=' || t1.value === '/=' || t1.value === '%=')) {
+			bump(countsByName, t.value);
+			if (!firstByName.has(t.value)) firstByName.set(t.value, t.start); else { const cur = firstByName.get(t.value)!; if (t.start < cur) firstByName.set(t.value, t.start); }
+			const d = analysis ? (analysis.refAt(t.start) || analysis.symbolAt(t.start)) : null;
+			if (d) {
+				const k = keyForDecl(d);
+				bump(countsByDecl, k);
+				if (!firstByDecl.has(k) || t.start < (firstByDecl.get(k) as number)) firstByDecl.set(k, t.start);
+			}
+			offsets.add(t.start);
+			continue;
+		}
 		// Detect postfix ++ / -- (id ++ / id --)
 		const n1 = toks[i + 1], n2 = toks[i + 2];
 		const isPostInc = n1 && n2 && n1.kind === 'op' && n2.kind === 'op' && n1.value === '+' && n2.value === '+';

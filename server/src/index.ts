@@ -26,7 +26,7 @@ import { TextDocument } from "vscode-languageserver-textdocument";
 import { loadDefs, Defs } from './defs';
 import { preprocess, PreprocResult } from './preproc';
 import { lex } from './lexer';
-import { parseAndAnalyze, Analysis, LSL_DIAGCODES } from './parser';
+import { Analysis, LSL_DIAGCODES } from './analysisTypes';
 import { semanticTokensLegend, buildSemanticTokens } from './semtok';
 import { lslCompletions, resolveCompletion, lslSignatureHelp } from './completions';
 import { lslHover } from './hover';
@@ -37,6 +37,8 @@ import { DocumentLink, DocumentLinkParams, DocumentFormattingParams, TextEdit, C
 } from 'vscode-languageserver/node';
 import { URI } from 'vscode-uri';
 import { prepareRename as navPrepareRename, computeRenameEdits, findAllReferences } from './navigation';
+import { parseScriptFromText } from './ast/parser';
+import { analyzeAst } from './ast/analyze';
 
 const connection: Connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -69,6 +71,8 @@ type PipelineCache = {
 	pre: PreprocResult;
 	tokens: ReturnType<typeof lex>;
 	analysis: Analysis;
+	// AST script used by the analysis pipeline
+	ast?: import('./ast').Script;
 	sem?: SemanticTokens & { resultId?: string };
 };
 const pipelineCache = new Map<string, PipelineCache>(); // key: doc.uri
@@ -99,8 +103,9 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 
 	const pre: PreprocResult = preprocess(doc, settings.macros, settings.includePaths, connection);
 	const tokens = lex(doc, pre.disabledRanges);
-	const analysis: Analysis = parseAndAnalyze(doc, tokens, defs, pre);
-	const entry: PipelineCache = { version: currentVersion, pre, tokens, analysis };
+	const ast: import('./ast').Script = parseScriptFromText(doc.getText(), doc.uri, { macros: settings.macros, includePaths: settings.includePaths });
+	const analysis: Analysis = analyzeAst(doc, ast, defs, pre);
+	const entry: PipelineCache = { version: currentVersion, pre, tokens, analysis, ast };
 	pipelineCache.set(key, entry);
 	indexIncludes(key, pre);
 	return entry;
@@ -434,6 +439,21 @@ connection.onCodeAction((params): CodeAction[] => {
 				diagnostics: [d],
 				edit: { changes: { [doc.uri]: [edit] } }
 			});
+		}
+		if (d.code === LSL_DIAGCODES.REDUNDANT_CAST) {
+			// Try to remove the leading (type) segment from the text within diagnostic range.
+			const text = doc.getText(d.range as Range);
+			const m = /^\(\s*(integer|float|string|key|list|vector|rotation)\s*\)\s*([\s\S]*)$/.exec(text);
+			if (m) {
+				const replacement = m[2] ?? '';
+				const edit = TextEdit.replace(d.range as Range, replacement);
+				actions.push({
+					title: 'Remove redundant cast',
+					kind: CodeActionKind.QuickFix,
+					diagnostics: [d],
+					edit: { changes: { [doc.uri]: [edit] } },
+				});
+			}
 		}
 	}
 	return actions;

@@ -1,0 +1,8 @@
+// string macros fixture for concat tests
+#ifndef MACROS_STR_LSLH
+#define MACROS_STR_LSLH
+
+#define BUTTON_YES "Yes"
+#define BUTTON_NO  "No"
+
+#endif // MACROS_STR_LSLH

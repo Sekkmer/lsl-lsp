@@ -1,7 +1,7 @@
 import { Hover, MarkupKind, Position } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs } from './defs';
-import { Analysis } from './parser';
+import { Analysis } from './analysisTypes';
 import { PreprocResult } from './preproc';
 
 export function lslHover(doc: TextDocument, params: { position: Position }, defs: Defs, analysis?: Analysis, pre?: PreprocResult): Hover | null {
@@ -142,7 +142,12 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 	if (analysis && analysis.functions.has(w)) {
 		const d = analysis.functions.get(w)!;
 		const sig = `${d.type ?? 'void'} ${d.name}(${(d.params || []).map(p=>`${p.type ?? 'any'} ${p.name}`).join(', ')})`;
-		return { contents: { kind: MarkupKind.Markdown, value: ['```lsl', sig, '```'].join('\n') } };
+		const parts = ['```lsl', sig, '```'];
+		// Try to extract a leading JSDoc-style block comment (/** ... */) immediately before the decl
+		const declStart = doc.offsetAt(d.range.start);
+		const jsdoc = extractLeadingJsDoc(doc.getText(), declStart);
+		if (jsdoc) parts.push('', jsdoc);
+		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
 	// Variables and parameters: show declared type, and if it's an event parameter with docs, include them
 	if (analysis) {
@@ -209,6 +214,40 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		return { contents: { kind: MarkupKind.Markdown, value: code } };
 	}
 	return null;
+}
+
+// Find a JSDoc-style block comment (/** ... */) immediately preceding the declaration start offset.
+// Returns cleaned Markdown text or null if not found.
+function extractLeadingJsDoc(text: string, declStart: number): string | null {
+	// Walk back over whitespace/newlines
+	let i = declStart - 1;
+	while (i >= 0 && /[ \t\r\n]/.test(text[i]!)) i--;
+	// Expect the text to end with */ of a block comment
+	if (i < 1 || text[i] !== '/' || text[i - 1] !== '*') return null;
+	// Find the matching /*
+	const start = text.lastIndexOf('/*', i - 1);
+	if (start < 0) return null;
+	// Check it is /** ... */ specifically
+	if (text[start + 2] !== '*') return null;
+	// Ensure there is only whitespace between this comment and declStart
+	// (already ensured by initial back-scan), so proceed to extract
+	const bodyStart = start + 3; // after /**
+	const bodyEnd = i - 1; // position of '*' before '/'
+	const raw = text.slice(Math.max(bodyStart, 0), Math.max(bodyStart, 0) <= bodyEnd ? bodyEnd + 1 : bodyStart);
+	return cleanJsDoc(raw);
+}
+
+function cleanJsDoc(raw: string): string {
+	const lines = raw.split(/\r?\n/);
+	const cleaned = lines.map(l => {
+		// Trim leading spaces then an optional leading '*'
+		const m = /^[ \t]*\*?[ \t]?(.*)$/.exec(l);
+		return (m ? m[1] : l).replace(/\s+$/g, '');
+	});
+	// Normalize CRLF already handled by split; trim surrounding blank lines
+	while (cleaned.length && cleaned[0].trim() === '') cleaned.shift();
+	while (cleaned.length && cleaned[cleaned.length - 1].trim() === '') cleaned.pop();
+	return cleaned.join('\n');
 }
 
 // Try to find an enclosing function call around the given offset and return the call name and argument index
@@ -305,6 +344,6 @@ function findEnclosingParamDecl(text: string, offset: number): { name: string; i
 // When parameter docs contain line breaks, indent continuation lines in bullets for nicer Markdown rendering
 function withParamDocFormatting(bullets: string): string {
 	// For each line that starts with "- name: ", indent subsequent wrapped lines by two spaces
-	// Simple approach: replace "\n" with "\n  " to keep wrapped lines under the bullet
-	return bullets.replace(/\n/g, '\n  ');
+	// Simple approach: replace "\n" with "\n	" to keep wrapped lines under the bullet
+	return bullets.replace(/\n/g, '\n	');
 }

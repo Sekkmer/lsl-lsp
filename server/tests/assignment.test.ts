@@ -11,9 +11,11 @@ describe('suspicious assignment in if()', () => {
 		const defs = await loadDefs(defsPath);
 		const code = `
 integer a;
-if (a = 1) {
-  a = 2;
-}
+default { state_entry() {
+	if (a = 1) {
+		a = 2;
+	}
+} }
 `;
 		const doc = docFrom(code, 'file:///assign1.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
@@ -25,10 +27,11 @@ if (a = 1) {
 		const defs = await loadDefs(defsPath);
 		const code = `
 integer a;
-if (a == 1) {
-  a = 2;
-}
-
+default { state_entry() {
+	if (a == 1) {
+		a = 2;
+	}
+} }
 `;
 		const doc = docFrom(code, 'file:///assign2.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });

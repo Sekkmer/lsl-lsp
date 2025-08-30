@@ -34,9 +34,9 @@ describe('hover: parameter docs inside calls', async () => {
 		const defs = await loadTestDefs();
 		const code = [
 			'default {',
-			'  touch_start(integer total_number) {',
-			'    integer x = total_number;',
-			'  }',
+			'	touch_start(integer total_number) {',
+			'	integer x = total_number;',
+			'	}',
 			'}'
 		].join('\n');
 		const doc = docFrom(code);

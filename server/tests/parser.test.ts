@@ -8,21 +8,21 @@ describe('parser/analyzer', () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom(`
 state default {
-  state_entry() {
+	state_entry() {
 	integer g = 1;
 	llSay(0, "ok");
-  }
+	}
 }
 
 key f() {
-  return llGetOwner();
+	return llGetOwner();
 }
 `);
 		const { analysis } = runPipeline(doc, defs);
 		const names = analysis.decls.map(d => d.name);
-		expect(names).toContain('default');   // state
-		expect(names).toContain('g');         // local var
-		expect(names).toContain('f');         // function
+		expect(names).toContain('default');	 // state
+		expect(names).toContain('g');		 // local var
+		expect(names).toContain('f');		 // function
 		expect(analysis.calls.some(c => c.name === 'llSay' && c.args === 2)).toBe(true);
 	});
 

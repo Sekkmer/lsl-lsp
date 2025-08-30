@@ -13,4 +13,15 @@ describe('lexer', () => {
 		expect(dbg.some(t => t.k === 'str' && t.v.includes('"hi"'))).toBe(true);
 		expect(dbg.some(t => t.k === 'comment')).toBe(true);
 	});
+
+	it('scans hex integer literals including 0x000', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom(`integer a = 0x0; integer b = 0x000; integer c = 0x1f; integer d = 0XDEAD;`);
+		const { tokens } = runPipeline(doc, defs);
+		const dbg = tokensToDebug(tokens).filter(t => t.k === 'num').map(t => t.v);
+		expect(dbg).toContain('0x0');
+		expect(dbg).toContain('0x000');
+		expect(dbg).toContain('0x1f');
+		expect(dbg).toContain('0XDEAD');
+	});
 });

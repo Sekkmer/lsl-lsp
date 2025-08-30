@@ -18,8 +18,9 @@ describe('arity counting', () => {
 
 	it('reports WRONG_TYPE for builtin mismatch', async () => {
 		const defs = await loadTestDefs();
-		// llSay(integer, string) -> pass integer for string
-		const code = `default { state_entry() { llSay(0, 1); } }`;
+		// Use a builtin present in fixtures: llStringTrim(string src, integer opts)
+		// Pass a string for the integer parameter to force WRONG_TYPE
+		const code = `default { state_entry() { string s = "abc"; llStringTrim(s, "x"); } }`;
 		const doc = docFrom(code);
 		const { analysis } = runPipeline(doc, defs);
 		const wrong = analysis.diagnostics.find(d => d.code === 'LSL011');
@@ -28,7 +29,7 @@ describe('arity counting', () => {
 
 	it('reports WRONG_TYPE for user-defined mismatch', async () => {
 		const defs = await loadTestDefs();
-		const code = `integer foo(string s){ return 0; } default { state_entry() { foo(123); } }`;
+		const code = `integer foo(vector v){ return 0; } default { state_entry() { foo(123); } }`;
 		const doc = docFrom(code);
 		const { analysis } = runPipeline(doc, defs);
 		const wrong = analysis.diagnostics.find(d => d.code === 'LSL011');

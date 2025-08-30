@@ -81,8 +81,25 @@ export function lex(doc: TextDocument, disabled: DisabledRange[]): Token[] {
 		}
 
 		// punctuation / operators
-		const start = i++;
-		out.push({ kind: /[;:,()[\]{}]/.test(ch) ? 'punc' : 'op', value: ch, start, end: i });
+		// combine two-char operators when applicable (==, !=, <=, >=, &&, ||, <<, >>, +=, -=, *=, /=, %=)
+		const start = i;
+		let val = ch;
+		const next = text[i + 1];
+		if (
+			(ch === '=' && next === '=') ||
+			(ch === '!' && next === '=') ||
+			(ch === '<' && (next === '=' || next === '<')) ||
+			(ch === '>' && (next === '=' || next === '>')) ||
+			(ch === '&' && next === '&') ||
+			(ch === '|' && next === '|') ||
+			((ch === '+' || ch === '-' || ch === '*' || ch === '/' || ch === '%') && next === '=')
+		) {
+			val = ch + next;
+			i += 2;
+		} else {
+			i++;
+		}
+		out.push({ kind: /[;:,()[\]{}]/.test(val) ? 'punc' : 'op', value: val, start, end: i });
 	}
 	return out;
 }

@@ -9,7 +9,9 @@ describe('assignment left-hand side must be a variable', () => {
 	it('flags string literal on LHS', async () => {
 		const defs = await loadDefs(defsPath);
 		const code = `
-"" = "";
+default { state_entry() {
+	"" = "";
+} }
 `;
 		const doc = docFrom(code, 'file:///lhs_str.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
@@ -20,7 +22,9 @@ describe('assignment left-hand side must be a variable', () => {
 	it('flags number literal on LHS', async () => {
 		const defs = await loadDefs(defsPath);
 		const code = `
-1 = 1;
+default { state_entry() {
+	1 = 1;
+} }
 `;
 		const doc = docFrom(code, 'file:///lhs_num.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
@@ -32,7 +36,9 @@ describe('assignment left-hand side must be a variable', () => {
 		const defs = await loadDefs(defsPath);
 		const code = `
 integer a; integer b;
-llGetOwner() = 1;
+default { state_entry() {
+	llGetOwner() = 1;
+} }
 `;
 		const doc = docFrom(code, 'file:///lhs_call.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });

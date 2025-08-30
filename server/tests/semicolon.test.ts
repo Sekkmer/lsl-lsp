@@ -18,8 +18,8 @@ describe('semicolon diagnostics', () => {
 		const doc = docFrom(`
 list GetCurrentEditPermissionButtons()
 {
-  if (g_CurrentEditType == "Public")
-    return []
+	if (g_CurrentEditType == "Public")
+	return []
 }
 
 integer Next(){ return 1; }

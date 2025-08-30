@@ -1,0 +1,8 @@
+// chain include A includes B
+#ifndef CHAIN_A_LSLH
+#define CHAIN_A_LSLH
+
+#include "chain_b.lslh"
+#define MACRO_A 7
+
+#endif // CHAIN_A_LSLH

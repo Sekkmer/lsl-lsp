@@ -16,11 +16,11 @@ describe('readonly for locals used only in equality checks', () => {
 		const defs = await loadTestDefs();
 		const code = `
 integer SaveData() {
-  integer result = 0;
-  if (result == 1 || result == 2) {
-    return 1;
-  }
-  return result;
+	integer result = 0;
+	if (result == 1 || result == 2) {
+	return 1;
+	}
+	return result;
 }
 `;
 		const doc = docFrom(code, 'file:///readonly_equality_only.lsl');

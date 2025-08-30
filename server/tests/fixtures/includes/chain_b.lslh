@@ -1,0 +1,8 @@
+// chain include B
+#ifndef CHAIN_B_LSLH
+#define CHAIN_B_LSLH
+
+#define MACRO_B 42
+#define ADD(a,b) ((a)+(b))
+
+#endif // CHAIN_B_LSLH

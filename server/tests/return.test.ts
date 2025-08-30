@@ -34,8 +34,8 @@ describe('return diagnostics', () => {
 		const { analysis } = runPipeline(doc, defs);
 		const hasReturnProblems = analysis.diagnostics.some(di => (
 			di.code === LSL_DIAGCODES.MISSING_RETURN ||
-      di.code === LSL_DIAGCODES.RETURN_WRONG_TYPE ||
-      di.code === LSL_DIAGCODES.RETURN_IN_VOID
+		di.code === LSL_DIAGCODES.RETURN_WRONG_TYPE ||
+		di.code === LSL_DIAGCODES.RETURN_IN_VOID
 		));
 		expect(hasReturnProblems).toBe(false);
 	});

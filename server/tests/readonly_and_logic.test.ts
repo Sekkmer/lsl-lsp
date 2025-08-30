@@ -51,10 +51,10 @@ integer ParseKeyList(string message)
 		const defs = await loadTestDefs();
 		const code = `
 integer f(integer result) {
-  if (result == 1 || result == 2) {
-    return 1;
-  }
-  return 0;
+	if (result == 1 || result == 2) {
+	return 1;
+	}
+	return 0;
 }
 `;
 		const doc = docFrom(code, 'file:///or_ok.lsl');

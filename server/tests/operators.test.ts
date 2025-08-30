@@ -25,10 +25,12 @@ integer b = 4 % 0;
 		const code = `
 integer a;
 float b;
-a = a % b; // bad
 vector v;
 vector w;
-v = v % w; // ok
+default { state_entry() {
+	a = a % b; // bad
+	v = v % w; // ok
+} }
 `;
 		const doc = docFrom(code, 'file:///ops2.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
@@ -107,11 +109,11 @@ string m3 = header + " (" + (string)listCount + "):"; // ok
 		const defs = await loadDefs(defsPath);
 		const code = `
 default {
-  state_entry() {
-    string name = "John";
-    integer index = 0;
-    name = (string)(index++) + " " + name; // should be ok
-  }
+	state_entry() {
+	string name = "John";
+	integer index = 0;
+	name = (string)(index++) + " " + name; // should be ok
+	}
 }
 `;
 		const doc = docFrom(code, 'file:///ops_cast_postfix.lsl');
@@ -125,11 +127,11 @@ default {
 		const code = `
 string PrintPermission(integer perm) { return ""; }
 default {
-  state_entry() {
-    integer c_Perm_Access = 0;
-    string msg = "";
-    msg += "Access: " + PrintPermission(c_Perm_Access) + "\n"; // ok
-  }
+	state_entry() {
+	integer c_Perm_Access = 0;
+	string msg = "";
+	msg += "Access: " + PrintPermission(c_Perm_Access) + "\n"; // ok
+	}
 }
 `;
 		const doc = docFrom(code, 'file:///ops_call_concat.lsl');

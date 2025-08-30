@@ -8,14 +8,14 @@ describe('#if / #elif expressions', () => {
 		const doc = docFrom(`
 default
 {
-  state_entry()
-  {
-    #if 1 + 2 > 2
-    llSay(0, "A");
-    #else
-    llSay(0, "B");
-    #endif
-  }
+	state_entry()
+	{
+	#if 1 + 2 > 2
+	llSay(0, "A");
+	#else
+	llSay(0, "B");
+	#endif
+	}
 }
 `);
 		const { tokens, pre } = runPipeline(doc, defs, {});
@@ -31,18 +31,18 @@ default
 		const doc = docFrom(`
 default
 {
-  state_entry()
-  {
-    #if 0
-    llSay(0, "A");
-    #elif 1
-    llSay(0, "B");
-    #elif 1
-    llSay(0, "C");
-    #else
-    llSay(0, "D");
-    #endif
-  }
+	state_entry()
+	{
+	#if 0
+	llSay(0, "A");
+	#elif 1
+	llSay(0, "B");
+	#elif 1
+	llSay(0, "C");
+	#else
+	llSay(0, "D");
+	#endif
+	}
 }
 `);
 		const { tokens } = runPipeline(doc, defs, {});
@@ -61,14 +61,14 @@ default
 		const doc = docFrom(`
 default
 {
-  state_entry()
-  {
-    #if defined(DEBUG) && !defined(TRACE)
-    llSay(0, "ON");
-    #else
-    llSay(0, "OFF");
-    #endif
-  }
+	state_entry()
+	{
+	#if defined(DEBUG) && !defined(TRACE)
+	llSay(0, "ON");
+	#else
+	llSay(0, "OFF");
+	#endif
+	}
 }
 `);
 		const { tokens } = runPipeline(doc, defs, { macros: { DEBUG: 1 } });
@@ -83,16 +83,16 @@ default
 		const doc = docFrom(`
 default
 {
-  state_entry()
-  {
-    #if 0
-      #if 1
-      llSay(0, "IN");
-      #endif
-    #else
-      llSay(0, "OUT");
-    #endif
-  }
+	state_entry()
+	{
+	#if 0
+		#if 1
+		llSay(0, "IN");
+		#endif
+	#else
+		llSay(0, "OUT");
+	#endif
+	}
 }
 `);
 		const { tokens } = runPipeline(doc, defs, {});

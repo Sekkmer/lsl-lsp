@@ -10,9 +10,9 @@ describe('for-loop header identifier usage', () => {
 		const defs = await loadDefs(defsPath);
 		const code = `
 integer SumTo(integer n) {
-  integer i; integer s = 0;
-  for (i = 0; i < n; ++i) { s += i; }
-  return s;
+	integer i; integer s = 0;
+	for (i = 0; i < n; ++i) { s += i; }
+	return s;
 }
 `;
 		const doc = docFrom(code, 'file:///for_func.lsl');
@@ -25,11 +25,11 @@ integer SumTo(integer n) {
 		const defs = await loadDefs(defsPath);
 		const code = `
 default {
-  state_entry() {
-    integer i; integer s = 0;
-    for (i = 0; i < 10; ++i) { s += i; }
-    llOwnerSay((string)s);
-  }
+	state_entry() {
+	integer i; integer s = 0;
+	for (i = 0; i < 10; ++i) { s += i; }
+	llOwnerSay((string)s);
+	}
 }
 `;
 		const doc = docFrom(code, 'file:///for_event.lsl');

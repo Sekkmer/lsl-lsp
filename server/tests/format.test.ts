@@ -20,7 +20,7 @@ function fmt(input: string, settings?: Partial<FormatSettings>, pre?: Partial<Pr
 
 describe('formatter basics', () => {
 	it('adds space after commas', () => {
-		const src = 'llSay(0,"a,b",x,y,\n  z);\n';
+		const src = 'llSay(0,"a,b",x,y,\n	z);\n';
 		const out = fmt(src);
 		expect(out).toContain('x, y');
 		// does not touch inside strings

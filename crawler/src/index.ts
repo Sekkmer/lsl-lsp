@@ -487,16 +487,16 @@ async function fetchViewerKeywords(): Promise<ViewerKeywords> {
 	}
 
 	// Constants live under the 'constants' map
-  	if (top && typeof (top as any).constants === 'object' && (top as any).constants) {
-  		for (const [name, v] of Object.entries<any>((top as any).constants)) {
-  			if (!v || typeof v !== 'object') continue;
-  			if (!Object.prototype.hasOwnProperty.call(v, 'type')) continue;
-  			const t = (v.type || '').toString().toLowerCase();
-  			const normalized = normalizeConstantValue(t, v.value);
-  			const cdoc = getDocFrom(v);
-  			constants.set(name, { type: TYPE_SET.has(t) ? t : t, ...(normalized !== undefined ? { value: normalized } : {}), ...(cdoc ? { doc: cdoc } : {}), ...(v.deprecated ? { deprecated: true } : {}) });
-  		}
-  	}
+	if (top && typeof (top as any).constants === 'object' && (top as any).constants) {
+		for (const [name, v] of Object.entries<any>((top as any).constants)) {
+			if (!v || typeof v !== 'object') continue;
+			if (!Object.prototype.hasOwnProperty.call(v, 'type')) continue;
+			const t = (v.type || '').toString().toLowerCase();
+			const normalized = normalizeConstantValue(t, v.value);
+			const cdoc = getDocFrom(v);
+			constants.set(name, { type: TYPE_SET.has(t) ? t : t, ...(normalized !== undefined ? { value: normalized } : {}), ...(cdoc ? { doc: cdoc } : {}), ...(v.deprecated ? { deprecated: true } : {}) });
+		}
+	}
  	return { functions, constants, events };
 }
 
@@ -1483,10 +1483,10 @@ async function main() {
 	} else if (which.startsWith('viewer:')) {
 		// Debug viewer (LLSD XML) entry for a single function/constant/event
 		// Usage:
-		//   viewer:func:<llFunctionName>
-		//   viewer:const:<CONSTANT_NAME>
-		//   viewer:event:<event_name>
-		//   viewer:<name>  (best-effort auto-detect between function/constant)
+		//	 viewer:func:<llFunctionName>
+		//	 viewer:const:<CONSTANT_NAME>
+		//	 viewer:event:<event_name>
+		//	 viewer:<name>	(best-effort auto-detect between function/constant)
 		const rest = which.slice('viewer:'.length);
 		if (rest.startsWith('search:')) {
 			const q = rest.slice('search:'.length).toLowerCase();
@@ -1639,7 +1639,7 @@ async function main() {
 		await fs.writeFile(file, JSON.stringify(defs, null, 2), 'utf8');
 		console.log(`Wrote defs to ${file}`);
 	} else {
-		console.error('Usage:\n  lsl-crawler list\n  lsl-crawler get:llFunctionName\n  lsl-crawler funcjson:llFunctionName\n  lsl-crawler functions[:N]\n  lsl-crawler functions-all\n  lsl-crawler constjson:CONST\n  lsl-crawler constants[:N]\n  lsl-crawler constants-all\n  lsl-crawler eventjson:EVENT\n  lsl-crawler events[:N]\n  lsl-crawler events-all\n  lsl-crawler defs-all');
+		console.error('Usage:\n	lsl-crawler list\n	lsl-crawler get:llFunctionName\n	lsl-crawler funcjson:llFunctionName\n	lsl-crawler functions[:N]\n	lsl-crawler functions-all\n	lsl-crawler constjson:CONST\n	lsl-crawler constants[:N]\n	lsl-crawler constants-all\n	lsl-crawler eventjson:EVENT\n	lsl-crawler events[:N]\n	lsl-crawler events-all\n	lsl-crawler defs-all');
 		process.exitCode = 2;
 	}
 }

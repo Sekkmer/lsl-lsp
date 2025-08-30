@@ -1,9 +1,9 @@
 # LSL LSP
 
- A Visual Studio Code extension providing rich support for LSL (Linden Scripting Language):
+ A Visual Studio Code extension providing rich, AST‑based support for LSL (Linden Scripting Language):
 
 - Language Server features: diagnostics, hover, completion, go to definition, find all references, rename symbol, document symbols, and semantic tokens.
-- Preprocessor awareness: `#include`, `#if`/`#elif`/`#endif`, macros (including built-ins like `__FILE__` and varargs), and disabled ranges.
+- Preprocessor awareness: `#include`, `#if`/`#elif`/`#endif`, macros (built‑ins like `__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`, varargs with `__VA_ARGS__`/`__VA_OPT__`, `#` stringification and `##` token pasting), and disabled ranges.
 - Formatter: full document, range, and on-type formatting.
 - Syntax highlighting (semantic tokens) aligned with the parser’s understanding.
 
@@ -15,6 +15,7 @@
 	- `#include` path suggestions from configured include paths
 - Rich hovers with documentation
 	- Functions and events show signatures, parameter docs, and a direct "Wiki" link
+	- User‑defined functions show JSDoc‑style comments (`/** ... */`) placed immediately above the declaration
 	- Constants show inferred value (with hex for integers) and docs
 	- Includes show resolution info and a summary of available symbols
 - Navigation
@@ -23,7 +24,10 @@
 	- Rename symbol (scope/shadow aware, works across includes when uniquely resolvable)
 	- Document symbols for quick outline
 - Preprocessor support
-	- `#include`, conditional compilation, macros (including `__FILE__`, varargs)
+	- `#include`, conditional compilation, and macros
+	- Built‑ins: `__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`
+	- Varargs: `__VA_ARGS__` and `__VA_OPT__`
+	- Operators: `#` (stringify) and `##` (token pasting)
 	- Diagnostics for common preprocessor issues and disabled code ranges
 	- Works across included files; external symbols are indexed for hover/defs
 - Formatting
@@ -31,10 +35,18 @@
 	- Respects disabled preprocessor blocks
 	- Consistent brace/semicolon/newline handling
 - Diagnostics (server‑side analysis)
-	- Common LSL issues such as arity/return mismatches, unused/duplicate declarations, dead code, and operator/semicolon problems
+	- AST‑based checks for common LSL issues: arity/return mismatches, unused/duplicate declarations, dead code, and precise operator/type rules
+	- Unary operators: numeric `+`/`-`; integer `!`/`~`
+	- Postfix `++/--`: require assignable integer variables
+	- Bitwise and shifts: integer operands
+	- Casts: redundant cast hints; `integer`⇄`float` allowed; everything→`string`/`list` allowed; extra guidance for string→number/vector/rotation/key
+	- Vectors/rotations: components must be numeric; `.x/.y/.z/.s` member access validated
+	- Conditions: warns on suspicious assignment inside `if/while/for` conditions
+	- Indexing operator `[]`: flagged as unsupported in LSL
+	- List equality advisory: `list == list` compares length only (comparisons to `[]` treated as emptiness checks)
+	- Function calls: parameter types validated (string parameters accept integer/float/key)
 	- Diagnostics can be selectively suppressed where needed
 	- Includes checks for invalid state declarations/changes and for empty event/function bodies or empty if/else branches
-	- Advisory for list equality/inequality: `list == list` compares only length in LSL (and `!=` yields a length difference). A hint is shown when comparing two non‑empty lists; comparisons to `[]` are treated as emptiness checks and not flagged.
 - Semantic tokens
 	- Accurate coloring driven by the language server (full and delta updates)
 	- Readonly and modification modifiers for variables/parameters when applicable
@@ -87,13 +99,15 @@ Notes:
 
 ## How it works
 
-The client bundles a TypeScript language server. On activation, it starts the server, provides the workspace settings, and wires up LSP features, including scope‑aware rename and references.
+The client bundles a TypeScript language server. On activation, it starts the server, provides the workspace settings, and wires up LSP features (hover, completion, diagnostics, rename, references, symbols).
+
+Under the hood, the server uses an AST‑based pipeline (preprocess → parse → analyze) to understand your code and perform precise type and operator checks.
 
 Data powering function/event/constant docs is built from a merged dataset:
 - Second Life Viewer LLSD (keywords_lsl_default.xml): signatures, parameter names, return types
 - SL Wiki pages: human‑friendly descriptions and wiki links for quick reference
 
-Hovers display a "Wiki" link when available; a sensible fallback link is provided otherwise.
+Hovers display a "Wiki" link when available; a sensible fallback link is provided otherwise. JSDoc comments above your own functions are shown inline.
 
 ## Known limitations
 
@@ -101,10 +115,6 @@ Hovers display a "Wiki" link when available; a sensible fallback link is provide
 - Rename does not refactor strings or comments; only identifiers.
 - Rename for include‑defined symbols occurs when a unique definition is found in indexed includes; ambiguous names are intentionally blocked.
 - Macro rename works for the current file and indexed includes, but cannot follow unindexed or generated headers.
-
-## Release Notes
-
-See [CHANGELOG](./CHANGELOG.md).
 
 ## Repository
 

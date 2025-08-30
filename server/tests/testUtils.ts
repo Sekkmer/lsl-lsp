@@ -4,8 +4,9 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { Defs } from '../src/defs';
 import { preprocess } from '../src/preproc';
 import { lex } from '../src/lexer';
-import { parseAndAnalyze } from '../src/parser';
 import { buildSemanticTokens } from '../src/semtok';
+import { parseScriptFromText } from '../src/ast/parser';
+import { analyzeAst } from '../src/ast/analyze';
 
 export function docFrom(code: string, uri = 'file:///test.lsl') {
 	return TextDocument.create(uri, 'lsl', 1, code);
@@ -25,7 +26,9 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: {
 	} as any);
 
 	const tokens = lex(doc, pre.disabledRanges);
-	const analysis = parseAndAnalyze(doc, tokens, defs, pre);
+	// New AST pipeline: parse to AST, then analyze
+	const script = parseScriptFromText(doc.getText(), doc.uri, { macros: opts?.macros, includePaths: opts?.includePaths });
+	const analysis = analyzeAst(doc, script, defs, pre);
 	const sem = buildSemanticTokens(doc, tokens, defs, pre, analysis);
 
 	return { pre, tokens, analysis, sem };

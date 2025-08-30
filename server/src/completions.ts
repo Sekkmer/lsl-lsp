@@ -5,7 +5,7 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs, normalizeType } from './defs';
 import { Token } from './lexer';
-import type { Analysis } from './parser';
+import type { Analysis } from './analysisTypes';
 import type { PreprocResult } from './preproc';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -221,7 +221,7 @@ function findStateTopLevelContext(tokens: Token[], offset: number): { inStateTop
 	for (let i = 0; i < tokens.length; i++) {
 		const t = tokens[i];
 		if (t.start >= offset) break;
-		// Detect state open: 'state' id '{'  or 'default' '{'
+		// Detect state open: 'state' id '{'	or 'default' '{'
 		if (!inState) {
 			if (t.kind === 'id' && t.value === 'state' && tokens[i + 1]?.kind === 'id' && tokens[i + 2]?.value === '{') {
 				// Consume until '{'

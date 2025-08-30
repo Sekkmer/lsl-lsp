@@ -1,7 +1,7 @@
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Range, TextEdit } from 'vscode-languageserver/node';
 import { URI } from 'vscode-uri';
-import type { Analysis } from './parser';
+import type { Analysis } from './analysisTypes';
 import type { PreprocResult } from './preproc';
 import type { Defs } from './defs';
 
