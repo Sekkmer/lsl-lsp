@@ -23,15 +23,11 @@ export function inferExprTypeFromAst(
 			return 'any';
 		}
 		case 'ListLiteral': return 'list';
-		case 'Identifier': {
-			// Be tolerant: during analysis, unknown identifiers should not abort inference.
-			// Returning 'any' lets validators decide without throwing.
-			return symbolTypes.get(expr.name) ?? 'any';
-		}
-		case 'Cast': {
-			return expr.type;
-		}
+		case 'Identifier': return symbolTypes.get(expr.name) ?? 'any';
+		case 'Cast': return expr.type;
 		case 'Unary': {
+			// Logical and bitwise nots yield integer; arithmetic +/- preserve numeric where possible; ++/-- yield integer
+			if (expr.op === '!' || expr.op === '~' || expr.op === '++' || expr.op === '--') return 'integer';
 			const t = inferExprTypeFromAst(expr.argument, symbolTypes, functionReturnTypes);
 			if ((expr.op === '+' || expr.op === '-') && isNumeric(t)) return t;
 			return 'any';
@@ -53,10 +49,13 @@ export function inferExprTypeFromAst(
 		case 'Binary': {
 			const lt = inferExprTypeFromAst(expr.left, symbolTypes, functionReturnTypes);
 			const rt = inferExprTypeFromAst(expr.right, symbolTypes, functionReturnTypes);
+			const op = expr.op;
+			// Logical/relational/bitwise ops yield integer
+			if (op === '&&' || op === '||' || op === '==' || op === '!=' || op === '<' || op === '>' || op === '<=' || op === '>=' || op === '&' || op === '|' || op === '^' || op === '<<' || op === '>>') return 'integer';
 			if (isNumeric(lt) && isNumeric(rt)) return lt === 'float' || rt === 'float' ? 'float' : 'integer';
 			if (expr.op[0] === '+') {
 				if (lt === 'list' || rt === 'list') return 'list';
-				if (lt === 'string' && rt === 'string') return 'string';
+				if (lt === 'string' || rt === 'string') return 'string';
 				if (lt === 'vector' && rt === 'vector') return 'vector';
 				if (lt === 'rotation' && rt === 'rotation') return 'rotation';
 				return 'any';
