@@ -2,6 +2,7 @@
 	LSL lexer with basic macro expansion and comment tracking for AST parser
 */
 import { type Span, TYPES } from './index';
+import { builtinMacroForLexer } from '../builtins';
 
 export type TokKind =
 	| 'id' | 'number' | 'string' | 'op' | 'punct' | 'keyword'
@@ -173,23 +174,9 @@ export class Lexer {
 			while (j < this.n && /[A-Za-z0-9_]/.test(this.text[j]!)) j++;
 			const word = this.text.slice(start, j);
 			this.i = j;
-			// built-in macros
-			if (word === '__LINE__') {
-				const line = this.lineNumberFor(start);
-				return this.mk('number', String(line), start, j);
-			}
-			if (word === '__FILE__') {
-				const quoted = JSON.stringify(this.filename);
-				return this.mk('string', quoted, start, j);
-			}
-			if (word === '__TIME__') {
-				const time = new Date().toLocaleTimeString('en-US', { hour12: false });
-				return this.mk('string', JSON.stringify(time), start, j);
-			}
-			if (word === '__DATE__') {
-				const date = new Date().toLocaleDateString('en-US', { timeZone: 'UTC' });
-				return this.mk('string', JSON.stringify(date), start, j);
-			}
+			// built-in macros via centralized helper
+			const bi = builtinMacroForLexer(word, { filename: this.filename, line: this.lineNumberFor(start) });
+			if (bi) return this.mk(bi.kind, bi.value, start, j);
 			// TODO: __VERSION__, __FILE_NAME__, __COUNTER__ ???
 			// macro expansion
 			const expanded = this.tryExpandMacro(word);

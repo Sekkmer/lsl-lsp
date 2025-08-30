@@ -8,6 +8,7 @@ import type { Expr, Stmt, Script, Function as FnNode, State, Event, Type, Span, 
 import { isType, spanFrom } from './index';
 import { Lexer, type Token, type MacroTables } from './lexer';
 import { preprocess } from '../preproc';
+import { basenameFromUri } from '../builtins';
 
 type ParseOptions = {
 	macros?: Record<string, any>;
@@ -19,11 +20,8 @@ export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', op
 	const doc = TextDocument.create(uri, 'lsl', 0, text);
 	const pre = preprocess(doc, opts?.macros ?? {}, opts?.includePaths ?? [], {} as any);
 	const macros: MacroTables = { obj: pre.macros, fn: pre.funcMacros };
-	// Derive a basename for __FILE__
-	const basename = (() => {
-		try { const u = new URL(uri); return u.pathname.split('/').pop() || 'memory.lsl'; }
-		catch { return uri.split('/').pop() || 'memory.lsl'; }
-	})();
+	// Derive a basename for __FILE__ from the URI
+	const basename = basenameFromUri(uri);
 	const lx = new Lexer(text, { macros, disabled: pre.disabledRanges, filename: basename });
 	const P = new Parser(lx, text);
 	return P.parseScript();

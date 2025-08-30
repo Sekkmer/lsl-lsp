@@ -1,5 +1,6 @@
  
 import path from 'node:path';
+import { basenameFromUri } from './builtins';
 import { normalizeType } from './defs';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Connection } from 'vscode-languageserver/node';
@@ -97,13 +98,8 @@ export function preprocess(
 	const text = doc.getText();
 	const lines = text.split(/\r?\n/);
 	const macros: Record<string, any> = { ...baseMacros };
-	// Built-in macro __FILE__ (basename)
-	try {
-		let full = '';
-		try { const u = new URL(doc.uri); full = u.protocol === 'file:' ? decodeURIComponent(u.pathname) : doc.uri; }
-		catch { full = doc.uri.replace(/^file:\/\//, ''); }
-		macros['__FILE__'] = path.basename(full);
-	} catch { ; }
+	// Built-in macro __FILE__ (basename) in prephase for #if defined(__FILE__) checks
+	try { macros['__FILE__'] = basenameFromUri(doc.uri); } catch { /* ignore */ }
 
 	const funcMacros: Record<string, string> = {};
 	const disabledRanges: DisabledRange[] = [];
