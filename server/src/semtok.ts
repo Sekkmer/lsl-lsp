@@ -5,6 +5,7 @@ import { Defs } from './defs';
 import { PreprocResult } from './preproc';
 import { Analysis } from './analysisTypes';
 import type { Decl } from './analysisTypes';
+import { isKeyword as isAstKeyword } from './ast/lexer';
 
 const tokenTypes = [
 	'namespace', 'type', 'class', 'enum', 'interface', 'struct', 'typeParameter',
@@ -31,24 +32,30 @@ export function buildSemanticTokens(
 	function isWriteUse(tokens: Token[], i: number): boolean {
 		const t = tokens[i];
 		if (!t || t.kind !== 'id') return false;
-		// Postfix ++/--: id ++ / id --
+		// Postfix ++/--: id ++ / id -- (support combined '++'/'--' or split '+' '+')
 		const n1 = tokens[i + 1], n2 = tokens[i + 2];
-		if (n1 && n2 && n1.kind === 'op' && n2.kind === 'op') {
-			if (n1.value === '+' && n2.value === '+') return true;
-			if (n1.value === '-' && n2.value === '-') return true;
+		if (n1 && n1.kind === 'op') {
+			if (n1.value === '++' || n1.value === '--') return true;
+			if (n2 && n2.kind === 'op') {
+				if (n1.value === '+' && n2.value === '+') return true;
+				if (n1.value === '-' && n2.value === '-') return true;
+			}
 		}
-		// Prefix ++/--: ++ id / -- id
+		// Prefix ++/--: ++ id / -- id (support combined '++'/'--' or split '+' '+')
 		const p1 = tokens[i - 1], p2 = tokens[i - 2];
-		if (p1 && p2 && p1.kind === 'op' && p2.kind === 'op') {
-			if (p2.value === '+' && p1.value === '+') return true;
-			if (p2.value === '-' && p1.value === '-') return true;
+		if (p1 && p1.kind === 'op') {
+			if (p1.value === '++' || p1.value === '--') return true;
+			if (p2 && p2.kind === 'op') {
+				if (p2.value === '+' && p1.value === '+') return true;
+				if (p2.value === '-' && p1.value === '-') return true;
+			}
 		}
 		// Assignment or compound assignment: id [op...]= ... or combined token like '+=', '-=' etc.
 		const j = i + 1;
 		const t1 = tokens[j];
 		if (t1 && t1.kind === 'op') {
 			// Direct combined operators
-			if (t1.value === '=' || t1.value === '+= ' || t1.value === '+=') return true;
+			if (t1.value === '=' || t1.value === '+=') return true;
 			if (t1.value === '-=' || t1.value === '*=' || t1.value === '/=' || t1.value === '%=') return true;
 			// Fallback: gather a run and detect an '=' that isn't part of '==' or '<=' '>='
 			let k = j; const ops: string[] = [];
@@ -77,8 +84,14 @@ export function buildSemanticTokens(
 			const k = keyForDecl(decl);
 			const cnt = writeCountsByDecl.get(k);
 			if (hasDeclAnalysis) {
-				// With decl-aware analysis, missing means zero writes
-				if (cnt == null || cnt === 0) return true;
+				// With decl-aware analysis: if per-decl info is missing, fall back to name-level info
+				if (cnt == null) {
+					const byName = writeCountsByName.get(decl.name) || 0;
+					if (byName === 0) return true;
+					const firstN = firstWriteByName.get(decl.name);
+					return firstN != null ? tokenOffset < firstN : true;
+				}
+				if (cnt === 0) return true;
 				const first = firstWriteByDecl.get(k);
 				return first != null ? tokenOffset < first : true;
 			} else {
@@ -197,8 +210,9 @@ export function buildSemanticTokens(
 				}
 			}
 			if (defs.types.has(t.value)) { push(t, idx('type')); continue; }
-			// Recognize built-in keywords via defs (includes 'default')
-			if (defs.keywords.has(t.value)) { push(t, idx('keyword')); continue; }
+			// Recognize language keywords (control flow, state/default/event, etc.)
+			// Prefer types above; then handle keywords from defs or AST keyword set.
+			if (defs.keywords.has(t.value) || isAstKeyword(t.value)) { push(t, idx('keyword')); continue; }
 			if (defs.consts.has(t.value)) {
 				let mods = bit('defaultLibrary');
 				const c = defs.consts.get(t.value)! as any;
@@ -273,6 +287,34 @@ function computeWrites(toks: Token[], analysis?: Analysis): {
 	for (let i = 0; i < toks.length; i++) {
 		const t = toks[i];
 		if (t.kind !== 'id') continue;
+		// Handle combined postfix ++/-- (id '++' / id '--')
+		const tNext = toks[i + 1];
+		if (tNext && tNext.kind === 'op' && (tNext.value === '++' || tNext.value === '--')) {
+			bump(countsByName, t.value);
+			if (!firstByName.has(t.value)) firstByName.set(t.value, t.start); else { const cur = firstByName.get(t.value)!; if (t.start < cur) firstByName.set(t.value, t.start); }
+			const d = analysis ? (analysis.refAt(t.start) || analysis.symbolAt(t.start)) : null;
+			if (d) {
+				const k = keyForDecl(d);
+				bump(countsByDecl, k);
+				if (!firstByDecl.has(k) || t.start < (firstByDecl.get(k) as number)) firstByDecl.set(k, t.start);
+			}
+			offsets.add(t.start);
+			continue;
+		}
+		// Handle combined prefix ++/-- ('++' id / '--' id)
+		const tPrev = toks[i - 1];
+		if (tPrev && tPrev.kind === 'op' && (tPrev.value === '++' || tPrev.value === '--')) {
+			bump(countsByName, t.value);
+			if (!firstByName.has(t.value)) firstByName.set(t.value, t.start); else { const cur = firstByName.get(t.value)!; if (t.start < cur) firstByName.set(t.value, t.start); }
+			const d = analysis ? (analysis.refAt(t.start) || analysis.symbolAt(t.start)) : null;
+			if (d) {
+				const k = keyForDecl(d);
+				bump(countsByDecl, k);
+				if (!firstByDecl.has(k) || t.start < (firstByDecl.get(k) as number)) firstByDecl.set(k, t.start);
+			}
+			offsets.add(t.start);
+			continue;
+		}
 		// Direct combined compound assignment right after id: 
 		// id += expr, id -= expr, id *= expr, id /= expr, id %= expr
 		const t1 = toks[i + 1];

@@ -2,7 +2,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range } from 'vscode-languageserver/node';
 import type { Defs } from '../defs';
 import type { PreprocResult } from '../preproc';
-import { Script, Expr, Function as AstFunction, State as AstState, spanToRange } from './index';
+import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, TYPES } from './index';
 import { validateOperatorsFromAst } from '../op_validate_ast';
 import type { SimpleType } from './infer';
 import { inferExprTypeFromAst } from './infer';
@@ -59,7 +59,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const pushTypeScope = (parent?: TypeScope): TypeScope => ({ parent, types: new Map(), view: new Map(parent ? parent.view : undefined) });
 	const addType = (ts: TypeScope, name: string, type: string | undefined) => {
 		const nt = type ? normalizeType(type) : 'any';
-		const simple: SimpleType = (['integer','float','string','vector','list','rotation','key'] as string[]).includes(nt) ? (nt as SimpleType) : 'any';
+		const simple: SimpleType = isLslType(nt) ? (nt as SimpleType) : 'any';
 		ts.types.set(name, simple);
 		ts.view.set(name, simple);
 	};
@@ -124,7 +124,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (!headerLike) {
 			// Require: start-of-line identifier (event name), parameter list with typed params (type + name), then an opening brace
 			// This avoids matching function definitions (which have a return type before the name) and avoids simple macros.
-			const typeRe = '(?:integer|float|string|vector|rotation|list|key)';
+			// Build the type alternation from central TYPES list
+			const typeRe = `(?:${TYPES.join('|')})`;
 			const paramRe = `${typeRe}\\s+[A-Za-z_][A-Za-z0-9_]*`;
 			const sigRe = new RegExp(`^[\\t ]*[A-Za-z_][A-Za-z0-9_]*\\s*\\(\\s*${paramRe}(?:\\s*,\\s*${paramRe})*\\s*\\)\\s*\\{`, 'm');
 			if (sigRe.test(text)) {
@@ -632,8 +633,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const callSignatures = new Map<string, SimpleType[][]>();
 	const toSimpleType = (type: string): SimpleType => {
 		const nt = normalizeType(type);
-		if ((['integer','float','string','vector','list','rotation','key'] as string[]).includes(nt)) return nt as SimpleType;
-		return 'any';
+		return isLslType(nt) ? (nt as SimpleType) : 'any';
 	};
 	for (const [name, overloads] of defs.funcs) {
 		for (const f of overloads) {

@@ -1,7 +1,7 @@
 /*
 	LSL lexer with basic macro expansion and comment tracking for AST parser
 */
-import type { Span, Type } from './index';
+import { type Span, TYPES } from './index';
 
 export type TokKind =
 	| 'id' | 'number' | 'string' | 'op' | 'punct' | 'keyword'
@@ -9,13 +9,16 @@ export type TokKind =
 
 export interface Token { kind: TokKind; value: string; span: Span; }
 
-const KEYWORDS = new Set([
+const KEYWORDS = [
 	'if', 'else', 'while', 'do', 'for', 'return', 'state', 'default', 'jump', 'label',
-	// types (used for casts/decls)
-	'integer', 'float', 'string', 'key', 'vector', 'rotation', 'list', 'void'
-]);
-
-const TYPE_SET = new Set<Type>(['integer', 'float', 'string', 'key', 'vector', 'rotation', 'list']);
+	...TYPES, 'quaternion',
+	'void', 'event'
+] as const;
+type Keyword = typeof KEYWORDS[number];
+const KEYWORD_SET = new Set(KEYWORDS) as ReadonlySet<Keyword>;
+export function isKeyword(value: string): value is Keyword {
+	return KEYWORD_SET.has(value as Keyword);
+}
 
 export type MacroTables = {
 	obj: Record<string, string | number | boolean>;
@@ -191,7 +194,7 @@ export class Lexer {
 			// macro expansion
 			const expanded = this.tryExpandMacro(word);
 			if (expanded) return expanded;
-			const kind: TokKind = KEYWORDS.has(word) ? 'keyword' : 'id';
+			const kind: TokKind = isKeyword(word) ? 'keyword' : 'id';
 			return this.mk(kind, word, start, j);
 		}
 
@@ -322,8 +325,6 @@ export function computeLineOffsets(text: string): number[] {
 	for (let i = 0; i < text.length; i++) { if (text[i] === '\n') out.push(i + 1); }
 	return out;
 }
-
-export function isTypeWord(w: string): w is Type { return TYPE_SET.has(w as Type); }
 
 function escapeRegExp(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 

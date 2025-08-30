@@ -5,8 +5,8 @@
 */
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { Expr, Stmt, Script, Function as FnNode, State, Event, Type, Span, Diagnostic } from './index';
-import { spanFrom } from './index';
-import { Lexer, type Token, type MacroTables, isTypeWord } from './lexer';
+import { isType, spanFrom } from './index';
+import { Lexer, type Token, type MacroTables } from './lexer';
 import { preprocess } from '../preproc';
 
 type ParseOptions = {
@@ -105,7 +105,7 @@ class Parser {
 		for (; ;) {
 			const t = this.peek();
 			if (t.kind === 'eof') return;
-			if (t.kind === 'keyword' && (isTypeWord(t.value) || t.value === 'state')) return;
+			if (t.kind === 'keyword' && (isType(t.value) || t.value === 'state')) return;
 			if (t.kind === 'punct' && t.value === ';') { this.next(); return; }
 			// skip a token
 			this.next();
@@ -149,7 +149,7 @@ class Parser {
 			}
 			// function or global var: only start if next is a type keyword
 			const nextTok = this.peek();
-			if (nextTok.kind === 'keyword' && isTypeWord(nextTok.value)) {
+			if (nextTok.kind === 'keyword' && isType(nextTok.value)) {
 				let decl: any;
 				try { decl = this.parseTopLevel(); }
 				catch (e: any) { this.report(this.peek(), String(e.message || e)); this.syncTopLevel(); continue; }
@@ -191,7 +191,7 @@ class Parser {
 		// Capture any leading doc comment right at decl start
 		const leading = this.consumeLeadingComment();
 		const first = this.next();
-		if (!(first.kind === 'keyword' && isTypeWord(first.value))) throw this.err(first, 'expected type');
+		if (!(first.kind === 'keyword' && isType(first.value))) throw this.err(first, 'expected type');
 		const varType = first.value as Type;
 		const nameTok = this.eatNameToken();
 		const name = nameTok.value;
@@ -216,7 +216,7 @@ class Parser {
 		const params = new Map<string, Type>();
 		while (!this.maybe('punct', ')')) {
 			const tType = this.next();
-			if (!(tType.kind === 'keyword' && isTypeWord(tType.value))) throw this.err(tType, 'expected param type');
+			if (!(tType.kind === 'keyword' && isType(tType.value))) throw this.err(tType, 'expected param type');
 			const tName = this.eatNameToken();
 			params.set(tName.value, tType.value as Type);
 			this.maybe('punct', ',');
@@ -306,7 +306,7 @@ class Parser {
 			if (look.kind === 'keyword') {
 				const isStateDecl = look.value === 'state' && this.looksLikeStateDeclAfter(look.span.end);
 				const isDefaultStateDecl = look.value === 'default' && this.looksLikeDefaultStateDeclAfter(look.span.end);
-				const isFuncDecl = isTypeWord(look.value) && this.looksLikeFunctionDeclAfter(look.span.end);
+				const isFuncDecl = isType(look.value) && this.looksLikeFunctionDeclAfter(look.span.end);
 				if (isStateDecl || isDefaultStateDecl) {
 					if (inFunctionOrEvent) {
 						// If a state-like decl appears at the start of a new line inside a function/event,
@@ -531,7 +531,7 @@ class Parser {
 				}
 			}
 			// var decl inside block
-			if (isTypeWord(t.value)) return this.parseVarDecl();
+			if (isType(t.value)) return this.parseVarDecl();
 		}
 		// label using '@Name;' form
 		if (t.kind === 'punct' && t.value === '@') {
@@ -578,7 +578,7 @@ class Parser {
 
 	private parseVarDecl(): Stmt {
 		const tType = this.eat('keyword');
-		if (!isTypeWord(tType.value)) throw this.err(tType, 'expected type');
+		if (!isType(tType.value)) throw this.err(tType, 'expected type');
 		const nameTok = this.eatNameToken();
 		let initializer: Expr | undefined;
 		if (this.maybe('op', '=')) initializer = this.parseExpr();
@@ -717,7 +717,7 @@ class Parser {
 			// Special-case C-style cast syntax: (type)expr
 			// Look ahead for a type keyword immediately followed by ')'
 			const after = this.peek();
-			if (after.kind === 'keyword' && isTypeWord(after.value)) {
+			if (after.kind === 'keyword' && isType(after.value)) {
 				const after2 = this.lx.peek();
 				if (after2.kind === 'punct' && after2.value === ')') {
 					// Consume the type and closing ')', then parse the cast argument as a unary expression
@@ -744,7 +744,7 @@ class Parser {
 					return this.parsePostfix({ span: spanFrom(t.span.start, close.span.end), kind: 'Paren', expression: e } as Expr);
 			}
 		}
-		if (t.kind === 'keyword' && isTypeWord(t.value) && this.maybe('punct', '(')) {
+		if (t.kind === 'keyword' && isType(t.value) && this.maybe('punct', '(')) {
 			const arg = this.parseExpr(); this.eat('punct', ')');
 			return this.parsePostfix({ span: spanFrom(t.span.start, arg.span.end), kind: 'Cast', type: t.value as Type, argument: arg });
 		}

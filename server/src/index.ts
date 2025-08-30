@@ -39,6 +39,7 @@ import { URI } from 'vscode-uri';
 import { prepareRename as navPrepareRename, computeRenameEdits, findAllReferences } from './navigation';
 import { parseScriptFromText } from './ast/parser';
 import { analyzeAst } from './ast/analyze';
+import { isType } from './ast';
 
 const connection: Connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -441,10 +442,11 @@ connection.onCodeAction((params): CodeAction[] => {
 			});
 		}
 		if (d.code === LSL_DIAGCODES.REDUNDANT_CAST) {
-			// Try to remove the leading (type) segment from the text within diagnostic range.
+			// Try to remove a leading (type) segment from the text within diagnostic range.
 			const text = doc.getText(d.range as Range);
-			const m = /^\(\s*(integer|float|string|key|list|vector|rotation)\s*\)\s*([\s\S]*)$/.exec(text);
-			if (m) {
+			// Capture any identifier as a potential type and validate via isType to avoid hardcoding lists.
+			const m = /^\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*([\s\S]*)$/.exec(text);
+			if (m && isType(m[1])) {
 				const replacement = m[2] ?? '';
 				const edit = TextEdit.replace(d.range as Range, replacement);
 				actions.push({

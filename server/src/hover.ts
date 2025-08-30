@@ -3,6 +3,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs } from './defs';
 import { Analysis } from './analysisTypes';
 import { PreprocResult } from './preproc';
+import { isKeyword } from './ast/lexer';
 
 export function lslHover(doc: TextDocument, params: { position: Position }, defs: Defs, analysis?: Analysis, pre?: PreprocResult): Hover | null {
 	const fmtDoc = (s?: string) => (typeof s === 'string' ? s.replace(/\\r\\n|\\n/g, '\n') : s);
@@ -32,6 +33,11 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 	let e = off; while (e < text.length && /[A-Za-z0-9_]/.test(text[e])) e++;
 	const w = text.slice(s, e);
 	if (!w) return null;
+
+	// Keywords: do not produce hover for language keywords
+	if (isKeyword(w) || defs.keywords.has(w)) {
+		return null;
+	}
 
 	// Preprocessor macro hover (#define NAME VALUE)
 	if (pre && pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, w)) {

@@ -87,7 +87,7 @@ export function lex(doc: TextDocument, disabled: DisabledRange[]): Token[] {
 		}
 
 		// punctuation / operators
-		// combine two-char operators when applicable (==, !=, <=, >=, &&, ||, <<, >>, +=, -=, *=, /=, %=)
+		// combine two-char operators when applicable (==, !=, <=, >=, &&, ||, <<, >>, +=, -=, *=, /=, %=, ++, --)
 		const start = i;
 		let val = ch;
 		const next = text[i + 1];
@@ -98,7 +98,8 @@ export function lex(doc: TextDocument, disabled: DisabledRange[]): Token[] {
 			(ch === '>' && (next === '=' || next === '>')) ||
 			(ch === '&' && next === '&') ||
 			(ch === '|' && next === '|') ||
-			((ch === '+' || ch === '-' || ch === '*' || ch === '/' || ch === '%') && next === '=')
+			((ch === '+' || ch === '-' || ch === '*' || ch === '/' || ch === '%') && next === '=') ||
+			((ch === '+' && next === '+') || (ch === '-' && next === '-'))
 		) {
 			val = ch + next;
 			i += 2;
