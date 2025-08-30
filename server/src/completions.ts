@@ -4,7 +4,6 @@ import {
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs, normalizeType } from './defs';
-import { Token } from './lexer';
 import type { Analysis } from './analysisTypes';
 import type { PreprocResult } from './preproc';
 import path from 'node:path';
@@ -14,7 +13,6 @@ export function lslCompletions(
 	doc: TextDocument,
 	params: CompletionParams,
 	defs: Defs,
-	tokens: Token[],
 	analysis: Analysis,
 	pre: PreprocResult,
 	opts?: { includePaths?: string[] }
@@ -28,16 +26,19 @@ export function lslCompletions(
 	const wordPrefix = extractWordPrefix(text, offset);
 
 	// If we're at the top level inside a state body (not inside an event/function),
-	// suggest only events with a full typed signature snippet.
-	const stateCtx = findStateTopLevelContext(tokens, offset);
+	// suggest only events with a full typed signature snippet. (AST-based)
+	const stateCtx = findStateTopLevelContextAst(doc, analysis, offset);
 	if (stateCtx.inStateTopLevel) {
 		// Collect events already declared in this state up to this position
 		const declaredEvents = new Set<string>();
 		for (const d of analysis.decls) {
-			if (d.kind === 'event') {
-				const s = doc.offsetAt(d.range.start);
-				if (s >= (stateCtx.stateStartOffset ?? 0) && s < offset) declaredEvents.add(d.name);
-			}
+			if (d.kind !== 'event') continue;
+			if (!stateCtx.stateRange) continue;
+			const s = doc.offsetAt(d.range.start);
+			const stStart = doc.offsetAt(stateCtx.stateRange.start);
+			const stEnd = doc.offsetAt(stateCtx.stateRange.end);
+			// Consider all events declared inside this state, regardless of cursor position
+			if (s >= stStart && s <= stEnd) declaredEvents.add(d.name);
 		}
 		const out: CompletionItem[] = [];
 		for (const e of defs.events.values()) {
@@ -116,23 +117,26 @@ export function lslCompletions(
 		return items;
 	}
 
-	// Contextual: member access .x .y .z .s after identifier '.' -> type-aware
+	// Contextual: member access .x .y .z .s after identifier '.' -> type-aware (AST/text-based)
 	if (/\.\s*$/.test(lineText)) {
-		const base = findMemberBase(tokens, offset);
+		const name = findMemberBaseName(text, offset);
 		let comps: string[] | null = null;
-		if (base?.kind === 'vector') comps = ['x', 'y', 'z'];
-		else if (base?.kind === 'rotation') comps = ['x', 'y', 'z', 's'];
+		if (name) {
+			const declType = resolveIdentifierTypeAt(name, analysis, doc, offset) || '';
+			if (declType === 'vector') comps = ['x', 'y', 'z'];
+			else if (declType === 'rotation') comps = ['x', 'y', 'z', 's'];
+		}
 		if (!comps) comps = ['x', 'y', 'z', 's']; // fallback
 		for (const m of comps) items.push(scored({ label: m, kind: CompletionItemKind.Property }));
 		return items;
 	}
 
 	// Determine expected type at cursor (call argument, assignment, etc.)
-	const ctx = findCallContext(doc, tokens, pos);
+	const ctx = findCallContextFromAnalysis(analysis, pos);
 	let expectedType: string | 'any' = 'any';
 	if (ctx) {
 		const overloads = defs.funcs.get(ctx.name) || [];
-		const chosen = chooseBestOverload(overloads, ctx, doc, tokens);
+		const chosen = chooseBestOverloadAst(overloads, ctx);
 		expectedType = chosen?.params?.[ctx.argIndex]?.type || 'any';
 	}
 
@@ -209,36 +213,20 @@ export function lslCompletions(
 	return scoredItems;
 }
 
-// Determine if the cursor is inside a state body at top level (i.e., directly under the state's '{' and not nested
-// inside an event or other block). Returns true when the nearest enclosing construct is a state block and the
-// current brace depth equals the state's base depth.
-function findStateTopLevelContext(tokens: Token[], offset: number): { inStateTopLevel: boolean; stateStartOffset?: number } {
-	// Track brace depth and mark when we enter a state block
-	let depth = 0;
-	let inState = false;
-	let stateBaseDepth = -1;
-	let stateStartOffset: number | undefined = undefined;
-	for (let i = 0; i < tokens.length; i++) {
-		const t = tokens[i];
-		if (t.start >= offset) break;
-		// Detect state open: 'state' id '{'	or 'default' '{'
-		if (!inState) {
-			if (t.kind === 'id' && t.value === 'state' && tokens[i + 1]?.kind === 'id' && tokens[i + 2]?.value === '{') {
-				// Consume until '{'
-				i += 2; depth++; inState = true; stateBaseDepth = depth; stateStartOffset = tokens[i]?.start; continue;
-			}
-			if (t.kind === 'id' && t.value === 'default' && tokens[i + 1]?.value === '{') {
-				i += 1; depth++; inState = true; stateBaseDepth = depth; stateStartOffset = tokens[i]?.start; continue;
-			}
-		}
-		if (t.value === '{') depth++;
-		else if (t.value === '}') {
-			if (inState && depth === stateBaseDepth) { inState = false; stateBaseDepth = -1; }
-			depth = Math.max(0, depth - 1);
-		}
+// AST-based: inside state but not inside an event
+function findStateTopLevelContextAst(doc: TextDocument, analysis: Analysis, offset: number): { inStateTopLevel: boolean; stateRange?: { start: Position; end: Position } } {
+	const pos = doc.positionAt(offset);
+	let stateRange: { start: Position; end: Position } | undefined;
+	for (const d of analysis.decls) {
+		if (d.kind !== 'state') continue;
+		if (inRange(pos, d.range)) { stateRange = d.range; break; }
 	}
-	// We're in state top-level if inState is true and current depth equals the state's base depth
-	return { inStateTopLevel: inState && depth === stateBaseDepth, stateStartOffset };
+	if (!stateRange) return { inStateTopLevel: false };
+	for (const d of analysis.decls) {
+		if (d.kind !== 'event') continue;
+		if (inRange(pos, d.range)) return { inStateTopLevel: false };
+	}
+	return { inStateTopLevel: true, stateRange };
 }
 
 export function resolveCompletion(item: CompletionItem): CompletionItem {
@@ -246,19 +234,65 @@ export function resolveCompletion(item: CompletionItem): CompletionItem {
 	return item;
 }
 
-export function lslSignatureHelp(doc: TextDocument, params: { textDocument: { uri: string }, position: Position }, defs: Defs, tokens: Token[]): SignatureHelp | null {
-	const ctx = findCallContext(doc, tokens, params.position);
+export function lslSignatureHelp(doc: TextDocument, params: { textDocument: { uri: string }, position: Position }, defs: Defs, analysis: Analysis): SignatureHelp | null {
+	// Try AST-based context first; if null, attempt a small text fallback to catch edge cursors
+	let ctx = findCallContextFromAnalysis(analysis, params.position);
+	if (!ctx) {
+		const text = doc.getText();
+		const off = doc.offsetAt(params.position);
+		// Robust back-scan to find innermost enclosing call: track paren depth and skip strings/brackets
+		let i = off - 1;
+		let depth = 0;
+		outer: while (i >= 0) {
+			const ch = text[i] || '';
+			// skip whitespace quickly
+			if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') { i--; continue; }
+			// skip string literals (simple heuristics)
+			if (ch === '"' || ch === '\'') {
+				const quote = ch; i--;
+				while (i >= 0) { if (text[i] === quote && text[i - 1] !== '\\') { i--; break; } i--; }
+				continue;
+			}
+			// track nesting for ), ], }
+			if (ch === ')' || ch === ']' || ch === '}') { depth++; i--; continue; }
+			if (ch === '(') {
+				if (depth === 0) {
+					// Found the candidate call start; read identifier left of it
+					let j = i - 1; let name = '';
+					while (j >= 0 && /[A-Za-z0-9_]/.test(text[j]!)) { name = text[j] + name; j--; }
+					if (name) {
+						// Count commas from after '(' to the cursor, ignoring commas in nested parentheses
+						let k = i + 1; let commas = 0; let nest = 0;
+						while (k < off) {
+							const c = text[k] || '';
+							if (c === '"' || c === '\'') {
+								const q = c; k++;
+								while (k < off) { if (text[k] === q && text[k - 1] !== '\\') { k++; break; } k++; }
+								continue;
+							}
+							if (c === '(') { nest++; k++; continue; }
+							if (c === ')') { if (nest === 0) break; nest--; k++; continue; }
+							if (c === ',' && nest === 0) { commas++; }
+							k++;
+						}
+						ctx = { name, argIndex: Math.max(0, commas) };
+					}
+					break outer;
+				}
+				depth--; i--; continue;
+			}
+			i--;
+		}
+	}
 	if (!ctx) return null;
 	const overloads = defs.funcs.get(ctx.name);
 	if (!overloads || overloads.length === 0) return null;
 
-	// Choose active signature by arity + simple type score
 	const candidates = overloads.filter(fn => ctx.argIndex < fn.params.length);
-	const chosen = (candidates.length > 0 ? candidates : overloads)
-		.slice().sort((a, b) => scoreSignature(b, ctx, doc, tokens) - scoreSignature(a, ctx, doc, tokens))[0];
+	const chosen = (candidates.length > 0 ? candidates : overloads)[0];
 
-	const gotType = ctx.argRange ? inferExprType(doc, tokens, ctx.argRange) : 'any';
 	const expType = chosen.params[ctx.argIndex]?.type || 'any';
+	const gotType = inferExprTypeFromText(doc, analysis, params.position) || 'any';
 	const mismatch = !typeMatches(expType, gotType);
 
 	const sigs: SignatureInformation[] = overloads.map(fn => ({
@@ -272,94 +306,57 @@ export function lslSignatureHelp(doc: TextDocument, params: { textDocument: { ur
 	return { signatures: sigs, activeSignature: activeSigIndex, activeParameter: Math.max(0, Math.min(ctx.argIndex, (chosen.params.length - 1))) };
 }
 
-function scoreSignature(fn: { params: { type: string }[] }, ctx: { argIndex: number; argRange?: { start: Position; end: Position } }, doc: TextDocument, tokens: Token[]): number {
-	let s = 0;
-	// crude: only consider current arg
-	const got = ctx.argRange ? inferExprType(doc, tokens, ctx.argRange) : 'any';
-	const exp = fn.params[ctx.argIndex]?.type || 'any';
-	if (typeMatches(exp, got)) s += 2; else s -= 1;
-	// prefer fewer params than wildly longer overloads when argIndex near end
-	s += Math.max(0, 5 - fn.params.length);
-	return s;
+
+// token-less call context is derived from Analysis.calls in findCallContextFromAnalysis
+
+// AST-based call context using Analysis.calls
+function findCallContextFromAnalysis(analysis: Analysis, pos: Position): { name: string; argIndex: number } | null {
+	let best: { name: string; argIndex: number; area: number } | null = null;
+	for (const c of analysis.calls) {
+		if (!inRange(pos, c.range)) continue;
+		let idx = 0;
+		for (let i = 0; i < c.argRanges.length; i++) {
+			const r = c.argRanges[i];
+			if (inRange(pos, r)) { idx = i; break; }
+			if (docPositionCmp(pos, r.start) >= 0) idx = i;
+		}
+		const area = rangeArea(c.range);
+		if (!best || area < best.area) best = { name: c.name, argIndex: idx, area };
+	}
+	if (!best) return null;
+	return { name: best.name, argIndex: best.argIndex };
 }
 
-function findCallContext(doc: TextDocument, tokens: Token[], pos: Position): { name: string; argIndex: number; argRange?: { start: Position; end: Position } } | null {
-	const offset = doc.offsetAt(pos);
-	// Find token index at or before offset
-	let ti = tokens.findIndex(t => t.start <= offset && t.end >= offset);
-	if (ti === -1) {
-		// pick last token before offset
-		for (let k = tokens.length - 1; k >= 0; k--) if (tokens[k].end <= offset) { ti = k; break; }
-	}
-	if (ti === -1) return null;
-	// Walk backwards to find matching '('
-	let depth = 0; let i = ti;
-	for (; i >= 0; i--) {
-		const t = tokens[i];
-		if (t.value === ')') depth++;
-		else if (t.value === '(') {
-			if (depth === 0) break; else depth--;
-		}
-	}
-	if (i < 1) return null;
-	const lparen = tokens[i];
-	const prev = tokens[i - 1];
-	if (!prev || prev.kind !== 'id') return null;
-	const name = prev.value;
-	// Exclude type-cast forms like integer(...)
-	// We cannot access defs here; callsite ensures only defs.funcs are considered later.
-
-	// Compute arg index and current arg range
-	let j = i + 1; let pDepth = 1; let bDepth = 0; let cDepth = 0; let vDepth = 0;
-	let argIndex = 0; const argStart = lparen.end; let currentStart: number | null = argStart;
-	let currentEnd: number | null = null;
-	while (j < tokens.length) {
-		const t = tokens[j++];
-		if (t.value === '(') { pDepth++; continue; }
-		if (t.value === ')') {
-			pDepth--;
-			if (pDepth === 0) { currentEnd = t.start; break; }
-			continue;
-		}
-		if (t.value === '[') { bDepth++; continue; }
-		if (t.value === ']') { if (bDepth > 0) bDepth--; continue; }
-		if (t.value === '{') { cDepth++; continue; }
-		if (t.value === '}') { if (cDepth > 0) cDepth--; continue; }
-		if (t.value === '<') { vDepth++; continue; }
-		if (t.value === '>') { if (vDepth > 0) vDepth--; continue; }
-		if (pDepth === 1 && bDepth === 0 && cDepth === 0 && vDepth === 0 && t.value === ',') {
-			if (offset <= t.start) { currentEnd = t.start; break; }
-			argIndex++;
-			currentStart = t.end;
-		}
-	}
-	const range = (currentStart != null && currentEnd != null) ? { start: doc.positionAt(currentStart), end: doc.positionAt(currentEnd) } : undefined;
-	return { name, argIndex, argRange: range };
+function rangeArea(r: { start: Position; end: Position }): number {
+	return (r.end.line - r.start.line) * 1_000_000 + (r.end.character - r.start.character);
 }
 
-function inferExprType(doc: TextDocument, tokens: Token[], range: { start: Position, end: Position }): string {
-	const startOff = doc.offsetAt(range.start);
-	const endOff = doc.offsetAt(range.end);
-	const slice = tokens.filter(t => t.start >= startOff && t.end <= endOff);
-	if (slice.length === 0) return 'any';
-	const t0 = slice[0];
-	if (t0.kind === 'str') return 'string';
-	if (t0.kind === 'num') return /\./.test(t0.value) ? 'float' : 'integer';
-	if (t0.value === '<') return 'vector';
-	if (t0.value === '[') return 'list';
-	if (t0.kind === 'id') {
-		// Member access: <expr>.x|y|z|s -> float
-		const prevIdx = tokens.findIndex(t => t.start === t0.start && t.end === t0.end) - 1;
-		if (prevIdx >= 1 && tokens[prevIdx]?.value === '.') {
-			const mem = t0.value;
-			if (mem === 'x' || mem === 'y' || mem === 'z' || mem === 's') return 'float';
-		}
-		const v = t0.value;
-		if (v === 'TRUE' || v === 'FALSE') return 'integer';
-		if (v === 'NULL_KEY') return 'key';
-		return 'any';
-	}
-	return 'any';
+function docPositionCmp(a: Position, b: Position): number {
+	if (a.line !== b.line) return a.line - b.line;
+	return a.character - b.character;
+}
+
+function inferExprTypeFromText(doc: TextDocument, analysis: Analysis, pos: Position): string | null {
+	// Heuristic: find the nearest call at pos and scan the arg substring for a leading token-like char
+	const call = findCallContextFromAnalysis(analysis, pos);
+	if (!call) return null;
+	const full = analysis.calls.find(c => c.name === call.name && inRange(pos, c.range));
+	if (!full) return null;
+	const argR = full.argRanges[call.argIndex];
+	if (!argR) return null;
+	const text = doc.getText({ start: argR.start, end: argR.end }).trim();
+	if (!text) return null;
+	const ch = text[0];
+	if (ch === '"') return 'string';
+	if (ch === '<') return 'vector';
+	if (ch === '[') return 'list';
+	if (/^[+-]?\d/.test(text) || /^0x[0-9A-Fa-f]+/.test(text)) return text.includes('.') ? 'float' : 'integer';
+	if (/^(TRUE|FALSE)\b/.test(text)) return 'integer';
+	if (/^NULL_KEY\b/.test(text)) return 'key';
+	// identifier: try to resolve local/param type
+	const id = text.match(/^[A-Za-z_][A-Za-z0-9_]*/)?.[0];
+	if (id) return resolveIdentifierTypeAt(id, analysis, doc, doc.offsetAt(argR.start)) || 'any';
+	return null;
 }
 
 function typeMatches(expected: string, got: string): boolean {
@@ -381,11 +378,12 @@ function dirnameOfDoc(doc: TextDocument): string {
 	return path.dirname(doc.uri.replace(/^file:\/\//, ''));
 }
 
-function chooseBestOverload(overloads: { params: { type: string }[] }[], ctx: { argIndex: number; argRange?: { start: Position; end: Position } }, doc: TextDocument, tokens: Token[]) {
+// Simpler overload choice without token inference
+function chooseBestOverloadAst(overloads: { params: { type: string }[] }[], ctx: { argIndex: number }) {
 	if (!overloads || overloads.length === 0) return null as any;
 	const candidates = overloads.filter(fn => ctx.argIndex < fn.params.length);
 	const list = (candidates.length > 0 ? candidates : overloads)
-		.slice().sort((a, b) => scoreSignature(b, ctx, doc, tokens) - scoreSignature(a, ctx, doc, tokens));
+		.slice().sort((a, b) => a.params.length - b.params.length);
 	return list[0];
 }
 
@@ -443,22 +441,30 @@ function rankAndFinalize(items: CompletionItem[], expectedType: string | 'any', 
 	return deduped;
 }
 
-function findMemberBase(tokens: Token[], offset: number): { kind: 'vector' | 'rotation' | 'other' } | null {
-	// Find the '.' token immediately before offset and inspect the token before it
-	let dotIdx = -1;
-	for (let i = 0; i < tokens.length; i++) {
-		const t = tokens[i];
-		if (t.start <= offset && t.end <= offset && t.value === '.') dotIdx = i;
-		if (t.start > offset) break;
+// Extract the identifier left of the trailing '.' at offset
+function findMemberBaseName(text: string, offset: number): string | null {
+	let i = offset - 1;
+	while (i > 0 && /\s/.test(text[i]!)) i--;
+	if (text[i] !== '.') return null;
+	let j = i - 1; let name = '';
+	while (j >= 0 && /[A-Za-z0-9_]/.test(text[j]!)) { name = text[j] + name; j--; }
+	return name || null;
+}
+
+function resolveIdentifierTypeAt(name: string, analysis: Analysis, doc: TextDocument, offset: number): string | undefined {
+	let best: { type?: string; start: number } | null = null;
+	for (const d of analysis.decls) {
+		if ((d.kind === 'var' || d.kind === 'param') && d.name === name) {
+			const s = doc.offsetAt(d.range.start);
+			if (s <= offset && (!best || s > best.start)) best = { type: d.type, start: s };
+		}
 	}
-	if (dotIdx <= 0) return null;
-	const prev = tokens[dotIdx - 1];
-	if (!prev) return null;
-	if (prev.kind === 'id') {
-		// We cannot fully resolve type here without full symbol table; fall back to heuristic using following member rules already validated in parser diagnostics
-		// If the identifier name hints rotation variable commonly named 'rot' or 'q', we still don't assume; return other
-		return { kind: 'other' };
-	}
-	if (prev.value === '>') return { kind: 'vector' }; // closing of <...>
-	return { kind: 'other' };
+	return best?.type;
+}
+
+function inRange(pos: Position, range: { start: Position; end: Position }): boolean {
+	if (pos.line < range.start.line || pos.line > range.end.line) return false;
+	if (pos.line === range.start.line && pos.character < range.start.character) return false;
+	if (pos.line === range.end.line && pos.character > range.end.character) return false;
+	return true;
 }

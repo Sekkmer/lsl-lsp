@@ -10,9 +10,9 @@ describe('event completions inside state', async () => {
 
 	it('only suggests events at state top-level', () => {
 		const doc = docFrom('state S { \n\t\n}');
-		const { tokens, analysis, pre } = runPipeline(doc, defs);
+		const { analysis, pre } = runPipeline(doc, defs);
 		const pos = doc.positionAt(doc.getText().indexOf('{') + 3);
-		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, tokens, analysis, pre);
+		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, analysis, pre);
 		const ls = labels(items);
 		// Should contain known events
 		expect(ls).toContain('state_entry');
@@ -25,9 +25,9 @@ describe('event completions inside state', async () => {
 
 	it('inserts full typed signature snippet', () => {
 		const doc = docFrom('default { \n\t\n}');
-		const { tokens, analysis, pre } = runPipeline(doc, defs);
+		const { analysis, pre } = runPipeline(doc, defs);
 		const pos = doc.positionAt(doc.getText().indexOf('{') + 3);
-		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, tokens, analysis, pre);
+		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, analysis, pre);
 		const touch = items.find(i => i.label === 'touch_start')!;
 		expect(touch).toBeTruthy();
 		const insert = (touch as any).insertText as string;
@@ -36,10 +36,10 @@ describe('event completions inside state', async () => {
 
 	it('does not suggest already-declared events and flags duplicates', () => {
 		const doc = docFrom('default {\n\ttouch_start(integer total_number) { }\n\t\n}');
-		const { tokens, analysis, pre } = runPipeline(doc, defs);
+		const { analysis, pre } = runPipeline(doc, defs);
 		// Position after the first event to request more completions at state top-level
 		const pos = doc.positionAt(doc.getText().lastIndexOf('\n', doc.getText().lastIndexOf('}')));
-		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, tokens, analysis, pre);
+		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, analysis, pre);
 		const ls = labels(items);
 		expect(ls).not.toContain('touch_start');
 		// Now add a duplicate event and ensure analysis flags duplicate

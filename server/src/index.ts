@@ -256,7 +256,7 @@ connection.onCompletion((params: CompletionParams, token): CompletionItem[] => {
 	if (token?.isCancellationRequested) return [];
 	const doc = documents.get(params.textDocument.uri); if (!doc || !defs) return [];
 	const entry = getPipeline(doc); if (!entry) return [];
-	return lslCompletions(doc, params, defs, entry.tokens, entry.analysis, entry.pre, { includePaths: settings.includePaths });
+	return lslCompletions(doc, params, defs, entry.analysis, entry.pre, { includePaths: settings.includePaths });
 });
 connection.onCompletionResolve(resolveCompletion);
 
@@ -271,7 +271,7 @@ connection.onSignatureHelp((params: SignatureHelpParams, token): SignatureHelp |
 	if (token?.isCancellationRequested) return null;
 	const doc = documents.get(params.textDocument.uri); if (!doc || !defs) return null;
 	const entry = getPipeline(doc); if (!entry) return null;
-	return lslSignatureHelp(doc, params, defs, entry.tokens);
+	return lslSignatureHelp(doc, params, defs, entry.analysis);
 });
 
 connection.languages.semanticTokens.on((params: SemanticTokensParams, token): SemanticTokens => {

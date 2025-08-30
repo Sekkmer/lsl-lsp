@@ -103,7 +103,7 @@ export function preprocess(
 		try { const u = new URL(doc.uri); full = u.protocol === 'file:' ? decodeURIComponent(u.pathname) : doc.uri; }
 		catch { full = doc.uri.replace(/^file:\/\//, ''); }
 		macros['__FILE__'] = path.basename(full);
-	} catch (e) { void e; }
+	} catch { ; }
 
 	const funcMacros: Record<string, string> = {};
 	const disabledRanges: DisabledRange[] = [];

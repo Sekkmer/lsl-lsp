@@ -297,8 +297,12 @@ class Parser {
 		const lbrace = this.eat('punct', '{');
 		const statements: Stmt[] = [];
 		let loopGuard = 0;
-		while (!this.maybe('punct', '}')) {
+		let rbraceEnd: number | null = null;
+		for (; ;) {
 			if (++loopGuard > 20000) { this.report(this.peek(), 'parser recovery limit reached inside block', 'LSL000'); break; }
+			// Close on explicit '}'
+			const rb = this.maybe('punct', '}');
+			if (rb) { rbraceEnd = rb.span.end; break; }
 			// If we see the beginning of a new top-level declaration inside a block,
 			// either (a) emit LSL022 for illegal state/default blocks declared in function/event bodies,
 			// or (b) assume missing '}' before next true top-level declaration (function) and recover by exiting.
@@ -309,16 +313,9 @@ class Parser {
 				const isFuncDecl = isType(look.value) && this.looksLikeFunctionDeclAfter(look.span.end);
 				if (isStateDecl || isDefaultStateDecl) {
 					if (inFunctionOrEvent) {
-						// If a state-like decl appears at the start of a new line inside a function/event,
-						// recover as if the previous block missed a closing brace and break out so the top-level can re-parse it.
-						if (this.atLineStart(look.span.start)) {
-							this.report(look, 'missing } before next declaration', 'LSL000');
-							break;
-						}
-						// Otherwise, truly illegal state/default inside function/event: consume and report LSL022 then continue.
+						if (this.atLineStart(look.span.start)) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
 						if (isStateDecl) {
 							const kw = this.eat('keyword', 'state');
-							// state name may be id or 'default'
 							if (this.peek().kind === 'keyword' && this.peek().value === 'default') this.next(); else this.eat('id');
 							const body = this.parseBlock(true);
 							this.report({ kind: 'id', value: '', span: { start: kw.span.start, end: body.span.end } } as any, 'State declarations are only allowed at global scope', 'LSL022');
@@ -332,27 +329,18 @@ class Parser {
 							continue;
 						}
 					}
-					// If not in a function/event context, seeing a state/default declaration here means the outer block likely missed a closing brace; emit missing-brace and break.
 					this.report(look, 'missing } before next declaration', 'LSL000');
 					break;
 				}
-				if (isFuncDecl) {
-					this.report(look, 'missing } before next declaration', 'LSL000');
-					break;
-				}
+				if (isFuncDecl) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
 			}
 			// tolerate EOF to avoid crashes
-			if (this.peek().kind === 'eof') {
-				// Implicitly close block at EOF; place error at EOF position
-				this.report(this.peek(), 'missing } before end of file', 'LSL000');
-				break;
-			}
-			let s: Stmt;
-			try { s = this.parseStmt(inFunctionOrEvent); }
-			catch (e: any) { this.report(this.peek(), String(e.message || e), 'LSL000'); this.syncTo([';', '}']); if (this.maybe('punct', ';')) continue; if (this.maybe('punct', '}')) break; continue; }
-			statements.push(s);
+			if (this.peek().kind === 'eof') { this.report(this.peek(), 'missing } before end of file', 'LSL000'); break; }
+			try { statements.push(this.parseStmt(inFunctionOrEvent)); }
+			catch (e: any) { this.report(this.peek(), String(e.message || e), 'LSL000'); this.syncTo([';', '}']); if (this.maybe('punct', ';')) continue; if (this.maybe('punct', '}')) { rbraceEnd = this.peek().span.end; break; } continue; }
 		}
-		return { span: spanFrom(lbrace.span.start, this.peek().span.end), kind: 'BlockStmt', statements };
+		const end = rbraceEnd ?? this.peek().span.end;
+		return { span: spanFrom(lbrace.span.start, end), kind: 'BlockStmt', statements };
 	}
 
 	// Heuristic: after a type keyword at pos, do we have an identifier followed by '(' (function decl)?
@@ -585,7 +573,6 @@ class Parser {
 		this.eat('punct', ';');
 		return { span: spanFrom(tType.span.start, nameTok.span.end), kind: 'VarDecl', varType: tType.value as Type, name: nameTok.value, initializer, comment: this.consumeLeadingComment() };
 	}
-
 	private parseIf(inFunctionOrEvent: boolean): Stmt {
 		const kw = this.eat('keyword', 'if'); this.eat('punct', '(');
 		const cond = this.parseExpr(); this.eat('punct', ')');
@@ -630,7 +617,18 @@ class Parser {
 
 	private parseReturn(): Stmt {
 		const kw = this.eat('keyword', 'return');
-		if (this.peek().kind === 'punct' && this.peek().value === ';') { const semi = this.next(); return { span: spanFrom(kw.span.start, semi.span.end), kind: 'ReturnStmt' }; }
+		// Allow bare `return;` (no expression)
+		const semiEarly = this.maybe('punct', ';');
+		if (semiEarly) {
+			return { span: spanFrom(kw.span.start, semiEarly.span.end), kind: 'ReturnStmt' } as Stmt;
+		}
+		// If immediately followed by a closing brace or EOF, report missing semicolon and treat as bare return
+		const next = this.peek();
+		if ((next.kind === 'punct' && next.value === '}') || next.kind === 'eof') {
+			this.report(next, 'Missing semicolon after return', 'LSL000');
+			return { span: kw.span, kind: 'ReturnStmt' } as Stmt;
+		}
+		// Otherwise parse an expression and then require semicolon
 		const expr = this.parseExpr();
 		const semi = this.maybe('punct', ';');
 		if (!semi) {

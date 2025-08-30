@@ -101,6 +101,15 @@
 			]
 		},
 		{
+			"name": "llGetSubString",
+			"returns": "string",
+			"params": [
+				{ "name": "src", "type": "string" },
+				{ "name": "start", "type": "integer" },
+				{ "name": "end", "type": "integer" }
+			]
+		},
+		{
 			"name": "llGetOwner",
 			"returns": "key",
 			"params": []
