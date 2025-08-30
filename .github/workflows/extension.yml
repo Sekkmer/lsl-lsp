@@ -44,3 +44,38 @@ jobs:
         with:
           name: vscode-lsl-lsp-vsix
           path: client-vscode/*.vsix
+
+      - name: Add run summary
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "## ✅ VSIX artifact ready";
+            echo;
+            echo "- Open the run: ${RUN_URL}";
+            echo "- Download from the Artifacts section: vscode-lsl-lsp-vsix";
+            echo;
+            echo "Tip (GitHub CLI):";
+            echo "\`gh run download ${{ github.run_id }} -n vscode-lsl-lsp-vsix\`";
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Publish Release (on tags)
+    needs: package-extension
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download VSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vscode-lsl-lsp-vsix
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.vsix
+          generate_release_notes: true
+          fail_on_unmatched_files: true
