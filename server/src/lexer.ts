@@ -39,9 +39,15 @@ export function lex(doc: TextDocument, disabled: DisabledRange[]): Token[] {
 		}
 		if (ch === '/' && text[i + 1] === '*') {
 			const start = i; i += 2;
-			while (i < text.length && !(text[i - 1] === '*' && text[i] === '/')) i++;
-			i++;
-			out.push({ kind: 'comment', value: text.slice(start, i), start, end: i });
+			// Scan until closing */ or EOF; do not overshoot past the end
+			let j = i;
+			while (j < text.length && !(text[j - 1] === '*' && text[j] === '/')) j++;
+			// If we found a closing */ at j, the end index should include it; otherwise end at EOF
+			const closed = j < text.length;
+			const end = closed ? (j + 1) : j;
+			// Advance main index to end
+			i = end;
+			out.push({ kind: 'comment', value: text.slice(start, end), start, end });
 			continue;
 		}
 

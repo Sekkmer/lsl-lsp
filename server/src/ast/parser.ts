@@ -45,6 +45,14 @@ class Parser {
 		// accumulate comments; skip preprocessor directives entirely
 		for (; ;) {
 			if (t.kind === 'comment-line' || t.kind === 'comment-block') {
+				// If this is a block comment that does not end with */, report a syntax error but continue.
+				if (t.kind === 'comment-block') {
+					const end = t.span.end;
+					const closed = end >= 2 && this.src.slice(Math.max(0, end - 2), end) === '*/';
+					if (!closed) {
+						this.report(t as any, 'Unterminated block comment', 'LSL000');
+					}
+				}
 				const text = t.value.replace(/^[ \t]*\/\/?[ \t]?/, '');
 				if (this.leadingComment) this.leadingComment += '\n';
 				this.leadingComment += text;
