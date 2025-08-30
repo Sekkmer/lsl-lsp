@@ -328,7 +328,25 @@ export function validateOperatorsFromAst(
 				diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Cannot cast ${src} to ${target}`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Error });
 				break;
 			}
-			case 'ListLiteral': e.elements.forEach(walk); break;
+			case 'ListLiteral': {
+				// Walk and validate elements: LSL does not allow lists inside lists
+				for (const comp of e.elements) {
+					walk(comp);
+					const ct = inferExprTypeFromAst(comp, symbolTypes, functionReturnTypes);
+					const isListy = ct === 'list'
+						|| comp.kind === 'ListLiteral'
+						|| (comp.kind === 'Identifier' && symbolTypes.get(comp.name) === 'list');
+					if (isListy) {
+						diagnostics.push({
+							code: LSL_DIAGCODES.WRONG_TYPE,
+							message: 'List element cannot be a list',
+							range: mk(doc, comp.span.start, comp.span.end),
+							severity: DiagnosticSeverity.Error,
+						});
+					}
+				}
+				break;
+			}
 			case 'VectorLiteral': {
 				// Each element in a vector literal should be numeric (integer or float).
 				// If we can infer a non-numeric, known type, flag it; otherwise allow 'any'.
