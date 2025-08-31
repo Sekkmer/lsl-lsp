@@ -1,4 +1,3 @@
- 
 import path from 'node:path';
 import { basenameFromUri } from './builtins';
 import { normalizeType } from './defs';
@@ -477,23 +476,53 @@ function scanIncludeText(text: string): IncludeSymbols {
 		}
 		// Strip line comments for declaration matching
 		const L = trimmed.replace(/\/\/.*$/, '');
+		// Helper: collect continued lines for a preprocessor directive ending with '\'
+		const collectContinuation = (firstBody: string, startLineNo: number): { body: string; lastLine: number } => {
+			let body = firstBody;
+			let ln = startLineNo;
+			// Detect trailing backslash (after trimming right whitespace)
+			const endsWithBS = (s: string) => /\\\s*$/.test(s);
+			// We already removed line comments. Use original raw lines for continuations but strip line comments as well.
+			while (ln + 1 < lines.length) {
+				const nextRaw = lines[ln + 1] as string;
+				// Stop if next line is not part of the same macro (no leading whitespace + not a define continuation)
+				// In C, any line immediately following a trailing backslash is a continuation, regardless of indentation.
+				// So only continue if current body ended with a backslash.
+				if (!endsWithBS(body)) break;
+				// Remove the trailing backslash from current body
+				body = body.replace(/\\\s*$/, '');
+				// Prepare next segment: strip leading indentation and remove trailing line comment
+				const seg = nextRaw.replace(/\/\/.*$/, '').trimStart();
+				body += '\n' + seg;
+				ln++;
+			}
+			// If the very last collected body still ends with a backslash (malformed), strip it to avoid stray tokens
+			body = body.replace(/\\\s*$/, '');
+			return { body, lastLine: ln };
+		};
 		const m = /^\s*#\s*define\s+([A-Za-z_]\w*)(\s*\(([^)]*)\))?(?:\s+(.*))?$/.exec(L);
 		if (m) {
 			const name = m[1];
 			const whole = m[0];
 			const nameRel = whole.indexOf(name);
 			const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*/));
+			// Detect and collect multi-line macro continuation for the body
+			const firstBody = (m[4] ?? '').trimEnd();
+			const cont = collectContinuation(firstBody, lineNo);
+			if (cont.lastLine > lineNo) {
+				// We consumed extra lines as part of this macro; advance the outer loop
+				lineNo = cont.lastLine;
+			}
+			const bodyJoined = cont.body.trim();
 			if (m[2]) {
 				// function-like macro: preserve full body including params list
 				const params = (m[3] ?? '').trim();
-				const body = (m[4] ?? '').trim();
-				const full = `(${params})${body ? ' ' + body : ''}`;
+				const full = `(${params})${bodyJoined ? ' ' + bodyJoined : ''}`;
 				macroFuncs.set(name, { line: lineNo, col, endCol: col + name.length, body: full });
 			}
 			else {
 				// object-like macro: preserve body text if present
-				const body = (m[4] ?? '').trim();
-				macroObjs.set(name, { line: lineNo, col, endCol: col + name.length, body });
+				macroObjs.set(name, { line: lineNo, col, endCol: col + name.length, body: bodyJoined });
 			}
 			continue;
 		}
