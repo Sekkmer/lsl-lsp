@@ -244,19 +244,19 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			|| /^[ \t]*#ifndef\s+INCLUDE_/m.test(text)
 			|| startsWithPreproc; // common include guards or header-style first line
 		if (!headerLike) {
-			// Require: start-of-line identifier (event name), parameter list with typed params (type + name), then an opening brace
-			// This avoids matching function definitions (which have a return type before the name) and avoids simple macros.
-			// Build the type alternation from central TYPES list
-			const typeRe = `(?:${TYPES.join('|')})`;
-			const paramRe = `${typeRe}\\s+[A-Za-z_][A-Za-z0-9_]*`;
-			const sigRe = new RegExp(`^[\\t ]*[A-Za-z_][A-Za-z0-9_]*\\s*\\(\\s*${paramRe}(?:\\s*,\\s*${paramRe})*\\s*\\)\\s*\\{`, 'm');
-			if (sigRe.test(text)) {
-				diagnostics.push({
-					code: LSL_DIAGCODES.EVENT_OUTSIDE_STATE,
-					message: 'Event must be declared inside a state',
-					range: { start: doc.positionAt(0), end: doc.positionAt(Math.min(1, text.length)) },
-					severity: DiagnosticSeverity.Error,
-				});
+			// Only consider actual LSL event names at start-of-line
+			const eventNames = Array.from(defs.events.keys());
+			if (eventNames.length > 0) {
+				const namesRe = eventNames.map(n => n.replace(/[-\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
+				const sigRe = new RegExp(`^[\\t ]*(?:${namesRe})\\s*\\(`, 'm');
+				if (sigRe.test(text)) {
+					diagnostics.push({
+						code: LSL_DIAGCODES.EVENT_OUTSIDE_STATE,
+						message: 'Event must be declared inside a state',
+						range: { start: doc.positionAt(0), end: doc.positionAt(Math.min(1, text.length)) },
+						severity: DiagnosticSeverity.Error,
+					});
+				}
 			}
 		}
 	}
