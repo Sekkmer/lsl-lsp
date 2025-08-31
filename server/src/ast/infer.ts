@@ -1,7 +1,8 @@
 import { Expr, Type } from './index';
 import { AssertNever } from '../utils';
 
-export type SimpleType = Type | 'any';
+// Include 'void' so inference can represent void-returning calls distinctly
+export type SimpleType = Type | 'any' | 'void';
 
 const isNumeric = (t: SimpleType) => t === 'integer' || t === 'float';
 
@@ -38,7 +39,8 @@ export function inferExprTypeFromAst(
 			if (expr.callee.kind === 'Identifier') name = expr.callee.name;
 			if (name && functionReturnTypes) {
 				const rt = functionReturnTypes.get(name);
-				if (rt) return rt;
+				// If we have a known return type (including 'void'), return it; otherwise fall back to 'any'
+				if (rt !== undefined) return rt;
 			}
 			return 'any';
 		}

@@ -34,7 +34,21 @@ export type DiagCode = typeof LSL_DIAGCODES[keyof typeof LSL_DIAGCODES];
 
 export interface Diag { range: Range; message: string; severity?: DiagnosticSeverity; code: DiagCode; }
 export interface SymbolRef { name: string; range: Range; }
-export interface Decl { name: string; range: Range; kind: 'var' | 'func' | 'state' | 'event' | 'param'; type?: string; params?: { name: string; type?: string }[]; }
+export interface Decl {
+	name: string;
+	// range should point to the identifier name itself (tight range used for highlights/rename)
+	range: Range;
+	kind: 'var' | 'func' | 'state' | 'event' | 'param';
+	type?: string;
+	params?: { name: string; type?: string }[];
+	// Optional extended ranges for richer context (when available from AST):
+	// fullRange covers the entire declaration (header + body block)
+	fullRange?: Range;
+	// headerRange covers only the declaration header before the opening '{'
+	headerRange?: Range;
+	// bodyRange covers only the body block between '{' and the matching '}'
+	bodyRange?: Range;
+}
 export interface Analysis {
 	diagnostics: Diag[];
 	decls: Decl[];

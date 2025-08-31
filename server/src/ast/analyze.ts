@@ -187,6 +187,16 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			});
 		}
 		const d: Decl = { name, range: findNameRangeInSpan(name, f.span, true), kind: 'func', type: (f.returnType as any) ?? undefined, params: [] };
+		// Enrich with full/header/body ranges
+		try {
+			const fullR = spanToRange(doc, f.span);
+			const fullText = doc.getText().slice(doc.offsetAt(fullR.start), doc.offsetAt(fullR.end));
+			const braceIdx = fullText.indexOf('{');
+			const headerEndOff = braceIdx >= 0 ? (doc.offsetAt(fullR.start) + braceIdx) : doc.offsetAt(fullR.start);
+			const headerRange = { start: fullR.start, end: doc.positionAt(headerEndOff) };
+			const bodyRange = braceIdx >= 0 ? { start: doc.positionAt(headerEndOff), end: fullR.end } : undefined;
+			d.fullRange = fullR; d.headerRange = headerRange; d.bodyRange = bodyRange;
+		} catch { /* ignore */ }
 		// Parameter decls are tracked for scope during walk
 		for (const [pname, ptype] of f.parameters) d.params!.push({ name: pname, type: ptype });
 		decls.push(d); functions.set(name, d);
@@ -194,9 +204,29 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	// States + events
 	for (const [name, st] of script.states) {
 		const d: Decl = { name, range: findNameRangeInSpan(name, st.span, true), kind: 'state' };
+		// Enrich with ranges for the state block
+		try {
+			const fullR = spanToRange(doc, st.span);
+			const fullText = doc.getText().slice(doc.offsetAt(fullR.start), doc.offsetAt(fullR.end));
+			const braceIdx = fullText.indexOf('{');
+			const headerEndOff = braceIdx >= 0 ? (doc.offsetAt(fullR.start) + braceIdx) : doc.offsetAt(fullR.start);
+			const headerRange = { start: fullR.start, end: doc.positionAt(headerEndOff) };
+			const bodyRange = braceIdx >= 0 ? { start: doc.positionAt(headerEndOff), end: fullR.end } : undefined;
+			d.fullRange = fullR; d.headerRange = headerRange; d.bodyRange = bodyRange;
+		} catch { /* ignore */ }
 		decls.push(d); states.set(name, d);
 		for (const ev of st.events) {
 			const evDecl: Decl = { name: ev.name, range: findNameRangeInSpan(ev.name, ev.span, true), kind: 'event', params: [...ev.parameters].map(([n, t]) => ({ name: n, type: t })) } as any;
+			// Ranges for event declaration
+			try {
+				const fullR = spanToRange(doc, ev.span);
+				const fullText = doc.getText().slice(doc.offsetAt(fullR.start), doc.offsetAt(fullR.end));
+				const braceIdx = fullText.indexOf('{');
+				const headerEndOff = braceIdx >= 0 ? (doc.offsetAt(fullR.start) + braceIdx) : doc.offsetAt(fullR.start);
+				const headerRange = { start: fullR.start, end: doc.positionAt(headerEndOff) };
+				const bodyRange = braceIdx >= 0 ? { start: doc.positionAt(headerEndOff), end: fullR.end } : undefined;
+				(evDecl as any).fullRange = fullR; (evDecl as any).headerRange = headerRange; (evDecl as any).bodyRange = bodyRange;
+			} catch { /* ignore */ }
 			decls.push(evDecl);
 		}
 	}
@@ -731,11 +761,14 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const callSignatures = new Map<string, SimpleType[][]>();
 	const toSimpleType = (type: string): SimpleType => {
 		const nt = normalizeType(type);
+		if (nt === 'void') return 'void';
 		return isLslType(nt) ? (nt as SimpleType) : 'any';
 	};
 	for (const [name, overloads] of defs.funcs) {
 		for (const f of overloads) {
-			if (f && f.returns) functionReturnTypes.set(name, toSimpleType(f.returns));
+			if (f && f.returns) {
+				functionReturnTypes.set(name, toSimpleType(f.returns));
+			}
 			const params = (f.params || []).map(p => toSimpleType(p.type || 'any'));
 			const prev = callSignatures.get(name) || []; prev.push(params); callSignatures.set(name, prev);
 		}
@@ -748,7 +781,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		prev.push(params);
 		callSignatures.set(name, prev);
 		// Return type
-		functionReturnTypes.set(name, toSimpleType((f.returnType as any) || 'void'));
+		const r = toSimpleType((f.returnType as any) || 'void');
+		functionReturnTypes.set(name, r);
+		// no separate void set needed; we record 'void' in functionReturnTypes
 	}
 	// Include-provided functions
 	if (pre.includeSymbols && pre.includeSymbols.size > 0) {

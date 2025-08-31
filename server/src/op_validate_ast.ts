@@ -15,17 +15,33 @@ export function validateOperatorsFromAst(
 	diagnostics: Diag[],
 	symbolTypes: Map<string, SimpleType>,
 	functionReturnTypes?: Map<string, SimpleType>,
- 	callSignatures?: Map<string, SimpleType[][]>,
- 	opts?: { flagSuspiciousAssignment?: boolean },
+	callSignatures?: Map<string, SimpleType[][]>,
+	opts?: { flagSuspiciousAssignment?: boolean },
 ) {
 	for (const e of exprs) walk(e);
+
+	// Helper: report when an expression with inferred type 'void' is used as a value
+	function pushVoidValueError(expr: Expr, inferred: SimpleType, ctx: 'binary' | 'unary' | 'cast'): boolean {
+		if (inferred !== 'void') return false;
+		const who = (expr.kind === 'Call' && expr.callee.kind === 'Identifier') ? `Function "${expr.callee.name}" ` : '';
+		const where = ctx === 'binary' ? 'in binary expression' : ctx === 'unary' ? 'in unary expression' : 'in cast';
+		diagnostics.push({
+			code: LSL_DIAGCODES.WRONG_TYPE,
+			message: `${who}returns void; cannot be used as a value ${where}`,
+			range: mk(doc, expr.span.start, expr.span.end),
+			severity: DiagnosticSeverity.Error,
+		});
+		return true;
+	}
 
 	function walk(e: Expr | null) {
 		if (!e) return;
 		switch (e.kind) {
 			case 'Binary': {
 				const lt = inferExprTypeFromAst(e.left, symbolTypes, functionReturnTypes);
+				const leftVoid = pushVoidValueError(e.left, lt, 'binary');
 				const rt = inferExprTypeFromAst(e.right, symbolTypes, functionReturnTypes);
+				const rightVoid = pushVoidValueError(e.right, rt, 'binary');
 				const op = e.op;
 				// For compound assignments, ensure LHS is assignable (variable or member)
 				if (op === '=' || op === '+=' || op === '-=' || op === '*=' || op === '/=' || op === '%=') {
@@ -37,6 +53,12 @@ export function validateOperatorsFromAst(
 							severity: DiagnosticSeverity.Error,
 						});
 					}
+				}
+				// If either side is void, skip additional operator-specific checks to avoid noise
+				if (leftVoid || rightVoid) {
+					// recurse and exit this Binary
+					walk(e.left); walk(e.right);
+					break;
 				}
 				switch (op) {
 					case '=': {
@@ -153,6 +175,7 @@ export function validateOperatorsFromAst(
 			case 'Unary': {
 				// Validate unary operators (no longer require literals; only type-check when known)
 				const argType = inferExprTypeFromAst(e.argument, symbolTypes, functionReturnTypes);
+				if (pushVoidValueError(e.argument, argType, 'unary')) { walk(e.argument); break; }
 				const isNum = (t: SimpleType) => t === 'integer' || t === 'float';
 				const op = e.op;
 				switch (op) {
@@ -270,6 +293,7 @@ export function validateOperatorsFromAst(
 				// Validate cast semantics based on inferred type
 				const target = e.type as SimpleType; // AST guarantees a known LSL type
 				const src = inferExprTypeFromAst(e.argument, symbolTypes, functionReturnTypes);
+				if (pushVoidValueError(e.argument, src, 'cast')) break;
 				// Rule 0: casting from 'any' is always ok (unknown at analysis time)
 				if (src === 'any') break;
 				// Rule 1: cast to itself is allowed but warn and propose quick fix to drop cast

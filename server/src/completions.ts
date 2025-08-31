@@ -34,7 +34,7 @@ export function lslCompletions(
 		for (const d of analysis.decls) {
 			if (d.kind !== 'event') continue;
 			if (!stateCtx.stateRange) continue;
-			const s = doc.offsetAt(d.range.start);
+			const s = doc.offsetAt((d.fullRange?.start ?? d.range.start));
 			const stStart = doc.offsetAt(stateCtx.stateRange.start);
 			const stEnd = doc.offsetAt(stateCtx.stateRange.end);
 			// Consider all events declared inside this state, regardless of cursor position
@@ -216,17 +216,23 @@ export function lslCompletions(
 // AST-based: inside state but not inside an event
 function findStateTopLevelContextAst(doc: TextDocument, analysis: Analysis, offset: number): { inStateTopLevel: boolean; stateRange?: { start: Position; end: Position } } {
 	const pos = doc.positionAt(offset);
-	let stateRange: { start: Position; end: Position } | undefined;
+	// Prefer full/header/body ranges when available to disambiguate header vs body
+	let found: { state: any; body: { start: Position; end: Position } } | null = null;
 	for (const d of analysis.decls) {
 		if (d.kind !== 'state') continue;
-		if (inRange(pos, d.range)) { stateRange = d.range; break; }
+		const body = d.bodyRange as { start: Position; end: Position } | undefined;
+		const where = body ?? d.range;
+		if (inRange(pos, where)) { found = { state: d, body: body ?? d.range }; break; }
 	}
-	if (!stateRange) return { inStateTopLevel: false };
+	if (!found) return { inStateTopLevel: false };
+	// If inside any event body within this state, not top-level
 	for (const d of analysis.decls) {
 		if (d.kind !== 'event') continue;
-		if (inRange(pos, d.range)) return { inStateTopLevel: false };
+		const body = d.bodyRange as { start: Position; end: Position } | undefined;
+		const where = body ?? d.range;
+		if (inRange(pos, where)) return { inStateTopLevel: false };
 	}
-	return { inStateTopLevel: true, stateRange };
+	return { inStateTopLevel: true, stateRange: found.body };
 }
 
 export function resolveCompletion(item: CompletionItem): CompletionItem {

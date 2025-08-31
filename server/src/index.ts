@@ -32,7 +32,8 @@ import { lslCompletions, resolveCompletion, lslSignatureHelp } from './completio
 import { lslHover } from './hover';
 import { formatDocumentEdits, type FormatSettings, formatRangeEdits, detectIndent } from './format';
 import { documentSymbols, gotoDefinition } from './symbols';
-import { DocumentLink, DocumentLinkParams, DocumentFormattingParams, TextEdit, CodeAction, CodeActionKind, Range,
+import {
+	DocumentLink, DocumentLinkParams, DocumentFormattingParams, TextEdit, CodeAction, CodeActionKind, Range,
 	DocumentRangeFormattingParams, DocumentOnTypeFormattingParams
 } from 'vscode-languageserver/node';
 import { URI } from 'vscode-uri';
@@ -413,6 +414,45 @@ connection.onRenameRequest((params, token) => {
 
 documents.listen(connection);
 connection.listen();
+
+// -----------------
+// Lifecycle hooks
+// -----------------
+connection.onShutdown(async () => {
+	try {
+		// Log shutdown for easier restart diagnostics
+		try {
+			connection.console.log('[lsl-lsp] onShutdown: clearing caches');
+			if (settings.logFile) {
+				require('node:fs').appendFileSync(settings.logFile, `onShutdown ${new Date().toISOString()}\n`);
+			}
+		} catch {
+			// ignore log errors
+		}
+		// Clear caches and detach include index to allow event loop to drain
+		pipelineCache.clear();
+		includeToDocs.clear();
+	} catch {
+		// ignore
+	}
+});
+
+connection.onExit(() => {
+	// Ensure process terminates; some environments may keep the event loop alive
+	try {
+		try {
+			connection.console.log('[lsl-lsp] onExit: terminating process');
+			if (settings.logFile) {
+				require('node:fs').appendFileSync(settings.logFile, `onExit ${new Date().toISOString()}\n`);
+			}
+		} catch {
+			// ignore log errors
+		}
+		process.exit(0);
+	} catch {
+		/* ignore */
+	}
+});
 
 // --------------------
 // References provider

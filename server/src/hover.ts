@@ -159,7 +159,9 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		const sig = `${d.type ?? 'void'} ${d.name}(${(d.params || []).map(p=>`${p.type ?? 'any'} ${p.name}`).join(', ')})`;
 		const parts = ['```lsl', sig, '```'];
 		// Try to extract a leading JSDoc-style block comment (/** ... */) immediately before the decl
-		const declStart = doc.offsetAt(d.range.start);
+		// Prefer the start of the full declaration (header) when available to avoid hitting parameter name token
+		const startPos = d.fullRange?.start ?? d.range.start;
+		const declStart = doc.offsetAt(startPos);
 		const jsdoc = extractLeadingJsDoc(doc.getText(), declStart);
 		if (jsdoc) parts.push('', jsdoc);
 		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
