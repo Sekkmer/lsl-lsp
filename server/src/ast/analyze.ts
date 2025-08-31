@@ -25,6 +25,26 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const functions = new Map<string, Analysis['decls'][number]>();
 	const globalDecls: Decl[] = [];
 
+	// Track label declarations within the current function/event body (for validating jump targets)
+	let currentLabels: Set<string> | null = null;
+	function collectLabels(stmt: any): Set<string> {
+		const labels = new Set<string>();
+		function visit(s: any) {
+			if (!s) return;
+			switch (s.kind) {
+				case 'BlockStmt': for (const ch of s.statements) visit(ch); break;
+				case 'IfStmt': visit(s.then); if (s.else) visit(s.else); break;
+				case 'WhileStmt': visit(s.body); break;
+				case 'DoWhileStmt': visit(s.body); break;
+				case 'ForStmt': visit(s.body); break;
+				case 'LabelStmt': labels.add(s.name); break;
+				default: break;
+			}
+		}
+		visit(stmt);
+		return labels;
+	}
+
 	// Fallback: scan resolved include files directly when pre.includeSymbols lacks entries for them.
 	// Extracts typed function headers, [const ]typed globals, and object-like macros.
 	type FallbackSymbols = { functions: Map<string, { returns: SimpleType; params: SimpleType[] }>; globals: Set<string>; macros: Set<string> };
@@ -380,6 +400,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		const scope = pushScope(globalScope);
 		const ts = pushTypeScope(globalTypeScope);
 		const returnType = (fn.returnType ?? 'void') as string;
+		// Collect all labels in this function body so jump targets can be validated without unknown-identifier noise
+		const savedLabels = currentLabels;
+		currentLabels = collectLabels(fn.body);
 		// Set up usage tracking for this function body
 		const ctx: UsageContext = { usedParamNames: new Set(), usedLocalNames: new Set(), paramDecls: [], localDecls: [] };
 		usageStack.push(ctx);
@@ -497,6 +520,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 		}
 		usageStack.pop();
+		currentLabels = savedLabels;
 	}
 
 	function inferTypeOf(e: Expr, typeScope: any): string {
@@ -586,6 +610,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			if (ev.body && ev.body.kind === 'BlockStmt' && ev.body.statements.length === 0) {
 				diagnostics.push({ code: LSL_DIAGCODES.EMPTY_EVENT_BODY, message: 'Empty event body is not allowed', range: spanToRange(doc, ev.span), severity: DiagnosticSeverity.Error });
 			}
+			// Collect labels for this event body
+			const savedLabels = currentLabels;
+			currentLabels = collectLabels(ev.body);
 			visitStmt(ev.body, evScope, tsEvent);
 			// Emit unused diagnostics for this event
 			// Honor block-based suppression that overlaps the event body
@@ -612,6 +639,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				}
 			}
 			usageStack.pop();
+			currentLabels = savedLabels;
 		}
 	}
 
@@ -652,7 +680,19 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			case 'EmptyStmt': break;
 			case 'ErrorStmt': break;
 			case 'LabelStmt': break;
-			case 'JumpStmt': walkExpr(stmt.target, scope, typeScope); validateExpr(stmt.target, typeScope); break;
+			case 'JumpStmt': {
+				// Validate jump target against collected labels within the same function/event body.
+				const t = stmt.target;
+				if (t && t.kind === 'Identifier') {
+					const name = t.name;
+					// If label is not known in current body, flag unknown identifier; otherwise, do nothing.
+					if (!currentLabels || !currentLabels.has(name)) {
+						diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER, message: `Unknown identifier ${name}`, range: spanToRange(doc, t.span), severity: DiagnosticSeverity.Error });
+					}
+				}
+				// Do not walk/validate the target as an expression to avoid spurious identifier diagnostics.
+				break;
+			}
 			case 'VarDecl': {
 				const name = stmt.name; const type = stmt.varType;
 				// Reserved identifier check for local variable names
