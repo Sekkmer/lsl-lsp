@@ -268,7 +268,7 @@ async function validateTextDocument(doc: TextDocument) {
 
 	for (const d of analysis.diagnostics) {
 		if (!settings.diag.unknownIdentifier && d.code === LSL_DIAGCODES.UNKNOWN_IDENTIFIER) continue;
-		if (!settings.diag.unusedVariable && d.code === LSL_DIAGCODES.UNUSED_VAR) continue;
+		if (!settings.diag.unusedVariable && (d.code === LSL_DIAGCODES.UNUSED_VAR || d.code === LSL_DIAGCODES.UNUSED_LOCAL || d.code === LSL_DIAGCODES.UNUSED_PARAM)) continue;
 		if (!settings.diag.wrongArity && d.code === LSL_DIAGCODES.WRONG_ARITY) continue;
 		if (!settings.diag.unknownConstant && d.code === LSL_DIAGCODES.UNKNOWN_CONST) continue;
 
