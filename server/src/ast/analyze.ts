@@ -342,7 +342,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					// Unknown callee identifier check (builtin/defs or includeSymbols or local function)
 					const known = resolveInScope(calleeName, scope)
 						|| defs.funcs.has(calleeName)
-						|| (pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s => s.functions.has(calleeName) || s.macroFuncs.has(calleeName)))
+						|| (pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s => s.functions.has(calleeName) || s.macroFuncs.has(calleeName) || s.macroObjs.has(calleeName)))
 						|| fallbackFuncs.has(calleeName)
 						|| defs.consts.has(calleeName) // tolerate accidental const call as known id for better downstream type error
 						|| defs.types.has(calleeName)	 // likewise for types
