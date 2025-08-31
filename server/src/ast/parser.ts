@@ -620,8 +620,14 @@ class Parser {
 			// Expect semicolon; if missing, point error at current cursor and recover
 			const semi = this.maybe('punct', ';');
 			if (!semi) {
-				this.report(this.peek(), 'missing ; after statement', 'LSL000');
-				// fabricate insertion: do not consume; let sync handle downstream
+				// If the next token maps to the exact same span as the expression end (macro body remap),
+				// look ahead one more non-directive token before deciding it’s a true missing semicolon.
+				let nxt = this.peek();
+				while (nxt.kind === 'directive') { this.look = null; this.lx.next(); nxt = this.peek(); }
+				const sameSpan = (nxt.span.start === expr.span.end && nxt.span.end === expr.span.end);
+				if (!sameSpan) {
+					this.report(nxt, 'missing ; after statement', 'LSL000');
+				}
 			}
 			const end = semi ? semi.span.end : this.peek().span.end;
 			return { span: spanFrom(expr.span.start, end), kind: 'ExprStmt', expression: expr };

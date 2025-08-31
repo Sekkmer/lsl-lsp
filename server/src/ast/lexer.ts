@@ -79,19 +79,29 @@ export class Lexer {
 	// core scanner that returns comments and trivia as tokens (no whitespace tokens)
 	private scanOne(): Token {
 		if (this.i >= this.n) return this.mk('eof', '', this.i, this.i);
-		// skip whitespace (including newlines)
+		// skip whitespace (including newlines) and track if we crossed a newline
+		// also collapse C-style line continuations: backslash followed by newline
+		// track whitespace/newlines while skipping; we don't need an explicit flag anymore for directives
 		while (this.i < this.n) {
 			const ch = this.text[this.i]!;
+			if (ch === '\\') {
+				const n1 = this.text[this.i + 1];
+				if (n1 === '\n') { this.i += 2; continue; }
+				if (n1 === '\r' && this.text[this.i + 2] === '\n') { this.i += 3; continue; }
+			}
 			if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') { this.i++; continue; }
 			break;
 		}
 		if (this.i >= this.n) return this.mk('eof', '', this.i, this.i);
 
 		const c = this.text[this.i]!;
-		// preprocessor directive only if at column 0 (or after newline) and '#'
+		// preprocessor directive: allow optional indentation at the start of a line before '#'
+		// Detect true line-start by looking backwards for only spaces/tabs up to previous newline or BOF
 		if (c === '#') {
-			const prev = this.i > 0 ? this.text[this.i - 1] : '\n';
-			if (prev === '\n') {
+			let j0 = this.i - 1;
+			while (j0 >= 0 && (this.text[j0] === ' ' || this.text[j0] === '\t')) j0--;
+			const atLineStart = (j0 < 0) || this.text[j0] === '\n';
+			if (atLineStart) {
 				const start = this.i;
 				let j = this.i + 1;
 				while (j < this.n && this.text[j] !== '\n') j++;
@@ -192,6 +202,8 @@ export class Lexer {
 
 		// single-char ops & punct
 		const single = this.text[this.i]!;
+		// Ignore stray backslashes outside of strings/comments (not an operator in LSL)
+		if (single === '\\') { this.i++; return this.scanOne(); }
 		const SINGLE_OPS = new Set(['+', '-', '*', '/', '%', '!', '~', '<', '>', '=', '&', '|', '^', '.']);
 		const PUNCT = new Set([';', ',', '(', ')', '{', '}', '[', ']', ':']);
 		if (SINGLE_OPS.has(single)) { const t = this.mk('op', single, this.i, this.i + 1); this.i++; return t; }
@@ -273,7 +285,14 @@ export class Lexer {
 		// Lex the body into tokens and push onto pending stack in reverse (so next pop yields first)
 		const lx = new Lexer(body, { macros: this.macros });
 		const buf: Token[] = [];
-		for (; ;) { const t = lx.scanOne(); if (t.kind === 'eof') break; if (t.kind === 'comment-line' || t.kind === 'comment-block') continue; buf.push(t); }
+		for (; ;) {
+			const t = lx.scanOne();
+			if (t.kind === 'eof') break;
+			if (t.kind === 'comment-line' || t.kind === 'comment-block') continue;
+			// Remap token spans from the temporary macro body to the call site span in the original text.
+			// This keeps diagnostics anchored to the macro invocation rather than 0-based positions.
+			buf.push({ ...t, span: { start, end } });
+		}
 		this.expansionDepth--;
 		for (let i = buf.length - 1; i >= 0; i--) this.pending.push(buf[i]!);
 		// return a phantom token that will be immediately replaced by pending content
