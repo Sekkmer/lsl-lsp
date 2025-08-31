@@ -2,6 +2,7 @@ client-vscode/common/lsl-defs.json
 /.github/prompts/
 node_modules/
 out/
+/server/tests/tmp_includes/
 
 *.vsix
 *.log

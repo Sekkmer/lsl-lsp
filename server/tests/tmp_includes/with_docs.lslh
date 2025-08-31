@@ -1,4 +1,0 @@
-/**
- * Adds two numbers (include).
- */
-integer addi(integer a, integer b);

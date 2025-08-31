@@ -1,2 +1,0 @@
-integer GLOB_A;
-float GLOB_F = 1.0;
