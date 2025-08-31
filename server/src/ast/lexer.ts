@@ -11,7 +11,7 @@ export type TokKind =
 export interface Token { kind: TokKind; value: string; span: Span; }
 
 const KEYWORDS = [
-	'if', 'else', 'while', 'do', 'for', 'return', 'state', 'default', 'jump', 'label',
+	'if', 'else', 'while', 'do', 'for', 'return', 'state', 'default', 'jump',
 	...TYPES, 'quaternion',
 	'void', 'event'
 ] as const;

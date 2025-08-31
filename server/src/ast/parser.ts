@@ -519,20 +519,23 @@ class Parser {
 			// var decl inside block
 			if (isType(t.value)) return this.parseVarDecl();
 		}
-		// label using '@Name;' form
+		// label using '@name;' form (enforced)
 		if (t.kind === 'punct' && t.value === '@') {
 			const at = this.next();
 			const nameTok = this.eat('id');
-			const endTok = this.maybe('punct', ';') || this.maybe('punct', ':') || nameTok;
-			return { span: spanFrom(at.span.start, endTok.span.end), kind: 'LabelStmt', name: nameTok.value } as Stmt;
+			// Require a terminating semicolon; if not present, emit a diagnostic via eat()
+			const semi = this.eat('punct', ';');
+			return { span: spanFrom(at.span.start, semi.span.end || nameTok.span.end), kind: 'LabelStmt', name: nameTok.value } as Stmt;
 		}
-		// legacy label: Name:
+		// legacy label: name:  -> emit diagnostic, still produce a LabelStmt for downstream analysis
 		if (t.kind === 'id' || (t.kind === 'keyword' && t.value === 'default')) {
 			// label: <id>:
 			const t2 = this.lx.peek();
 			if (t2.kind === 'punct' && t2.value === ':') {
-				const name = this.next().value; this.eat('punct', ':');
-				return { span: spanFrom(t.span.start, t2.span.end), kind: 'LabelStmt', name };
+				const nameTok = this.next();
+				const colon = this.eat('punct', ':');
+				this.report(nameTok as any, `Labels must start with @ (use "@${nameTok.value};")`, 'LSL000');
+				return { span: spanFrom(nameTok.span.start, colon.span.end), kind: 'LabelStmt', name: nameTok.value } as Stmt;
 			}
 		}
 		// jump statement
