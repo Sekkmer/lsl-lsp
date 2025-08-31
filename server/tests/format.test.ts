@@ -86,4 +86,12 @@ describe('formatter basics', () => {
 		// In this synthetic example, it should remain at column 0
 		expect(/\n"hi"\);/.test(out)).toBe(true);
 	});
+
+	it('does not split "+=" in for-header increment', () => {
+		const src = 'for(i=0;i<len;i+=2){}\n';
+		const out = fmt(src);
+		expect(out).toContain('for (i = 0; i < len; i += 2)');
+		// Ensure no stray space separates + and =
+		expect(out).not.toMatch(/\+\s+=/);
+	});
 });

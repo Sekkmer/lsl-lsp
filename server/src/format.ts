@@ -201,15 +201,51 @@ function formatCore(text: string, disabledRanges: { start: number; end: number }
 		}
 		if (forHeaderDepth !== null && parenDepth === forHeaderDepth) {
 			if (ch === '=' || ch === '<' || ch === '>' ) {
-				let op = ch;
-				if ((ch === '<' || ch === '>') && text[i+1] === '=') { op += '='; }
-				if (ch === '=' && text[i+1] === '=') { op += '='; }
-				let k = out.length - 1;
-				while (k >= 0 && (out[k] === ' ' || out[k] === '\t')) k--;
-				out = out.slice(0, k + 1);
+				let op = '';
+				if (ch === '<' || ch === '>') {
+					// support <, <=, <<, <<= and similarly for '>'
+					const c = ch;
+					if (text[i+1] === c && text[i+2] === '=') { op = c + c + '='; i += 3; }
+					else if (text[i+1] === c) { op = c + c; i += 2; }
+					else if (text[i+1] === '=') { op = c + '='; i += 2; }
+					else { op = c; i += 1; }
+				} else if (ch === '=') {
+					// '=' or '==' or compound assignment like +=, -=, *=, etc.
+					if (text[i+1] === '=') { op = '=='; i += 2; }
+					else {
+						// Look behind in output for an operator to merge with '=' (e.g., '+', '-', '*', '/', '%', '&', '|', '^', '<<', '>>')
+						let k = out.length - 1;
+						while (k >= 0 && (out[k] === ' ' || out[k] === '\t')) k--;
+						let prefix = '';
+						if (k >= 0 && (out[k] === '<' || out[k] === '>')) {
+							const first = out[k];
+							let k2 = k - 1; while (k2 >= 0 && (out[k2] === ' ' || out[k2] === '\t')) k2--;
+							if (k2 >= 0 && out[k2] === first) { prefix = first + first; k = k2 - 0; }
+							else { prefix = first; }
+						} else if (k >= 0 && '+-*/%&|^'.includes(out[k]!)) {
+							prefix = out[k] as string;
+						}
+						// Remove any trailing spaces and the prefix operator (if any) from out
+						let trimIdx = out.length - 1; while (trimIdx >= 0 && (out[trimIdx] === ' ' || out[trimIdx] === '\t')) trimIdx--;
+						if (prefix.length > 0) {
+							let pLeft = trimIdx;
+							for (let m = prefix.length - 1; m >= 0 && pLeft >= 0; m--) {
+								if (out[pLeft] === prefix[m]) { pLeft--; }
+								else { break; }
+							}
+							out = out.slice(0, pLeft + 1);
+						} else {
+							out = out.slice(0, trimIdx + 1);
+						}
+						op = (prefix || '') + '=';
+						i += 1;
+						while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++;
+					}
+				}
+				// emit with spaces around combined operator
+				let k2 = out.length - 1; while (k2 >= 0 && (out[k2] === ' ' || out[k2] === '\t')) k2--;
+				out = out.slice(0, k2 + 1);
 				out += ' ' + op + ' ';
-				i += op.length;
-				while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++;
 				_lastNonWs = op[op.length - 1];
 				continue;
 			}
