@@ -27,6 +27,8 @@
 					"patterns": [
 						{ "match": "\\\\(?=\\n)", "name": "punctuation.separator.continuation.lsl" },
 						{ "match": "(?<=\\S)##(?=\\S)", "name": "punctuation.separator.token-paste.lsl" },
+						{ "match": "[!&|?:=<>+\\-*/%]+", "name": "keyword.operator.macro.define.lsl" },
+						{ "match": "[()]", "name": "punctuation.parenthesis.macro.define.lsl" },
 						{ "begin": "\"", "end": "\"", "name": "string.quoted.double.macro.lsl", "patterns": [ { "match": "\\\\.", "name": "constant.character.escape.lsl" } ] },
 						{ "match": "\\b(?:\\d*\\.\\d+|\\d+)(?:[eE][+-]?\\d+)?\\b", "name": "constant.numeric.macro.lsl" },
 						{ "match": "\\b__LINE__\\b", "name": "constant.language.macro.line.lsl" },
