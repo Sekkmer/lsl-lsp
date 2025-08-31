@@ -110,6 +110,38 @@ class Parser {
 		}
 	}
 
+	// Return the next k non-trivia tokens (skipping directives and comments) without consuming the stream
+	private lookAheadNonTrivia(k: number): Token[] {
+		const out: Token[] = [];
+		const savedLook = this.look;
+		// Helper to fetch next raw token from lexer
+		const nextRaw = (): Token => this.lx.next();
+		const isTrivia = (t: Token) => t.kind === 'directive' || t.kind === 'comment-line' || t.kind === 'comment-block';
+		// Seed from current peek()
+		let t0: Token;
+		if (this.look) { t0 = this.look; }
+		else {
+			let t = nextRaw();
+			while (isTrivia(t)) t = nextRaw();
+			// push back for normal consumption by parser.next()
+			this.lx.pushBack(t);
+			t0 = t;
+		}
+		out.push(t0);
+		// Collect further tokens by pulling from lexer and then pushing back
+		for (let i = 1; i < k; i++) {
+			let t = nextRaw();
+			while (isTrivia(t)) t = nextRaw();
+			out.push(t);
+		}
+		// Restore stream: push back only tokens after the first in reverse order.
+		// The first token is either already stored in this.look or was already pushBack'ed above.
+		for (let i = out.length - 1; i >= 1; i--) this.lx.pushBack(out[i]!);
+		// Restore look token
+		this.look = savedLook;
+		return out;
+	}
+
 	parseScript(): Script {
 		const start = this.peek().span.start;
 		const functions = new Map<string, FnNode>();
@@ -239,6 +271,20 @@ class Parser {
 			// Skip directives and stray semicolons
 			while (this.peek().kind === 'directive') { this.look = null; this.lx.next(); }
 			if (this.maybe('punct', ';')) continue;
+			// If we see a new top-level declaration inside a state body, assume missing '}' before it
+			const look = this.peek();
+			if (look.kind === 'keyword') {
+				const ahead = this.lookAheadNonTrivia(3);
+				const t1 = ahead[1];
+				const t2 = ahead[2];
+				const tokenStateDecl = look.value === 'state' && (
+					((t1 && (t1.kind === 'id' || (t1.kind === 'keyword' && t1.value === 'default'))) && t2 && t2.kind === 'punct' && t2.value === '{')
+				);
+				const tokenDefaultDecl = look.value === 'default' && (t1 && t1.kind === 'punct' && t1.value === '{');
+				const tokenFuncDecl = isType(look.value) && (t1 && (t1.kind === 'id' || t1.kind === 'keyword') && t2 && t2.kind === 'punct' && t2.value === '(');
+				if (tokenStateDecl || tokenDefaultDecl || tokenFuncDecl) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
+			}
+			if (look.kind === 'eof') { this.report(look, 'missing } before end of file', 'LSL000'); break; }
 			const t = this.peek();
 			if (t.kind === 'id') {
 				const evNameTok = this.next();
@@ -272,6 +318,20 @@ class Parser {
 			if (++loopGuard > 10000) { this.report(this.peek(), 'parser recovery limit reached inside default state', 'LSL000'); break; }
 			while (this.peek().kind === 'directive') { this.look = null; this.lx.next(); }
 			if (this.maybe('punct', ';')) continue;
+			// Boundary detection: encountering a new top-level decl inside a default state means a missing '}'
+			const look = this.peek();
+			if (look.kind === 'keyword') {
+				const ahead = this.lookAheadNonTrivia(3);
+				const t1 = ahead[1];
+				const t2 = ahead[2];
+				const tokenStateDecl = look.value === 'state' && (
+					((t1 && (t1.kind === 'id' || (t1.kind === 'keyword' && t1.value === 'default'))) && t2 && t2.kind === 'punct' && t2.value === '{')
+				);
+				const tokenDefaultDecl = look.value === 'default' && (t1 && t1.kind === 'punct' && t1.value === '{');
+				const tokenFuncDecl = isType(look.value) && (t1 && (t1.kind === 'id' || t1.kind === 'keyword') && t2 && t2.kind === 'punct' && t2.value === '(');
+				if (tokenStateDecl || tokenDefaultDecl || tokenFuncDecl) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
+			}
+			if (look.kind === 'eof') { this.report(look, 'missing } before end of file', 'LSL000'); break; }
 			const t = this.peek();
 			if (t.kind === 'id') {
 				const evNameTok = this.next();
@@ -306,9 +366,17 @@ class Parser {
 			// or (b) assume missing '}' before next true top-level declaration (function) and recover by exiting.
 			const look = this.peek();
 			if (look.kind === 'keyword') {
-				const isStateDecl = look.value === 'state' && this.looksLikeStateDeclAfter(look.span.end);
-				const isDefaultStateDecl = look.value === 'default' && this.looksLikeDefaultStateDeclAfter(look.span.end);
-				const isFuncDecl = isType(look.value) && this.looksLikeFunctionDeclAfter(look.span.end);
+				const ahead = this.lookAheadNonTrivia(3);
+				const t1 = ahead[1];
+				const t2 = ahead[2];
+				const tokenStateDecl = look.value === 'state' && (
+					((t1 && (t1.kind === 'id' || (t1.kind === 'keyword' && t1.value === 'default'))) && t2 && t2.kind === 'punct' && t2.value === '{')
+				);
+				const tokenDefaultDecl = look.value === 'default' && (t1 && t1.kind === 'punct' && t1.value === '{');
+				const tokenFuncDecl = isType(look.value) && (t1 && (t1.kind === 'id' || t1.kind === 'keyword') && t2 && t2.kind === 'punct' && t2.value === '(');
+				const isFuncDecl = (isType(look.value) && this.looksLikeFunctionDeclAfter(look.span.end)) || tokenFuncDecl;
+				const isStateDecl = (look.value === 'state' && this.looksLikeStateDeclAfter(look.span.end)) || tokenStateDecl;
+				const isDefaultStateDecl = (look.value === 'default' && this.looksLikeDefaultStateDeclAfter(look.span.end)) || tokenDefaultDecl;
 				if (isStateDecl || isDefaultStateDecl) {
 					if (inFunctionOrEvent) {
 						if (this.atLineStart(look.span.start)) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
