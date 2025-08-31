@@ -600,11 +600,26 @@ class Parser {
 
 	private parseFor(inFunctionOrEvent: boolean): Stmt {
 		const kw = this.eat('keyword', 'for'); this.eat('punct', '(');
-		const init = this.parseExpr(); this.eat('punct', ';');
-		const cond = this.parseExpr(); this.eat('punct', ';');
-		const update = this.parseExpr(); this.eat('punct', ')');
+		// init (optional)
+		let init: Expr | undefined;
+		if (!this.maybe('punct', ';')) {
+			init = this.parseExpr();
+			this.eat('punct', ';');
+		}
+		// condition (optional)
+		let cond: Expr | undefined;
+		if (!this.maybe('punct', ';')) {
+			cond = this.parseExpr();
+			this.eat('punct', ';');
+		}
+		// update (optional)
+		let update: Expr | undefined;
+		if (!this.maybe('punct', ')')) {
+			update = this.parseExpr();
+			this.eat('punct', ')');
+		}
 		const body = this.parseStmtInner(inFunctionOrEvent);
-		return { span: spanFrom(kw.span.start, body.span.end), kind: 'ForStmt', init, condition: cond, update, body };
+		return { span: spanFrom(kw.span.start, body.span.end), kind: 'ForStmt', init, condition: cond, update, body } as any;
 	}
 
 	// Helper to ensure inFunctionOrEvent flag is passed into nested blocks/statements

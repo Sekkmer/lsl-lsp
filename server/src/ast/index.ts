@@ -47,7 +47,7 @@ export type Stmt =
 	| { span: Span; kind: 'IfStmt'; condition: Expr; then: Stmt; else?: Stmt; }
 	| { span: Span; kind: 'WhileStmt'; condition: Expr; body: Stmt; }
 	| { span: Span; kind: 'DoWhileStmt'; body: Stmt; condition: Expr; }
-	| { span: Span; kind: 'ForStmt'; init: Expr; condition: Expr; update: Expr; body: Stmt; }
+	| { span: Span; kind: 'ForStmt'; init?: Expr; condition?: Expr; update?: Expr; body: Stmt; }
 	| { span: Span; kind: 'BlockStmt'; statements: Stmt[]; }
 	| { span: Span; kind: 'JumpStmt'; target: Expr; }
 	| { span: Span; kind: 'LabelStmt'; name: string; }

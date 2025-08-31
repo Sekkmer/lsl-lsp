@@ -696,10 +696,12 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				break;
 			}
 			case 'ForStmt': {
-				walkExpr(stmt.init, scope, typeScope); validateExpr(stmt.init, typeScope);
-				walkExpr(stmt.condition, scope, typeScope);
-				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
-				walkExpr(stmt.update, scope, typeScope); validateExpr(stmt.update, typeScope);
+				if (stmt.init) { walkExpr(stmt.init, scope, typeScope); validateExpr(stmt.init, typeScope); }
+				if (stmt.condition) {
+					walkExpr(stmt.condition, scope, typeScope);
+					validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
+				}
+				if (stmt.update) { walkExpr(stmt.update, scope, typeScope); validateExpr(stmt.update, typeScope); }
 				visitStmt(stmt.body, scope, typeScope);
 				break;
 			}

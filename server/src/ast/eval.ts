@@ -534,10 +534,13 @@ export function evalStmt(stmt: Stmt, env: Env = new Env()): Value | null {
 			if (stmt.init) evalExpr(stmt.init, env);
 			let iters = 0;
 			for (;;) {
-				// condition
-				const c = isTruthy(evalExpr(stmt.condition, env));
-				if (c === false) break;
-				if (c === null) return null;
+				// condition: if absent, treat as true (infinite loop unless broken by body)
+				let c: boolean | null = true;
+				if (stmt.condition) {
+					c = isTruthy(evalExpr(stmt.condition, env));
+					if (c === false) break;
+					if (c === null) return null;
+				}
 				// body
 				const r = evalStmt(stmt.body, env.child());
 				if (r !== null) return r;
