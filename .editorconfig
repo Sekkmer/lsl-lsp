@@ -1,0 +1,13 @@
+root = true
+
+# Default
+[*]
+end_of_line = lf
+charset = utf-8
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# Enforce tabs for JS/TS (including JSX/TSX)
+[*.{cjs,mjs,js,jsx,ts,tsx}]
+indent_style = tab
+indent_size = 4
