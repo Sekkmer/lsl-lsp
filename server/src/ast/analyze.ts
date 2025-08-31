@@ -666,6 +666,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	// Validate global initializers with global scope types
 	for (const [, g] of script.globals) {
 		if (g.initializer) {
+			// Walk the initializer to record refs and surface UNKNOWN_IDENTIFIER, then validate operators/types
+			walkExpr(g.initializer as any, globalScope, globalTypeScope);
 			validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures);
 		}
 	}
