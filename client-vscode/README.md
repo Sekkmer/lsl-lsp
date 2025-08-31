@@ -12,7 +12,7 @@
 - Type‑aware completions
 	- Learns from your code: variables, parameters, and return types
 	- Contextual hints for state names and member access (e.g., `.x/.y/.z/.s`)
-	- `#include` path suggestions from configured include paths
+	- `#include` path suggestions from workspace folder(s) and configured include paths
 - Rich hovers with documentation
 	- Functions and events show signatures, parameter docs, and a direct "Wiki" link
 	- User‑defined functions show JSDoc‑style comments (`/** ... */`) placed immediately above the declaration
@@ -54,7 +54,9 @@
 ## Configuration
 
 - `lsl.definitionsPath`: Custom path to definitions JSON/YAML (bundled defaults if empty)
-- `lsl.includePaths`: Additional search paths for `#include`
+- `lsl.includePaths`: Additional search paths for `#include`.
+	- The workspace folder(s) are always searched by default. In multi-root workspaces, all roots are included.
+	- Resolution order: the current file’s directory, then workspace roots, then any paths listed in `lsl.includePaths`.
 - `lsl.macros`: Project-wide predefined macros for conditionals
 - `lsl.enableSemanticTokens`: Toggle semantic tokens
 - `lsl.trace`: LSP protocol trace level (`off`, `messages`, `verbose`)

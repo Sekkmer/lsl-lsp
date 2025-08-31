@@ -78,7 +78,7 @@
 						"type": "string"
 					},
 					"default": [],
-					"description": "Additional include search paths for #include."
+					"description": "Additional include search paths for #include. The workspace folder(s) are searched by default. Order: current file directory → workspace roots → these paths."
 				},
 				"lsl.macros": {
 					"type": "object",

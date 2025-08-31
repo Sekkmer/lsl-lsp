@@ -46,6 +46,8 @@ const connection: Connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
 let defs: Defs | null = null;
+// Persist workspace root paths (filesystem paths) detected at initialize time
+let workspaceRootPaths: string[] = [];
 const settings = {
 	definitionsPath: '',
 	includePaths: [] as string[],
@@ -121,6 +123,38 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 	settings.macros = initOpts.macros || {};
 	settings.logFile = initOpts.logFile || '';
 	settings.debug = !!initOpts.debug;
+
+	// Merge workspace folder(s) into includePaths by default
+	try {
+		const wfs = params.workspaceFolders || [];
+		workspaceRootPaths = [];
+		for (const wf of wfs) {
+			const u = URI.parse(wf.uri);
+			if (u.scheme === 'file') {
+				const p = u.fsPath;
+				if (p && !workspaceRootPaths.includes(p)) workspaceRootPaths.push(p);
+			}
+		}
+		// Fallback to rootUri/rootPath when workspaceFolders is empty
+		if (workspaceRootPaths.length === 0) {
+			if (params.rootUri) {
+				const u = URI.parse(params.rootUri);
+				if (u.scheme === 'file') {
+					const p = u.fsPath;
+					if (p) workspaceRootPaths.push(p);
+				}
+			} else if ((params as any).rootPath) {
+				const p = (params as any).rootPath as string;
+				if (p) workspaceRootPaths.push(p);
+			}
+		}
+		if (workspaceRootPaths.length > 0) {
+			const merged = [...settings.includePaths, ...workspaceRootPaths];
+			// de-duplicate while preserving order
+			const seen = new Set<string>();
+			settings.includePaths = merged.filter(p => (p && !seen.has(p) && (seen.add(p), true)));
+		}
+	} catch { /* ignore workspace folder resolution errors */ }
 	if (settings.logFile) {
 		try {
 			require('node:fs').appendFileSync(settings.logFile, `initialized ${new Date().toISOString()}\n`);
@@ -176,6 +210,12 @@ connection.onDidChangeConfiguration(async change => {
 		defs = await loadDefs(settings.definitionsPath);
 	}
 	settings.includePaths = newSettings.includePaths ?? settings.includePaths;
+	// Always ensure workspace roots remain part of include paths
+	if (workspaceRootPaths.length > 0) {
+		const merged = [...settings.includePaths, ...workspaceRootPaths];
+		const seen = new Set<string>();
+		settings.includePaths = merged.filter(p => (p && !seen.has(p) && (seen.add(p), true)));
+	}
 	settings.macros = newSettings.macros ?? settings.macros;
 	settings.enableSemanticTokens = newSettings.enableSemanticTokens ?? settings.enableSemanticTokens;
 	if (newSettings.format) {
