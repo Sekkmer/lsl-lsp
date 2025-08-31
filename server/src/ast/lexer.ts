@@ -196,21 +196,34 @@ export class Lexer {
 			return this.mk('number', raw, start, j);
 		}
 
-		// identifiers / keywords
-		if (/[A-Za-z_]/.test(c)) {
-			const start = this.i; let j = this.i + 1;
-			while (j < this.n && /[A-Za-z0-9_]/.test(this.text[j]!)) j++;
-			const word = this.text.slice(start, j);
-			this.i = j;
-			// built-in macros via centralized helper
-			const bi = builtinMacroForLexer(word, { filename: this.filename, line: this.lineNumberFor(start) });
-			if (bi) return this.mk(bi.kind, bi.value, start, j);
-			// TODO: __VERSION__, __FILE_NAME__, __COUNTER__ ???
-			// macro expansion
-			const expanded = this.tryExpandMacro(word);
-			if (expanded) return expanded;
-			const kind: TokKind = isKeyword(word) ? 'keyword' : 'id';
-			return this.mk(kind, word, start, j);
+		// identifiers / keywords (relaxed): allow certain leading/trailing noise characters
+		// LSL ignores these at the beginning or end of names: #, $, ?, \\, and quotes
+		const isNoise = (ch: string | undefined) => ch === '#' || ch === '$' || ch === '?' || ch === '\\' || ch === '"' || ch === '\'';
+		const isIdStart = (ch: string | undefined) => !!ch && /[A-Za-z_]/.test(ch);
+		const isIdContinue = (ch: string | undefined) => !!ch && /[A-Za-z0-9_]/.test(ch);
+		if (isIdStart(c) || isNoise(c)) {
+			const start = this.i;
+			let j = this.i;
+			// skip leading noise characters
+			while (j < this.n && isNoise(this.text[j]!)) j++;
+			if (j < this.n && isIdStart(this.text[j]!)) {
+				let k = j + 1;
+				while (k < this.n && isIdContinue(this.text[k]!)) k++;
+				// Skip trailing noise characters, but don't include any alnum/_ following as part of name
+				let t = k;
+				while (t < this.n && isNoise(this.text[t]!)) t++;
+				const rawCore = this.text.slice(j, k);
+				this.i = t;
+				// built-in macros via centralized helper work on normalized word
+				const bi = builtinMacroForLexer(rawCore, { filename: this.filename, line: this.lineNumberFor(start) });
+				if (bi) return this.mk(bi.kind, bi.value, start, t);
+				// macro expansion
+				const expanded = this.tryExpandMacro(rawCore);
+				if (expanded) return expanded;
+				const kind: TokKind = isKeyword(rawCore) ? 'keyword' : 'id';
+				return this.mk(kind, rawCore, start, t);
+			}
+			// Not followed by a valid identifier start -> treat the single char as operator/punct as usual
 		}
 
 		// two-char ops

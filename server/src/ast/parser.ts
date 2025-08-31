@@ -424,7 +424,9 @@ class Parser {
 			}
 			break;
 		}
-		// identifier
+		// identifier (allow leading noise like #, $, ?, \\)
+		const isNoise = (c: string | undefined) => c === '#' || c === '$' || c === '?' || c === '\\' || c === '"' || c === '\'';
+		while (i < this.src.length && isNoise(this.src[i]!)) i++;
 		const startId = i;
 		if (i < this.src.length && /[A-Za-z_]/.test(this.src[i]!)) {
 			i++;
@@ -432,6 +434,8 @@ class Parser {
 		} else {
 			return false;
 		}
+		// trailing noise
+		while (i < this.src.length && isNoise(this.src[i]!)) i++;
 		// skip trivia
 		while (i < this.src.length) {
 			const ch = this.src[i]!;
@@ -486,11 +490,14 @@ class Parser {
 			}
 		};
 		skipTrivia();
-		// identifier or 'default'
+		// identifier or 'default' (allow leading noise)
+		const isNoise = (c: string | undefined) => c === '#' || c === '$' || c === '?' || c === '\\' || c === '"' || c === '\'';
+		while (i < this.src.length && isNoise(this.src[i]!)) i++;
 		if (i < this.src.length && /[A-Za-z_]/.test(this.src[i]!)) {
 			// read word
 			let j = i + 1; while (j < this.src.length && /[A-Za-z0-9_]/.test(this.src[j]!)) j++;
 			i = j;
+			while (i < this.src.length && isNoise(this.src[i]!)) i++;
 		} else if (this.src.slice(i, i + 7) === 'default') {
 			i += 7;
 		} else {
@@ -525,6 +532,8 @@ class Parser {
 			}
 		};
 		skipTrivia();
+		const isNoise = (c: string | undefined) => c === '#' || c === '$' || c === '?' || c === '\\' || c === '"' || c === '\'';
+		while (i < this.src.length && isNoise(this.src[i]!)) i++;
 		const idStart = i;
 		if (i < this.src.length && /[A-Za-z_]/.test(this.src[i]!)) { i++; while (i < this.src.length && /[A-Za-z0-9_]/.test(this.src[i]!)) i++; }
 		else return null;
