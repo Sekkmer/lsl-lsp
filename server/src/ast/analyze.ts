@@ -124,6 +124,28 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	// Build decls for globals, functions, and states/events
 	const globalScope: Scope = { vars: new Map() };
 
+	// Helper: find the identifier range for a given name inside a node's span
+	// If headerOnly is true, search only up to the first '{' to avoid matching inside bodies
+	function findNameRangeInSpan(name: string, span: { start: number; end: number }, headerOnly = false): Range {
+		const fullRange = spanToRange(doc, span as any);
+		const startOff = doc.offsetAt(fullRange.start);
+		const endOff = doc.offsetAt(fullRange.end);
+		let slice = doc.getText().slice(startOff, endOff);
+		if (headerOnly) {
+			const braceIdx = slice.indexOf('{');
+			if (braceIdx >= 0) slice = slice.slice(0, braceIdx);
+		}
+		// word-boundary match for the identifier
+		const re = new RegExp(`\\b${name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+		const m = re.exec(slice);
+		if (m) {
+			const s = startOff + (m.index as number);
+			return { start: doc.positionAt(s), end: doc.positionAt(s + name.length) };
+		}
+		// Fallback to the full span if not found
+		return fullRange;
+	}
+
 	// Type scopes provide scoped SimpleType lookups for operator/type validation
 	type TypeScope = { parent?: TypeScope; types: Map<string, SimpleType>; view: Map<string, SimpleType> };
 	const pushTypeScope = (parent?: TypeScope): TypeScope => ({ parent, types: new Map(), view: new Map(parent ? parent.view : undefined) });
@@ -145,7 +167,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				severity: DiagnosticSeverity.Error,
 			});
 		}
-		const d: Decl = { name, range: spanToRange(doc, g.span), kind: 'var', type: g.varType };
+		const d: Decl = { name, range: findNameRangeInSpan(name, g.span, true), kind: 'var', type: g.varType };
 		decls.push(d);
 		globalDecls.push(d);
 		globalScope.vars.set(name, d);
@@ -164,17 +186,17 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				severity: DiagnosticSeverity.Error,
 			});
 		}
-		const d: Decl = { name, range: spanToRange(doc, f.span), kind: 'func', type: (f.returnType as any) ?? undefined, params: [] };
+		const d: Decl = { name, range: findNameRangeInSpan(name, f.span, true), kind: 'func', type: (f.returnType as any) ?? undefined, params: [] };
 		// Parameter decls are tracked for scope during walk
 		for (const [pname, ptype] of f.parameters) d.params!.push({ name: pname, type: ptype });
 		decls.push(d); functions.set(name, d);
 	}
 	// States + events
 	for (const [name, st] of script.states) {
-		const d: Decl = { name, range: spanToRange(doc, st.span), kind: 'state' };
+		const d: Decl = { name, range: findNameRangeInSpan(name, st.span, true), kind: 'state' };
 		decls.push(d); states.set(name, d);
 		for (const ev of st.events) {
-			const evDecl: Decl = { name: ev.name, range: spanToRange(doc, ev.span), kind: 'event', params: [...ev.parameters].map(([n, t]) => ({ name: n, type: t })) } as any;
+			const evDecl: Decl = { name: ev.name, range: findNameRangeInSpan(ev.name, ev.span, true), kind: 'event', params: [...ev.parameters].map(([n, t]) => ({ name: n, type: t })) } as any;
 			decls.push(evDecl);
 		}
 	}
@@ -612,7 +634,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 						severity: DiagnosticSeverity.Error,
 					});
 				}
-				const d: Decl = { name, range: spanToRange(doc, stmt.span), kind: 'var', type };
+				const d: Decl = { name, range: findNameRangeInSpan(name, stmt.span, false), kind: 'var', type };
 				scope.vars.set(name, d);
 				decls.push(d);
 				// Track local decl for unused checks when inside a body
