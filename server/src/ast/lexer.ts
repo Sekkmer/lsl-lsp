@@ -151,19 +151,30 @@ export class Lexer {
 		}
 
 		// numbers (int/float)
-		// hex integer: 0x... or 0X...
+		// hex number: 0x... with optional fractional part and optional binary exponent (p/P[+/-]digits)
 		if (c === '0' && (this.text[this.i + 1] === 'x' || this.text[this.i + 1] === 'X')) {
 			const start = this.i; let j = this.i + 2;
+			// integer part (hex digits)
 			while (j < this.n) {
 				const ch = this.text[j]!;
 				if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) { j++; continue; }
 				break;
 			}
-			const raw = this.text.slice(start, j);
-			this.i = j;
-			return this.mk('number', raw, start, j);
+			// optional fractional part .<hex digits>*
+			if (this.text[j] === '.') { j++; while (j < this.n) { const ch = this.text[j]!; if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) { j++; continue; } break; } }
+			// optional p/P exponent
+			if ((this.text[j] === 'p' || this.text[j] === 'P')) {
+				j++;
+				if (this.text[j] === '+' || this.text[j] === '-') j++;
+				while (j < this.n && /[0-9]/.test(this.text[j]!)) { j++; }
+				// even if no digits, we will still treat the prior as number to avoid token split; parser may flag if needed
+			}
+			const end = j;
+			const raw = this.text.slice(start, end);
+			this.i = end;
+			return this.mk('number', raw, start, end);
 		}
-		// decimal integer/float (with optional leading digits and single dot, and optional exponent for decimals)
+		// decimal integer/float with optional exponent: e/E or p/P (we accept p for decimal to align with viewer tolerance)
 		if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(this.text[this.i + 1] || ''))) {
 			const start = this.i; let j = this.i;
 			let sawDot = false;
@@ -172,6 +183,13 @@ export class Lexer {
 				if (/[0-9]/.test(ch)) { j++; continue; }
 				if (ch === '.' && !sawDot) { sawDot = true; j++; continue; }
 				break;
+			}
+			// optional exponent
+			if (j < this.n && (this.text[j] === 'e' || this.text[j] === 'E' || this.text[j] === 'p' || this.text[j] === 'P')) {
+				j++;
+				if (this.text[j] === '+' || this.text[j] === '-') j++;
+				while (j < this.n && /[0-9]/.test(this.text[j]!)) { j++; }
+				// tolerate missing digits to avoid splitting tokens; downstream may handle
 			}
 			const raw = this.text.slice(start, j);
 			this.i = j;
