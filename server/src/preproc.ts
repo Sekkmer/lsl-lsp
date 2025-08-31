@@ -4,6 +4,7 @@ import { basenameFromUri } from './builtins';
 import { normalizeType } from './defs';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Connection } from 'vscode-languageserver/node';
+import { TYPES } from './ast';
 
 export interface DisabledRange { start: number; end: number; }
 export interface IncludeFunctionParam { type: string; name?: string }
@@ -15,6 +16,8 @@ export interface IncludeSymbols {
 	constants: Set<string>;
 	events: Set<string>;
 	typedefs: Set<string>;
+	// States declared in include files (very rare, but we track to prevent overwrites)
+	states: Set<string>;
 	globals: Map<string, { line: number; col: number; endCol: number; type?: string; doc?: string }>;
 }
 
@@ -265,13 +268,21 @@ export function preprocess(
 								const mFuncs = new Set<string>();
 								loadIncludeRecursive(resolved, includePaths, symMap, mObjs, mFuncs, new Set());
 								for (const [fp, info] of symMap) includeSymbols.set(fp, info);
-								// Prefer actual macro bodies from include scan when present
+								// Prefer actual macro bodies from include scan when present; do not overwrite existing macros
 								for (const [_, info] of symMap) {
 									for (const [name, meta] of info.macroObjs) {
+										if (Object.prototype.hasOwnProperty.call(macros, name) || Object.prototype.hasOwnProperty.call(funcMacros, name)) {
+											preprocDiagnostics.push({ start, end, message: `Duplicate macro ${name} from include (ignored)`, code: 'LSL-preproc' });
+											continue;
+										}
 										if (meta.body && meta.body.length > 0) macros[name] = parseMacroValue(meta.body);
 										else macros[name] = 1;
 									}
 									for (const [name, meta] of info.macroFuncs) {
+										if (Object.prototype.hasOwnProperty.call(macros, name) || Object.prototype.hasOwnProperty.call(funcMacros, name)) {
+											preprocDiagnostics.push({ start, end, message: `Duplicate macro ${name} from include (ignored)`, code: 'LSL-preproc' });
+											continue;
+										}
 										if (meta.body && meta.body.length > 0) funcMacros[name] = meta.body;
 										else funcMacros[name] = '(...)';
 									}
@@ -328,8 +339,19 @@ function parseMacroValue(v: string): any {
 }
 
 function parseIncludeTarget(rest: string): string | null {
-	let m = /^"(.*)"$/.exec(rest); if (m) return m[1];
-	m = /^<(.*)>$/.exec(rest); if (m) return m[1];
+	// Strip trailing line comments and surrounding whitespace
+	const s = rest.replace(/\/\/.*$/, '').trim();
+	// Look for the first quoted or angle-bracketed path anywhere after #include
+	const q1 = s.indexOf('"');
+	if (q1 >= 0) {
+		const q2 = s.indexOf('"', q1 + 1);
+		if (q2 > q1 + 1) return s.slice(q1 + 1, q2);
+	}
+	const a1 = s.indexOf('<');
+	if (a1 >= 0) {
+		const a2 = s.indexOf('>', a1 + 1);
+		if (a2 > a1 + 1) return s.slice(a1 + 1, a2);
+	}
 	return null;
 }
 
@@ -403,6 +425,7 @@ function scanIncludeText(text: string): IncludeSymbols {
 	const constants = new Set<string>();
 	const events = new Set<string>();
 	const typedefs = new Set<string>();
+	const states = new Set<string>();
 	const globals = new Map<string, { line: number; col: number; endCol: number; type?: string; doc?: string }>();
 
 	const lines = text.split(/\r?\n/);
@@ -480,25 +503,33 @@ function scanIncludeText(text: string): IncludeSymbols {
 		const fdm = (braceDepth === 0) ? /^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:[{;]|$)/.exec(L) : null;
 		if (fdm) {
 			const ret = normalizeType(fdm[1]);
-			const name = fdm[2];
-			const paramsRaw = fdm[3].trim();
-			const whole = fdm[0];
-			const nameRel = whole.indexOf(name);
-			const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*\s*\(/));
-			const params: IncludeFunctionParam[] = [];
-			if (paramsRaw.length > 0) {
-				for (const piece of paramsRaw.split(',')) {
-					const p = piece.trim().replace(/\s+/g, ' ');
-					if (!p) continue;
-					// Pattern: <type> [name]
-					const parts = p.split(' ');
-					if (parts.length >= 2) params.push({ type: normalizeType(parts[0]), name: parts[1] });
-					else params.push({ type: normalizeType(parts[0]) });
+			// Only accept known LSL types as return type; this avoids misclassifying
+			// lines like "return llList2List(...)" as a function decl with type "return".
+			const knownReturnTypes = new Set([...TYPES, 'quaternion']);
+			if (!knownReturnTypes.has(ret)) {
+				// Not a valid declaration signature; skip
+				// continue to brace tracking and other scanners
+			} else {
+				const name = fdm[2];
+				const paramsRaw = fdm[3].trim();
+				const whole = fdm[0];
+				const nameRel = whole.indexOf(name);
+				const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*\s*\(/));
+				const params: IncludeFunctionParam[] = [];
+				if (paramsRaw.length > 0) {
+					for (const piece of paramsRaw.split(',')) {
+						const p = piece.trim().replace(/\s+/g, ' ');
+						if (!p) continue;
+						// Pattern: <type> [name]
+						const parts = p.split(' ');
+						if (parts.length >= 2) params.push({ type: normalizeType(parts[0]), name: parts[1] });
+						else params.push({ type: normalizeType(parts[0]) });
+					}
 				}
+				const doc = pendingDoc || undefined;
+				pendingDoc = null;
+				functions.set(name, { name, returns: ret, params, line: lineNo, col, endCol: col + name.length, doc });
 			}
-			const doc = pendingDoc || undefined;
-			pendingDoc = null;
-			functions.set(name, { name, returns: ret, params, line: lineNo, col, endCol: col + name.length, doc });
 			continue;
 		}
 		// 2) Without explicit return type (common in some codebases): <name>(params) { or ;
@@ -511,32 +542,58 @@ function scanIncludeText(text: string): IncludeSymbols {
 			const whole = fdm2[0];
 			const nameRel = whole.indexOf(name);
 			const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*\s*\(/));
+			// Heuristic: treat as a declaration only if ALL parameters are explicitly typed
+			// with known LSL types (e.g., "integer idx", "string msg"). Reject single-identifier
+			// parameters (which look like call-site args such as DEBUG_CHANNEL) and anything with
+			// literals or operators. Allow zero-arg form: name().
+			let looksLikeProto = true;
 			const params: IncludeFunctionParam[] = [];
 			if (paramsRaw.length > 0) {
+				const knownTypes = new Set([...TYPES, 'quaternion']);
 				for (const piece of paramsRaw.split(',')) {
 					const p = piece.trim().replace(/\s+/g, ' ');
 					if (!p) continue;
+					// Must be at least two tokens: <type> <name>
 					const parts = p.split(' ');
-					if (parts.length >= 2) params.push({ type: normalizeType(parts[0]), name: parts[1] });
-					else params.push({ type: normalizeType(parts[0]) });
+					if (parts.length < 2) { looksLikeProto = false; break; }
+					// First token must be a known type
+					const tnorm = normalizeType(parts[0]);
+					if (!knownTypes.has(tnorm)) { looksLikeProto = false; break; }
+					// Second token must look like an identifier
+					if (!/^[A-Za-z_]\w*$/.test(parts[1]!)) { looksLikeProto = false; break; }
+					params.push({ type: tnorm, name: parts[1] });
 				}
 			}
-			const doc = pendingDoc || undefined;
-			pendingDoc = null;
-			functions.set(name, { name, returns: 'integer', params, line: lineNo, col, endCol: col + name.length, doc });
+			if (looksLikeProto) {
+				const doc = pendingDoc || undefined;
+				pendingDoc = null;
+				functions.set(name, { name, returns: 'integer', params, line: lineNo, col, endCol: col + name.length, doc });
+			}
 			// do not continue; still update braceDepth for this line below
 		}
-		// Global var: <type> <name> [= ...] ;
-		const gv = /^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*(?:=|;)/.exec(L);
+		// State declaration at top-level: state <name> { ... }
+		if (braceDepth === 0) {
+			const sm = /^\s*state\s+([A-Za-z_]\w*)\s*\{/.exec(L);
+			if (sm) {
+				states.add(sm[1]!);
+			}
+		}
+		// Global var: [const ]<type> <name> [= ...] ;
+		// Only accept at top-level (braceDepth===0) and when the type is a known LSL type.
+		// This avoids picking up statements inside functions and identifiers like "return", "TRUE", etc.
+		const gv = (braceDepth === 0) ? /^\s*(?:const\s+)?([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*(?:=|;)/.exec(L) : null;
 		if (gv && !/\(/.test(L)) {
 			const gtype = normalizeType(gv[1]);
-			const name = gv[2];
-			const whole = gv[0];
-			const nameRel = whole.indexOf(name);
-			const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*/));
-			const doc = pendingDoc || undefined;
-			pendingDoc = null;
-			globals.set(name, { line: lineNo, col, endCol: col + name.length, type: gtype, doc });
+			const knownTypes = new Set(['integer', 'float', 'string', 'key', 'vector', 'rotation', 'quaternion', 'list']);
+			if (knownTypes.has(gtype)) {
+				const name = gv[2];
+				const whole = gv[0];
+				const nameRel = whole.indexOf(name);
+				const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*/));
+				const doc = pendingDoc || undefined;
+				pendingDoc = null;
+				globals.set(name, { line: lineNo, col, endCol: col + name.length, type: gtype, doc });
+			}
 		}
 		// Update brace depth after processing this line (naive, fine for headers)
 		for (let k = 0; k < L.length; k++) {
@@ -545,7 +602,7 @@ function scanIncludeText(text: string): IncludeSymbols {
 			else if (ch === '}') { if (braceDepth > 0) braceDepth--; }
 		}
 	}
-	return { functions, macroObjs, macroFuncs, constants, events, typedefs, globals };
+	return { functions, macroObjs, macroFuncs, constants, events, typedefs, states, globals };
 }
 
 // ------------------------------

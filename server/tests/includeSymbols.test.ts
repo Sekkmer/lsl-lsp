@@ -68,4 +68,31 @@ describe('include symbols/macros', () => {
 		const msgs = analysis.diagnostics.map(d => d.message).join('\n');
 		expect(msgs).not.toMatch(/Unknown identifier "GLOB_A"/);
 	});
+
+	it('recognizes const-qualified globals from includes', async () => {
+		const header = tmpFile('const_globals.lslh', `const integer PERMISSION_TAKE = 1;\nconst integer BUTTON_OK = 1;\n`);
+		const includeDir = path.dirname(await header.write());
+		const code = `#include "${path.basename(header.path)}"\ninteger x = PERMISSION_TAKE + BUTTON_OK;\n`;
+		const doc = docFrom(code, 'file:///proj/usesConstGlobals.lsl');
+		const defs = await loadDefs(defsPath);
+		const { analysis } = runPipeline(doc, defs, { includePaths: [includeDir] });
+		const msgs = analysis.diagnostics.map(d => d.message).join('\n');
+		expect(msgs).not.toMatch(/Unknown identifier "PERMISSION_TAKE"/);
+		expect(msgs).not.toMatch(/Unknown identifier "BUTTON_OK"/);
+	});
+
+	it('recognizes functions when brace is on the next line', async () => {
+		const header = tmpFile('brace_next_line.lslh', `integer Sign(integer x)\n{\n    return x;\n}\n`);
+		const includeDir = path.dirname(await header.write());
+		const code = `#include "${path.basename(header.path)}"\ninteger z = Sign(1);\n`;
+		const doc = docFrom(code, 'file:///proj/usesBraceNextLine.lsl');
+		const defs = await loadDefs(defsPath);
+		const { analysis, sem } = runPipeline(doc, defs, { includePaths: [includeDir] });
+		const msgs = analysis.diagnostics.map(d => d.message).join('\n');
+		expect(msgs).not.toMatch(/Unknown identifier "Sign"/);
+		// also verify semantic token classification sees a function token
+		const spans = semToSpans(doc, sem);
+		const fnTypeIndex = (semanticTokensLegend.tokenTypes as string[]).indexOf('function');
+		expect(spans.some(s => s.type === fnTypeIndex)).toBe(true);
+	});
 });

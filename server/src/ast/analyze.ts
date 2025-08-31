@@ -25,6 +25,76 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const functions = new Map<string, Analysis['decls'][number]>();
 	const globalDecls: Decl[] = [];
 
+	// Fallback: scan resolved include files directly when pre.includeSymbols lacks entries for them.
+	// Extracts typed function headers, [const ]typed globals, and object-like macros.
+	type FallbackSymbols = { functions: Map<string, { returns: SimpleType; params: SimpleType[] }>; globals: Set<string>; macros: Set<string> };
+	const fallbackByFile = new Map<string, FallbackSymbols>();
+	const fallbackFuncs = new Set<string>();
+	const fallbackGlobals = new Set<string>();
+	const fallbackMacros = new Set<string>();
+	try {
+		const fs = require('node:fs') as typeof import('node:fs');
+		const knownTypes = new Set<string>([...TYPES, 'quaternion'].map(t => String(t)));
+		const toSimple = (t: string): SimpleType => {
+			const nt = normalizeType(t);
+			return (knownTypes.has(nt) ? (nt as SimpleType) : 'any') as SimpleType;
+		};
+		for (const it of pre.includeTargets || []) {
+			if (!it.resolved) continue;
+			const already = pre.includeSymbols?.get(it.resolved);
+			const needsFallback = !already || (already.functions.size === 0 && already.globals.size === 0 && already.macroObjs.size === 0 && already.macroFuncs.size === 0);
+			if (!needsFallback) continue;
+			try {
+				const text = fs.readFileSync(it.resolved, 'utf8');
+				const lines = text.split(/\r?\n/);
+				const out: FallbackSymbols = { functions: new Map(), globals: new Set(), macros: new Set() };
+				let braceDepth = 0;
+				for (let i = 0; i < lines.length; i++) {
+					let L = lines[i];
+					// strip line comments to stabilize matching
+					L = L.replace(/\/\/.*$/, '');
+					// macros: object-like only
+					{
+						const m = /^\s*#\s*define\s+([A-Za-z_]\w*)(?!\s*\()\b/.exec(L);
+						if (m) { const name = m[1]; out.macros.add(name); continue; }
+					}
+					if (braceDepth === 0) {
+						// const/typed globals
+						const g = /^\s*(?:const\s+)?([A-Za-z_]\w+)\s+([A-Za-z_]\w+)\s*(?:=|;)/.exec(L);
+						if (g) {
+							const t = normalizeType(g[1]);
+							if (knownTypes.has(t)) out.globals.add(g[2]);
+						}
+						// typed function headers: <type> <name>(params) [;|{|EOL]
+						const f = /^\s*([A-Za-z_]\w+)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:[{;]|$)/.exec(L);
+						if (f) {
+							const ret = normalizeType(f[1]);
+							if (knownTypes.has(ret)) {
+								const name = f[2];
+								const params: SimpleType[] = [];
+								const raw = (f[3] || '').trim();
+								if (raw.length > 0) {
+									for (const piece of raw.split(',')) {
+										const p = piece.trim().replace(/\s+/g, ' ');
+										const parts = p.split(' ');
+										params.push(toSimple(parts[0] || 'any'));
+									}
+								}
+								out.functions.set(name, { returns: toSimple(ret), params });
+							}
+						}
+					}
+					// update brace depth
+					for (let k = 0; k < L.length; k++) { const ch = L[k]; if (ch === '{') braceDepth++; else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1); }
+				}
+				fallbackByFile.set(it.resolved, out);
+				for (const n of out.functions.keys()) fallbackFuncs.add(n);
+				for (const n of out.globals.values()) fallbackGlobals.add(n);
+				for (const n of out.macros.values()) fallbackMacros.add(n);
+			} catch { /* ignore single include errors */ }
+		}
+	} catch { /* fs not available (e.g., browser) */ }
+
 	// Track identifier usage within the current function/event body for unused diagnostics
 	type UsageContext = {
 		usedParamNames: Set<string>;
@@ -191,7 +261,12 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					|| defs.types.has(e.name)
 					|| defs.keywords.has(e.name)
 					|| defs.funcs.has(e.name)
-					|| (pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s => s.functions.has(e.name) || s.globals.has(e.name)));
+					|| (pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s =>
+						s.functions.has(e.name) || s.globals.has(e.name) || s.macroObjs.has(e.name) || s.macroFuncs.has(e.name)
+					))
+					|| fallbackFuncs.has(e.name)
+					|| fallbackGlobals.has(e.name)
+					|| fallbackMacros.has(e.name);
 				if (!known) {
 					diagnostics.push({
 						code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER,
@@ -215,7 +290,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					// Unknown callee identifier check (builtin/defs or includeSymbols or local function)
 					const known = resolveInScope(calleeName, scope)
 						|| defs.funcs.has(calleeName)
-						|| (pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s => s.functions.has(calleeName)))
+						|| (pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s => s.functions.has(calleeName) || s.macroFuncs.has(calleeName)))
+						|| fallbackFuncs.has(calleeName)
 						|| defs.consts.has(calleeName) // tolerate accidental const call as known id for better downstream type error
 						|| defs.types.has(calleeName)	 // likewise for types
 						|| defs.keywords.has(calleeName);
@@ -654,12 +730,70 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	}
 	// Include-provided functions
 	if (pre.includeSymbols && pre.includeSymbols.size > 0) {
-		for (const info of pre.includeSymbols.values()) {
+		// Build quick lookup for local script-level declarations
+		const localFuncNames = new Set<string>([...script.functions.keys()]);
+		const localGlobalNames = new Set<string>([...script.globals.keys()]);
+		// Helper to map an include file path to this doc's include directive range
+		const rangeForIncludeFile = (file: string): Range => {
+			const hit = (pre.includeTargets || []).find(it => it.resolved === file) || (pre.includeTargets || [])[0];
+			if (hit) return { start: doc.positionAt(hit.start), end: doc.positionAt(hit.end) };
+			// Fallback to start of document if no include directive was recorded (shouldn't happen)
+			return { start: doc.positionAt(0), end: doc.positionAt(0) };
+		};
+		for (const [file, info] of pre.includeSymbols.entries()) {
 			for (const [name, fn] of info.functions) {
+				// If this function already exists in built-in defs or is defined in the current script,
+				// report a duplicate declaration error at the include site and do not import the signature.
+				if (defs.funcs.has(name) || localFuncNames.has(name)) {
+					const where = rangeForIncludeFile((info as any).file || '');
+					diagnostics.push({
+						code: LSL_DIAGCODES.DUPLICATE_DECL,
+						message: `Duplicate declaration of function ${name} from include` + (defs.funcs.has(name) ? ' (conflicts with built-in)' : ' (conflicts with local function)'),
+						range: where,
+						severity: DiagnosticSeverity.Error,
+					});
+					// Do not add this include signature to callSignatures
+					continue;
+				}
 				if (!functionReturnTypes.has(name)) functionReturnTypes.set(name, toSimpleType(fn.returns));
 				const params = (fn.params || []).map(p => toSimpleType(p.type || 'any'));
 				const prev = callSignatures.get(name) || []; prev.push(params); callSignatures.set(name, prev);
 			}
+			// Detect duplicate globals from includes conflicting with script globals or built-in constants/types
+			for (const [gname] of info.globals) {
+				if (localGlobalNames.has(gname) || defs.consts.has(gname) || defs.types.has(gname) || defs.keywords.has(gname)) {
+					const where = rangeForIncludeFile(file);
+					diagnostics.push({
+						code: LSL_DIAGCODES.DUPLICATE_DECL,
+						message: `Duplicate declaration of global ${gname} from include`,
+						range: where,
+						severity: DiagnosticSeverity.Error,
+					});
+				}
+			}
+			// Detect duplicate states from includes conflicting with locally-declared states
+			if (info.states && info.states.size > 0) {
+				for (const stName of info.states) {
+					if (states.has(stName)) {
+						const where = rangeForIncludeFile(file);
+						diagnostics.push({
+							code: LSL_DIAGCODES.DUPLICATE_DECL,
+							message: `Duplicate declaration of state ${stName} from include`,
+							range: where,
+							severity: DiagnosticSeverity.Error,
+						});
+					}
+				}
+			}
+		}
+	}
+
+	// Fallback: augment callSignatures/return types with functions discovered directly in include files
+	for (const sym of fallbackByFile.values()) {
+		for (const [name, meta] of sym.functions) {
+			if (!callSignatures.has(name)) callSignatures.set(name, [meta.params]);
+			else { const prev = callSignatures.get(name)!; prev.push(meta.params); }
+			if (!functionReturnTypes.has(name)) functionReturnTypes.set(name, meta.returns);
 		}
 	}
 
