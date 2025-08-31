@@ -13,7 +13,8 @@ import { AssertNever } from '../utils';
 import type { Analysis, Diag, Decl } from '../analysisTypes';
 import { LSL_DIAGCODES } from '../analysisTypes';
 
-type Scope = { parent?: Scope; vars: Map<string, Decl> };
+// Scope now carries a lightweight kind tag to distinguish event/function contexts
+type Scope = { parent?: Scope; vars: Map<string, Decl>; kind?: 'event' | 'func' | 'state' | 'global' | 'block' };
 
 export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: PreprocResult): Analysis {
 	const diagnostics: Diag[] = [];
@@ -142,7 +143,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	}
 
 	// Build decls for globals, functions, and states/events
-	const globalScope: Scope = { vars: new Map() };
+	const globalScope: Scope = { vars: new Map(), kind: 'global' };
 
 	// Helper: find the identifier range for a given name inside a node's span
 	// If headerOnly is true, search only up to the first '{' to avoid matching inside bodies
@@ -394,10 +395,10 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		}
 	}
 
-	function pushScope(s: Scope): Scope { return { parent: s, vars: new Map() }; }
+	function pushScope(s: Scope, kind?: Scope['kind']): Scope { return { parent: s, vars: new Map(), kind }; }
 
 	function visitFunction(fn: AstFunction) {
-		const scope = pushScope(globalScope);
+		const scope = pushScope(globalScope, 'func');
 		const ts = pushTypeScope(globalTypeScope);
 		const returnType = (fn.returnType ?? 'void') as string;
 		// Collect all labels in this function body so jump targets can be validated without unknown-identifier noise
@@ -537,7 +538,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	}
 
 	function visitState(st: AstState) {
-		const scope = pushScope(globalScope);
+		const scope = pushScope(globalScope, 'state');
 		const tsState = pushTypeScope(globalTypeScope);
 		// Duplicate event names within the same state
 		const evNames = new Set<string>();
@@ -545,7 +546,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			if (evNames.has(ev.name)) {
 				diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Duplicate declaration of event ${ev.name}`, range: spanToRange(doc, ev.span), severity: DiagnosticSeverity.Error });
 			} else evNames.add(ev.name);
-			const evScope = pushScope(scope);
+			const evScope = pushScope(scope, 'event');
 			const tsEvent = pushTypeScope(tsState);
 			const ctx: UsageContext = { usedParamNames: new Set(), usedLocalNames: new Set(), paramDecls: [], localDecls: [] };
 			usageStack.push(ctx);
@@ -785,14 +786,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const _visitStmt = visitStmt; // not used; staying inline in switch
 
 	function isWithinEventScope(scope: Scope): boolean {
-		// Heuristic: event parameters are declared as kind 'param' inside visitState; if any param exists in current scope but not in parent function scope, we're in event
+		// Walk up scope chain and look for an explicitly tagged 'event' scope
 		let s: Scope | undefined = scope;
-		while (s && s !== globalScope) {
-			// If there exists a variable that came from an event parameter marker, consider true; fallback to functions map not present
-			// We don't tag scope type explicitly; approximate by existence of any decl named like known event params in this scope
-			if (s !== globalScope && s.vars.size > 0) {
-				for (const d of s.vars.values()) { if (d.kind === 'param') return true; }
-			}
+		while (s) {
+			if (s.kind === 'event') return true;
+			if (!s.parent) break;
 			s = s.parent;
 		}
 		return false;

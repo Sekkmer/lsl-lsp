@@ -52,4 +52,12 @@ describe('states: declaration and change rules', () => {
 		const e = analysis.diagnostics.find(d => d.code === 'LSL023');
 		expect(e).toBeFalsy();
 	});
+
+	it('allows state change inside zero-parameter event handler', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('state inUpdate { state_entry(){ state default; } } default { state_entry(){ } }');
+		const { analysis } = runPipeline(doc, defs);
+		const e = analysis.diagnostics.find(d => d.code === 'LSL023');
+		expect(e).toBeFalsy();
+	});
 });
