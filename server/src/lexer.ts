@@ -20,77 +20,102 @@ const reId = /^[A-Za-z_][A-Za-z0-9_]*/;
 const reNum = /^(?:0[xX][0-9A-Fa-f]+|(?:\d*\.\d+|\d+)(?:[eE][+-]?\d+)?)/;
 
 export function lex(doc: TextDocument, disabled: DisabledRange[]): Token[] {
-	const text = doc.getText();
-	const out: Token[] = [];
-	let i = 0;
-	while (i < text.length) {
-		if (inDisabled(i, disabled)) { i++; continue; }
+	const original = doc.getText();
+	// Phase 1: splice line continuations (backslash + CR? + LF) while mapping indices
+	let sText = '';
+	const mapToOrig: number[] = [];
+	for (let k = 0; k < original.length; ) {
+		const ch = original[k];
+		if (ch === '\\') {
+			// Handle \\\n or \\\r\n (line splicing)
+			if (original[k + 1] === '\n') { k += 2; continue; }
+			if (original[k + 1] === '\r' && original[k + 2] === '\n') { k += 3; continue; }
+		}
+		sText += ch;
+		mapToOrig.push(k);
+		k++;
+	}
 
-		const ch = text[i];
+	const out: Token[] = [];
+	let i = 0; // index into sText
+	const N = sText.length;
+
+	function origAt(idx: number): number { return mapToOrig[Math.max(0, Math.min(idx, mapToOrig.length - 1))] ?? 0; }
+	function pushTok(kind: TokKind, startI: number, endI: number, value: string) {
+		if (endI <= startI) return;
+		const start = origAt(startI);
+		const end = origAt(endI - 1) + 1;
+		out.push({ kind, value, start, end });
+	}
+
+	while (i < N) {
+		// Use original offsets for disabled range checks
+		const origIdx = origAt(i);
+		if (inDisabled(origIdx, disabled)) { i++; continue; }
+
+		const ch = sText[i];
 
 		// whitespace
 		if (/\s/.test(ch)) { i++; continue; }
 
 		// comments
-		if (ch === '/' && text[i + 1] === '/') {
-			const start = i; while (i < text.length && text[i] !== '\n') i++;
-			out.push({ kind: 'comment', value: text.slice(start, i), start, end: i });
+		if (ch === '/' && sText[i + 1] === '/') {
+			const startI = i; while (i < N && sText[i] !== '\n') i++;
+			pushTok('comment', startI, i, sText.slice(startI, i));
 			continue;
 		}
-		if (ch === '/' && text[i + 1] === '*') {
-			const start = i; i += 2;
+		if (ch === '/' && sText[i + 1] === '*') {
+			const startI = i; i += 2;
 			// Scan until closing */ or EOF; do not overshoot past the end
 			let j = i;
-			while (j < text.length && !(text[j - 1] === '*' && text[j] === '/')) j++;
-			// If we found a closing */ at j, the end index should include it; otherwise end at EOF
-			const closed = j < text.length;
-			const end = closed ? (j + 1) : j;
-			// Advance main index to end
-			i = end;
-			out.push({ kind: 'comment', value: text.slice(start, end), start, end });
+			while (j < N && !(sText[j - 1] === '*' && sText[j] === '/')) j++;
+			const closed = j < N;
+			const endI = closed ? (j + 1) : j;
+			i = endI;
+			pushTok('comment', startI, endI, sText.slice(startI, endI));
 			continue;
 		}
 
 		// preprocessor lines (for semantic tokens)
 		if (ch === '#') {
-			const start = i; while (i < text.length && text[i] !== '\n') i++;
-			out.push({ kind: 'pp', value: text.slice(start, i), start, end: i });
+			const startI = i; while (i < N && sText[i] !== '\n') i++;
+			pushTok('pp', startI, i, sText.slice(startI, i));
 			continue;
 		}
 
 		// strings
 		if (ch === '"' || ch === '\'') {
-			const quote = ch; const start = i++;
-			while (i < text.length) {
-				const c = text[i++];
+			const quote = ch; const startI = i++;
+			while (i < N) {
+				const c = sText[i++];
 				if (c === '\\') { i++; continue; }
 				if (c === quote) break;
 			}
-			out.push({ kind: 'str', value: text.slice(start, i), start, end: i });
+			pushTok('str', startI, i, sText.slice(startI, i));
 			continue;
 		}
 
 		// numbers
-		const n = reNum.exec(text.slice(i));
+		const n = reNum.exec(sText.slice(i));
 		if (n) {
-			const start = i; i += n[0].length;
-			out.push({ kind: 'num', value: n[0], start, end: i });
+			const startI = i; i += n[0].length;
+			pushTok('num', startI, i, n[0]);
 			continue;
 		}
 
 		// identifiers
-		const id = reId.exec(text.slice(i));
+		const id = reId.exec(sText.slice(i));
 		if (id) {
-			const start = i; const val = id[0]; i += val.length;
-			out.push({ kind: 'id', value: val, start, end: i });
+			const startI = i; const val = id[0]; i += val.length;
+			pushTok('id', startI, i, val);
 			continue;
 		}
 
 		// punctuation / operators
 		// combine two-char operators when applicable (==, !=, <=, >=, &&, ||, <<, >>, +=, -=, *=, /=, %=, ++, --)
-		const start = i;
+		const startI = i;
 		let val = ch;
-		const next = text[i + 1];
+		const next = sText[i + 1];
 		if (
 			(ch === '=' && next === '=') ||
 			(ch === '!' && next === '=') ||
@@ -106,7 +131,7 @@ export function lex(doc: TextDocument, disabled: DisabledRange[]): Token[] {
 		} else {
 			i++;
 		}
-		out.push({ kind: /[;:,()[\]{}]/.test(val) ? 'punc' : 'op', value: val, start, end: i });
+		pushTok(/[;:,()[\]{}]/.test(val) ? 'punc' : 'op', startI, i, val);
 	}
 	return out;
 }
