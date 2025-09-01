@@ -457,11 +457,30 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					if (!stmt.else) return false;
 					return allPathsReturn(stmt.then) && allPathsReturn(stmt.else);
 				}
-				case 'WhileStmt':
-				case 'DoWhileStmt':
-				case 'ForStmt':
-					// loops don't guarantee a return without analysis; assume false
+				case 'WhileStmt': {
+					const b = stmt.body;
+					if (b && b.kind === 'BlockStmt' && b.statements.length > 0) {
+						const last = b.statements[b.statements.length - 1];
+						if (last && last.kind === 'ReturnStmt') return true;
+					}
 					return false;
+				}
+				case 'DoWhileStmt': {
+					const b = stmt.body;
+					if (b && b.kind === 'BlockStmt' && b.statements.length > 0) {
+						const last = b.statements[b.statements.length - 1];
+						if (last && last.kind === 'ReturnStmt') return true;
+					}
+					return false;
+				}
+				case 'ForStmt': {
+					const fb = stmt.body;
+					if (fb && fb.kind === 'BlockStmt' && fb.statements.length > 0) {
+						const last = fb.statements[fb.statements.length - 1];
+						if (last && last.kind === 'ReturnStmt') return true;
+					}
+					return false;
+				}
 				default: return false;
 			}
 		}
