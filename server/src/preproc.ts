@@ -121,6 +121,8 @@ export function preprocess(
 	const stack: Frame[] = [];
 
 	let offset = 0;
+	// Track C-style block comments across lines so we can ignore any #directives inside them
+	let inBlockComment = false;
 	for (let i = 0; i < lines.length; i++) {
 		const L = lines[i];
 		const lineStart = offset;
@@ -147,11 +149,43 @@ export function preprocess(
 			}
 		}
 
-		const m = /^\s*#\s*(\w+)(.*)$/.exec(L);
+		// Find a leading #directive outside of block comments. We only treat the line as a
+		// directive if, after skipping whitespace and any block comments, the first non-space
+		// character is a '#'. We also stop at line comments ('//').
+		let dirPos: number | null = 0;
+		// Scan forward skipping spaces and block comment sections
+		while (true) {
+			// Skip spaces/tabs
+			while (typeof dirPos === 'number' && dirPos < L.length && /\s/.test(L[dirPos]!)) dirPos++;
+			if (dirPos === null || dirPos >= L.length) break;
+			if (inBlockComment) {
+				const endIdx = L.indexOf('*/', dirPos);
+				if (endIdx === -1) { dirPos = null; break; } // rest of line is inside a block comment
+				// exit block and continue scanning remainder of line
+				dirPos = endIdx + 2;
+				inBlockComment = false;
+				continue;
+			}
+			// Not in a block: if a new block starts here, enter it and continue
+			if (L.startsWith('/*', dirPos)) { inBlockComment = true; dirPos += 2; continue; }
+			// Line comment starts: nothing more on this line to scan
+			if (L.startsWith('//', dirPos)) { dirPos = null; break; }
+			break;
+		}
+		let m: RegExpExecArray | null = null;
+		let head: { start: number; end: number } = { start: lineStart, end: lineStart };
+		if (typeof dirPos === 'number' && dirPos < L.length && L[dirPos] === '#') {
+			const slice = L.slice(dirPos);
+			m = /^#\s*(\w+)(.*)$/.exec(slice);
+			if (m) {
+				const headMatch = /^#\s*\w+/.exec(slice);
+				const headLen = headMatch ? headMatch[0].length : (m[0].length - (m[2] || '').length);
+				head = { start: lineStart + dirPos, end: lineStart + dirPos + headLen };
+			}
+		}
 		if (m) {
 			const directive = m[1];
 			const rest = m[2].trim();
-			const head = headRange(directive, L, lineStart);
 			// Compute whether we're inside an active conditional region.
 			// A line is considered active only if ALL open frames are enabled.
 			const isActive = stack.every(f => f.enabled);
@@ -333,6 +367,16 @@ export function preprocess(
 		}
 
 		offset = lineEnd + 1 + extraOffsetConsumed;
+		// Maintain block comment state across lines: if we were not inside a block and this line
+		// opens one without closing it, carry the state. We only need to handle the simple case
+		// here because we already skipped directives inside comments above.
+		if (!inBlockComment) {
+			const openIdx = L.indexOf('/*');
+			if (openIdx >= 0) {
+				const closeIdx = L.indexOf('*/', openIdx + 2);
+				if (closeIdx === -1) inBlockComment = true;
+			}
+		}
 	}
 	// Close any still-open disabled ranges to EOF
 	closeAllOpen(disabledRanges, text.length);
@@ -819,7 +863,7 @@ function evalIfExpr(src: string, macros: Record<string, any>, funcMacros: Record
 }
 
 // Helpers to compute ranges on directive lines
-function headRange(directive: string, line: string, lineStart: number): { start: number; end: number } {
+function _headRange(directive: string, line: string, lineStart: number): { start: number; end: number } {
 	const re = new RegExp(`^\\s*#\\s*${directive}\\b`);
 	const m = re.exec(line);
 	if (m) {
