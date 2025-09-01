@@ -85,9 +85,11 @@ export class Lexer {
 		while (this.i < this.n) {
 			const ch = this.text[this.i]!;
 			if (ch === '\\') {
-				const n1 = this.text[this.i + 1];
-				if (n1 === '\n') { this.i += 2; continue; }
-				if (n1 === '\r' && this.text[this.i + 2] === '\n') { this.i += 3; continue; }
+				// Handle line splicing with optional spaces/tabs before newline
+				let k = this.i + 1;
+				while (k < this.n && (this.text[k] === ' ' || this.text[k] === '\t')) k++;
+				if (this.text[k] === '\n') { this.i = k + 1; continue; }
+				if (this.text[k] === '\r' && this.text[k + 1] === '\n') { this.i = k + 2; continue; }
 			}
 			if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') { this.i++; continue; }
 			break;
@@ -104,7 +106,17 @@ export class Lexer {
 			if (atLineStart) {
 				const start = this.i;
 				let j = this.i + 1;
-				while (j < this.n && this.text[j] !== '\n') j++;
+				// Consume until end of directive, respecting backslash-newline continuations
+				for (; j < this.n; ) {
+					if (this.text[j] === '\\') {
+						let k = j + 1;
+						while (k < this.n && (this.text[k] === ' ' || this.text[k] === '\t')) k++;
+						if (this.text[k] === '\n') { j = k + 1; continue; }
+						if (this.text[k] === '\r' && this.text[k + 1] === '\n') { j = k + 2; continue; }
+					}
+					if (this.text[j] === '\n') break;
+					j++;
+				}
 				const tok = this.mk('directive', this.text.slice(start, j), start, j);
 				this.i = j;
 				return tok;

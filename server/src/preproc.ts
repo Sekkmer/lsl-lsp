@@ -125,6 +125,9 @@ export function preprocess(
 		const L = lines[i];
 		const lineStart = offset;
 		const lineEnd = offset + L.length;
+		// If we consume extra physical lines inside handlers (e.g., multi-line #define),
+		// accumulate their character lengths here so we can keep absolute offsets correct.
+		let extraOffsetConsumed = 0;
 
 		// comment-based diagnostic directives
 		const cidx = L.indexOf('//');
@@ -149,6 +152,9 @@ export function preprocess(
 			const directive = m[1];
 			const rest = m[2].trim();
 			const head = headRange(directive, L, lineStart);
+			// Compute whether we're inside an active conditional region.
+			// A line is considered active only if ALL open frames are enabled.
+			const isActive = stack.every(f => f.enabled);
 
 			switch (directive) {
 				case 'if': {
@@ -158,7 +164,8 @@ export function preprocess(
 						const a = argRangeForDirective('if', L, lineStart, lineEnd);
 						preprocDiagnostics.push({ start: a.start, end: a.end, message: 'Malformed #if expression', code: 'LSL-preproc' });
 					}
-					const enabled = truthy(r.value);
+					const cond = truthy(r.value);
+					const enabled = isActive && cond;
 					stack.push({ enabled, sawElse: false, taken: enabled, headStart: head.start, headEnd: head.end });
 					if (!enabled) disabledRanges.push({ start: lineEnd + 1, end: -1 });
 					break;
@@ -168,7 +175,9 @@ export function preprocess(
 					if (!top) { preprocDiagnostics.push({ start: head.start, end: head.end, message: 'Stray #elif without matching #if', code: 'LSL-preproc' }); break; }
 					if (top.sawElse) { preprocDiagnostics.push({ start: head.start, end: head.end, message: '#elif after #else is not allowed', code: 'LSL-preproc' }); break; }
 					let newEnabled = false;
-					if (!top.taken) {
+					// Only consider enabling this branch if all ancestors (excluding this frame) are active
+					const ancestorsActive = stack.slice(0, -1).every(f => f.enabled);
+					if (!top.taken && ancestorsActive) {
 						const expr = stripLineComment(rest);
 						const r = evalIfExpr(expr, macros, funcMacros);
 						if (!r.valid) {
@@ -190,7 +199,10 @@ export function preprocess(
 					if (!top) { preprocDiagnostics.push({ start: head.start, end: head.end, message: 'Stray #else without matching #if', code: 'LSL-preproc' }); break; }
 					if (top.sawElse) { preprocDiagnostics.push({ start: head.start, end: head.end, message: 'Multiple #else branches in #if chain', code: 'LSL-preproc' }); break; }
 					top.sawElse = true;
-					const shouldEnable = !top.taken;
+					// #else can only be enabled if all ancestor frames are active and
+					// no previous branch in this chain was taken.
+					const ancestorsActive = stack.slice(0, -1).every(f => f.enabled);
+					const shouldEnable = ancestorsActive && !top.taken;
 					if (top.enabled !== shouldEnable) {
 						if (top.enabled && !shouldEnable) disabledRanges.push({ start: lineEnd + 1, end: -1 });
 						else if (!top.enabled && shouldEnable) closeLastOpen(disabledRanges, lineStart - 1);
@@ -205,13 +217,29 @@ export function preprocess(
 					break;
 				}
 				case 'define': {
-					// Support object-like and function-like macros
+					if (!isActive) break; // ignore defines in inactive branches
+					// Support object-like and function-like macros with line continuations (\\)
 					const mm = /^([A-Za-z_]\w*)(\s*\(([^)]*)\))?(?:\s+(.*))?$/.exec(rest);
 					if (mm) {
 						const name = mm[1];
 						const hasParams = !!mm[2];
 						const params = (mm[3] ?? '').trim();
-						const body = (mm[4] ?? '').trim();
+						// Start with the body from this line (strip trailing line comment only)
+						let body = ((mm[4] ?? '').replace(/\/\/.*$/, '')).trimEnd();
+						// Collect continuation lines while the current body ends with a backslash
+						const endsWithBS = (s: string) => /\\\s*$/.test(s);
+						while (endsWithBS(body) && (i + 1) < lines.length) {
+							// Remove trailing backslash from current body
+							body = body.replace(/\\\s*$/, '');
+							// Append next line segment with leading spaces trimmed and without trailing line comment
+							const nextSeg = lines[i + 1]!.replace(/\/\/.*$/, '').trimStart();
+							body += '\n' + nextSeg.trimEnd();
+							// Account for the consumed physical line in the absolute offset
+							extraOffsetConsumed += 1 + lines[i + 1]!.length;
+							i++;
+						}
+						// In case the last collected body still ends with a stray backslash (malformed), strip it
+						body = body.replace(/\\\s*$/, '').trim();
 						if (hasParams) {
 							// Keep verbatim, including __VA_ARGS__/__VA_OPT__ markers
 							funcMacros[name] = `(${params})${body ? ' ' + body : ''}`;
@@ -223,6 +251,7 @@ export function preprocess(
 					break;
 				}
 				case 'undef': {
+					if (!isActive) break; // ignore undefs in inactive branches
 					const name = rest.split(/\s+/)[0];
 					delete macros[name];
 					delete funcMacros[name];
@@ -230,19 +259,24 @@ export function preprocess(
 				}
 				case 'ifdef': {
 					const name = rest.split(/\s+/)[0];
-					const enabled = !!macros[name] || !!funcMacros[name];
+					// Only enable if all ancestors are active
+					const ancestorsActive = stack.slice(0, -1).every(f => f.enabled);
+					const enabled = ancestorsActive && (!!macros[name] || !!funcMacros[name]);
 					stack.push({ enabled, sawElse: false, taken: enabled, headStart: head.start, headEnd: head.end });
 					if (!enabled) disabledRanges.push({ start: lineEnd + 1, end: -1 });
 					break;
 				}
 				case 'ifndef': {
 					const name = rest.split(/\s+/)[0];
-					const enabled = !(!!macros[name] || !!funcMacros[name]);
+					// Only enable if all ancestors are active
+					const ancestorsActive = stack.slice(0, -1).every(f => f.enabled);
+					const enabled = ancestorsActive && !(!!macros[name] || !!funcMacros[name]);
 					stack.push({ enabled, sawElse: false, taken: enabled, headStart: head.start, headEnd: head.end });
 					if (!enabled) disabledRanges.push({ start: lineEnd + 1, end: -1 });
 					break;
 				}
 				case 'include': {
+					if (!isActive) break; // ignore includes in inactive branches
 					const file = parseIncludeTarget(rest);
 					const headInc = /^\s*#\s*include\b/.exec(L);
 					if (headInc) {
@@ -298,7 +332,7 @@ export function preprocess(
 			}
 		}
 
-		offset = lineEnd + 1;
+		offset = lineEnd + 1 + extraOffsetConsumed;
 	}
 	// Close any still-open disabled ranges to EOF
 	closeAllOpen(disabledRanges, text.length);
@@ -526,41 +560,47 @@ function scanIncludeText(text: string): IncludeSymbols {
 			}
 			continue;
 		}
-		// Function decl at top-level (braceDepth===0):
-		// 1) With explicit return type: <retType> <name>(params) { or ;
-		// Accept the common style where '{' is on the next line by allowing end-of-line after ')'
-		const fdm = (braceDepth === 0) ? /^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:[{;]|$)/.exec(L) : null;
-		if (fdm) {
-			const ret = normalizeType(fdm[1]);
-			// Only accept known LSL types as return type; this avoids misclassifying
-			// lines like "return llList2List(...)" as a function decl with type "return".
-			const knownReturnTypes = new Set([...TYPES, 'quaternion']);
-			if (!knownReturnTypes.has(ret)) {
-				// Not a valid declaration signature; skip
-				// continue to brace tracking and other scanners
-			} else {
-				const name = fdm[2];
-				const paramsRaw = fdm[3].trim();
-				const whole = fdm[0];
-				const nameRel = whole.indexOf(name);
-				const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*\s*\(/));
+		const openBraces   = (L.match(/{/g) || []).length;
+		const closeBraces  = (L.match(/}/g) || []).length;
+		// 1) With explicit return type at top-level: <type> <name>(params) { or ; or end-of-line (brace on next line)
+		//    Example: integer myFunc(integer x);
+		const fdm1 = (braceDepth === 0) ? /^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:[{;]|$)/.exec(L) : null;
+		if (fdm1) {
+			const retRaw = fdm1[1];
+			const name = fdm1[2];
+			const paramsRaw = (fdm1[3] || '').trim();
+			const whole = fdm1[0];
+			const nameRel = whole.indexOf(name);
+			const col = nameRel >= 0 ? nameRel : Math.max(0, whole.search(/\b[A-Za-z_]\w*\s*\(/));
+			const knownTypes = new Set([...TYPES, 'quaternion']);
+			const retType = normalizeType(retRaw);
+			if (knownTypes.has(retType)) {
+				// Heuristic: ensure parameters look like typed params of known types
+				let looksLikeProto = true;
 				const params: IncludeFunctionParam[] = [];
 				if (paramsRaw.length > 0) {
 					for (const piece of paramsRaw.split(',')) {
 						const p = piece.trim().replace(/\s+/g, ' ');
 						if (!p) continue;
-						// Pattern: <type> [name]
 						const parts = p.split(' ');
-						if (parts.length >= 2) params.push({ type: normalizeType(parts[0]), name: parts[1] });
-						else params.push({ type: normalizeType(parts[0]) });
+						if (parts.length < 2) { looksLikeProto = false; break; }
+						const tnorm = normalizeType(parts[0]);
+						if (!knownTypes.has(tnorm)) { looksLikeProto = false; break; }
+						if (!/^[A-Za-z_]\w*$/.test(parts[1]!)) { looksLikeProto = false; break; }
+						params.push({ type: tnorm, name: parts[1] });
 					}
 				}
-				const doc = pendingDoc || undefined;
-				pendingDoc = null;
-				functions.set(name, { name, returns: ret, params, line: lineNo, col, endCol: col + name.length, doc });
+				if (looksLikeProto) {
+					const doc = pendingDoc || undefined;
+					pendingDoc = null;
+					functions.set(name, { name, returns: retType, params, line: lineNo, col, endCol: col + name.length, doc });
+				}
+				braceDepth += openBraces - closeBraces;
+				continue;
 			}
-			continue;
+			// do not continue; still update braceDepth for this line below
 		}
+
 		// 2) Without explicit return type (common in some codebases): <name>(params) { or ;
 		// We treat these as functions with "integer" return by convention; only arity matters for our checks.
 		// Also allow '{' on the next line by accepting end-of-line here.

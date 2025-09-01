@@ -27,9 +27,12 @@ export function lex(doc: TextDocument, disabled: DisabledRange[]): Token[] {
 	for (let k = 0; k < original.length; ) {
 		const ch = original[k];
 		if (ch === '\\') {
-			// Handle \\\n or \\\r\n (line splicing)
-			if (original[k + 1] === '\n') { k += 2; continue; }
-			if (original[k + 1] === '\r' && original[k + 2] === '\n') { k += 3; continue; }
+			// Handle line splicing with optional trailing spaces/tabs before newline
+			// Patterns: \\\n , \\ \t* \n , or \\ \t* \r\n
+			let j = k + 1;
+			while (j < original.length && (original[j] === ' ' || original[j] === '\t')) j++;
+			if (original[j] === '\n') { k = j + 1; continue; }
+			if (original[j] === '\r' && original[j + 1] === '\n') { k = j + 2; continue; }
 		}
 		sText += ch;
 		mapToOrig.push(k);
