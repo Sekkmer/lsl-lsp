@@ -4,11 +4,15 @@
 		{
 			"name": "comment.block.lsl",
 			"begin": "/\\*",
-			"end": "\\*/"
+			"beginCaptures": { "0": { "name": "punctuation.definition.comment.begin.lsl" } },
+			"end": "\\*/",
+			"endCaptures": { "0": { "name": "punctuation.definition.comment.end.lsl" } }
 		},
 		{
 			"name": "comment.line.double-slash.lsl",
-			"match": "//.*$"
+			"begin": "//",
+			"beginCaptures": { "0": { "name": "punctuation.definition.comment.lsl" } },
+			"end": "$"
 		},
 		{
 			"name": "meta.preprocessor.lsl",
@@ -48,8 +52,14 @@
 					"end": "$",
 					"patterns": [
 						{ "match": "\\bdefined\\b", "name": "keyword.other.defined.lsl" },
-						{ "begin": "\"", "end": "\"", "name": "string.quoted.double.macro.cond.lsl", "patterns": [ { "match": "\\\\.", "name": "constant.character.escape.lsl" } ] },
-						{ "match": "\\b(?:\\d*\\.\\d+|\\d+)(?:[eE][+-]?\\d+)?\\b", "name": "constant.numeric.macro.cond.lsl" },
+						{
+							"begin": "\"",
+							"beginCaptures": { "0": { "name": "punctuation.definition.string.begin.lsl" } },
+							"end": "(?<!\\\\)(?:\\\\\\\\)*\"",
+							"endCaptures": { "0": { "name": "punctuation.definition.string.end.lsl" } },
+							"name": "string.quoted.double.macro.cond.lsl",
+							"patterns": [ { "match": "\\\\.", "name": "constant.character.escape.lsl" } ]
+						},
 						{ "match": "\\b__LINE__\\b", "name": "constant.language.macro.line.lsl" },
 						{ "match": "\\b__FILE__\\b", "name": "constant.language.macro.file.lsl" },
 						{ "match": "\\b__VA_ARGS__\\b", "name": "constant.language.macro.varargs.lsl" },
@@ -57,7 +67,14 @@
 						{ "match": "[!&|?:=<>+\\-*/%]+", "name": "keyword.operator.macro.cond.lsl" },
 						{ "match": "\\b([A-Z_][A-Z0-9_]*)\\b", "name": "constant.language.macro.cond.lsl" },
 						{ "match": "\\b([A-Za-z_][A-Za-z0-9_]*)\\b", "name": "variable.other.macro.cond.lsl" },
-						{ "match": "[()]", "name": "punctuation.parenthesis.cond.lsl" }
+						{ "match": "[()]", "name": "punctuation.parenthesis.cond.lsl" },
+						{ "match": "[\\[\\]]", "name": "punctuation.section.brackets.macro.define.lsl" },
+						{
+							"name": "comment.line.double-slash.lsl",
+							"begin": "//",
+							"beginCaptures": { "0": { "name": "punctuation.definition.comment.lsl" } },
+							"end": "$"
+						}
 					]
 				},
 				{
@@ -65,7 +82,13 @@
 					"begin": "\\G\\s*",
 					"end": "$",
 					"patterns": [
-						{ "begin": "\"", "end": "\"", "name": "string.quoted.double.include.lsl" },
+						{
+							"begin": "\"",
+							"beginCaptures": { "0": { "name": "punctuation.definition.string.begin.lsl" } },
+							"end": "(?<!\\\\)(?:\\\\\\\\)*\"",
+							"endCaptures": { "0": { "name": "punctuation.definition.string.end.lsl" } },
+							"name": "string.quoted.double.include.lsl"
+						},
 						{ "begin": "<", "end": ">", "name": "string.quoted.other.ltgt.include.lsl" },
 						{ "match": "\\S+", "name": "meta.include.target.lsl" }
 					]
@@ -92,7 +115,7 @@
 		},
 		{
 			"name": "keyword.control.lsl",
-			"match": "\\b(if|else|for|while|do|return|state|default|jump|label)\\b"
+			"match": "\\b(if|else|for|while|do|return|state|default|jump|label|event)\\b"
 		},
 		{
 			"name": "support.function.lsl",
