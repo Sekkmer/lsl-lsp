@@ -95,4 +95,29 @@ describe('include symbols/macros', () => {
 		const fnTypeIndex = (semanticTokensLegend.tokenTypes as string[]).indexOf('function');
 		expect(spans.some(s => s.type === fnTypeIndex)).toBe(true);
 	});
+
+	it('resolves symbols through transitive includes', async () => {
+		// a.lslh includes b.lslh which defines function Foo and macro BAR
+		const b = tmpFile('b.lslh', `#define BAR 7\ninteger Foo(integer x);\n`);
+		const a = tmpFile('a.lslh', `#include "b.lslh"\n`);
+		const includeDir = path.dirname(await b.write());
+		await a.write();
+		const code = `#include "a.lslh"\ninteger x = Foo(BAR);\n`;
+		const doc = docFrom(code, 'file:///proj/transitive.lsl');
+		const defs = await loadDefs(defsPath);
+		const { analysis, pre, sem } = runPipeline(doc, defs, { includePaths: [includeDir] });
+		const msgs = analysis.diagnostics.map(d => d.message).join('\n');
+		expect(msgs).not.toMatch(/Unknown identifier "Foo"/);
+		expect(msgs).not.toMatch(/Unknown identifier "BAR"/);
+		// semantic tokens should mark Foo as function and BAR as macro
+		const spans = semToSpans(doc, sem);
+		const fnTypeIndex = (semanticTokensLegend.tokenTypes as string[]).indexOf('function');
+		const macroTypeIndex = (semanticTokensLegend.tokenTypes as string[]).indexOf('macro');
+		expect(spans.some(s => s.type === fnTypeIndex)).toBe(true);
+		expect(spans.some(s => s.type === macroTypeIndex)).toBe(true);
+		// pre.includeSymbols must contain entries for both a.lslh and b.lslh
+		const files = Array.from(pre.includeSymbols?.keys() || []);
+		expect(files.some(f => f.endsWith('a.lslh'))).toBe(true);
+		expect(files.some(f => f.endsWith('b.lslh'))).toBe(true);
+	});
 });

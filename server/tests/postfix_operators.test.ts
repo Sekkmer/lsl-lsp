@@ -3,11 +3,12 @@ import { docFrom } from './testUtils';
 import { loadDefs } from '../src/defs';
 import path from 'node:path';
 import { runPipeline } from './testUtils';
+import { Analysis } from '../src/analysisTypes';
 
 const defsPath = path.join(__dirname, '..', '..', 'common', 'lsl-defs.json');
 
-function diagMsgs(analysis: any) {
-	return analysis.diagnostics.map((d: any) => `${d.message} @${d.code}`);
+function diagMsgs(analysis: Analysis) {
+	return analysis.diagnostics.map((d) => `${d.message} @${d.code}`);
 }
 
 describe('postfix ++/-- parsing and validation', () => {
@@ -16,7 +17,7 @@ describe('postfix ++/-- parsing and validation', () => {
 		const code = `default { state_entry() { integer i = 0; for (i = 0; i < 3; i++) { } } }`;
 		const doc = docFrom(code, 'file:///postfix_for.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
-		const parseErrors = analysis.diagnostics.filter((d: any) => d.code === 'LSL000');
+		const parseErrors = analysis.diagnostics.filter((d) => d.code === 'LSL000');
 		expect(parseErrors.length).toBe(0);
 	});
 

@@ -41,27 +41,37 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 
 	// Preprocessor macro hover (#define NAME VALUE)
 	if (pre && pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, w)) {
-		const val = (pre.macros as any)[w];
+		const val = pre.macros[w as keyof typeof pre.macros];
+		const from = macroSourceFile(doc, pre, w);
 		// If the macro is a simple literal (number/string/bool), show just the computed value
 		if (typeof val === 'number') {
-			return { contents: { kind: MarkupKind.Markdown, value: ['```lsl', String(val), '```'].join('\n') } };
+			const parts = ['```lsl', String(val), '```'];
+			if (from) parts.push('', `From: ${from}`);
+			return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 		}
 		if (typeof val === 'string') {
-			return { contents: { kind: MarkupKind.Markdown, value: ['```lsl', JSON.stringify(val), '```'].join('\n') } };
+			const parts = ['```lsl', JSON.stringify(val), '```'];
+			if (from) parts.push('', `From: ${from}`);
+			return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 		}
 		if (typeof val === 'boolean') {
-			return { contents: { kind: MarkupKind.Markdown, value: ['```lsl', val ? '1' : '0', '```'].join('\n') } };
+			const parts = ['```lsl', val ? '1' : '0', '```'];
+			if (from) parts.push('', `From: ${from}`);
+			return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 		}
 		// Otherwise, render the define line
 		const valueStr = val != null ? String(val) : '';
-		const code = ['```lsl', `#define ${w}${valueStr ? ' ' + valueStr : ''}`, '```'].join('\n');
-		return { contents: { kind: MarkupKind.Markdown, value: code } };
+		const parts = ['```lsl', `#define ${w}${valueStr ? ' ' + valueStr : ''}`, '```'];
+		if (from) parts.push('', `From: ${from}`);
+		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
 	// Function-like macro hover: show signature and body without evaluation
 	if (pre && pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, w)) {
-		const body = (pre.funcMacros as any)[w] as string; // like "(a,b) expr"
-		const code = ['```lsl', `#define ${w}${body ? ' ' + body : ''}`, '```'].join('\n');
-		return { contents: { kind: MarkupKind.Markdown, value: code } };
+		const body = pre.funcMacros[w] as string | undefined; // like "(a,b) expr"
+		const from = macroSourceFile(doc, pre, w);
+		const parts = ['```lsl', `#define ${w}${body ? ' ' + body : ''}`, '```'];
+		if (from) parts.push('', `From: ${from}`);
+		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
 	// Special macro __LINE__: show the current line number in this document
 	if (w === '__LINE__') {
@@ -75,7 +85,8 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		const fs = defs.funcs.get(callCtx.name)!;
 		const sigLines = fs.map(fn => `${fn.returns} ${fn.name}(${fn.params.map(p=>`${p.type} ${p.name}`).join(', ')})`);
 		const code = ['```lsl', ...sigLines, '```'].join('\n');
-		const wiki = (fs.find(f => (f as any).wiki) as any)?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
+		const withWiki = fs.find(f => !!f.wiki);
+		const wiki = withWiki?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
 		const parts = [code, '', `[Wiki](${wiki})`];
 		// Show the current parameter doc if available
 		const best = fs.find(f => (f.params?.length || 0) > callCtx.index) || fs[0];
@@ -90,7 +101,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		const c = defs.consts.get(w)!;
 		let valStr = '';
 		if (Object.prototype.hasOwnProperty.call(c, 'value')) {
-			const v = (c as any).value;
+			const v = c.value;
 			if (typeof v === 'number' && Number.isInteger(v)) {
 				const hex = '0x' + (v >>> 0).toString(16).toUpperCase();
 				valStr = ` = ${v} /* ${hex} */`;
@@ -106,7 +117,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		}
 		const sig = `// constant\n${c.type} ${c.name}${valStr}`;
 		const parts = [ '```lsl', sig, '```' ];
-		const wikiLink = (c as any).wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(c.name)}`;
+		const wikiLink = c.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(c.name)}`;
 		parts.push('', `[Wiki](${wikiLink})`);
 		if (c.doc) parts.push('', fmtDoc(c.doc) as string);
 		const body = parts.join('\n');
@@ -128,27 +139,29 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 			}
 		}
 		const parts = [code];
-		const wiki = (fs.find(f => (f as any).wiki) as any)?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
+		const wiki = fs.find(f => f.wiki)?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
 		parts.push('', `[Wiki](${wiki})`);
 		if (docstr) parts.push('', docstr);
 		if (paramDocs) parts.push('', 'Parameters:', withParamDocFormatting(paramDocs));
 		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
-	// Include-provided function hover
+	// Include-provided symbol hover (functions/globals) with source file hint
 	if (pre && pre.includeSymbols && pre.includeSymbols.size > 0) {
-		for (const info of pre.includeSymbols.values()) {
+		for (const [file, info] of pre.includeSymbols) {
 			const f = info.functions.get(w);
 			if (f) {
 				const sig = `${f.returns} ${f.name}(${f.params.map((p: { type: string; name?: string })=>`${p.type}${p.name ? ' ' + p.name : ''}`).join(', ')})`;
 				const parts = ['```lsl', sig, '```'];
 				if (f.doc && f.doc.trim()) parts.push('', f.doc);
+				parts.push('', `From: ${file}`);
 				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 			}
 			const g = info.globals.get(w);
 			if (g) {
-				const sig = `${g.type ?? 'any'} ${w}`;
+				const sig = `${g.type ?? 'unknown'} ${w}`;
 				const parts = ['```lsl', sig, '```'];
 				if (g.doc && g.doc.trim()) parts.push('', g.doc);
+				parts.push('', `From: ${file}`);
 				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 			}
 		}
@@ -220,7 +233,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		const code = ['```lsl', sig, '```'].join('\n');
 		const paramDocs = (ev.params || []).filter(p => p.doc && p.doc.trim().length > 0).map(p => `- ${p.name}: ${p.doc}`).join('\n');
 		const parts = [code];
-		const wiki = (ev as any).wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(ev.name)}`;
+		const wiki = ev.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(ev.name)}`;
 		parts.push('', `[Wiki](${wiki})`);
 		if (ev.doc) parts.push('', fmtDoc(ev.doc) as string);
 		if (paramDocs) parts.push('', 'Parameters:', withParamDocFormatting(paramDocs));
@@ -301,7 +314,7 @@ function findEnclosingCall(text: string, offset: number): { name: string; index:
 			if (ch === inStr) inStr = null;
 			continue;
 		}
-		if (ch === '"' || ch === '\'') { inStr = ch as any; continue; }
+		if (ch === '"' || ch === '\'') { inStr = ch; continue; }
 		if (ch === '(') pd++;
 		else if (ch === ')') { if (pd > 0) pd--; }
 		else if (ch === '[') bd++;
@@ -347,7 +360,7 @@ function findEnclosingParamDecl(text: string, offset: number): { name: string; i
 			if (ch === inStr) inStr = null;
 			continue;
 		}
-		if (ch === '"' || ch === '\'') { inStr = ch as any; continue; }
+		if (ch === '"' || ch === '\'') { inStr = ch; continue; }
 		if (ch === '(') pd++;
 		else if (ch === ')') { if (pd > 0) pd--; }
 		else if (ch === '[') bd++;
@@ -363,4 +376,29 @@ function withParamDocFormatting(bullets: string): string {
 	// For each line that starts with "- name: ", indent subsequent wrapped lines by two spaces
 	// Simple approach: replace "\n" with "\n	" to keep wrapped lines under the bullet
 	return bullets.replace(/\n/g, '\n	');
+}
+
+// Detect if a macro is locally defined in the current document
+function hasLocalMacroDefine(doc: TextDocument, name: string): boolean {
+	const text = doc.getText();
+	if (!text.includes('#define')) return false;
+	const lines = text.split(/\r?\n/);
+	for (const L of lines) {
+		const m = /^\s*#\s*define\s+([A-Za-z_]\w*)/.exec(L);
+		if (m && m[1] === name) return true;
+	}
+	return false;
+}
+
+// If macro comes from an include, return its source file path; otherwise null
+function macroSourceFile(doc: TextDocument, pre: PreprocResult | undefined, name: string): string | null {
+	if (!pre) return null;
+	// Prefer local defines: no need to add From: for local
+	if (hasLocalMacroDefine(doc, name)) return null;
+	if (pre.includeSymbols && pre.includeSymbols.size > 0) {
+		for (const [file, info] of pre.includeSymbols) {
+			if (info.macroObjs.has(name) || info.macroFuncs.has(name)) return file;
+		}
+	}
+	return null;
 }

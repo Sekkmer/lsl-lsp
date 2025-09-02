@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { docFrom, runPipeline } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
 import { parseScriptFromText } from '../src/ast/parser';
+import type { Stmt, Expr } from '../src/ast';
 
 describe('preprocessor: nested include macros and functions', () => {
 	it('sees macros from nested includes and expands function-like macros', async () => {
@@ -27,22 +28,23 @@ describe('preprocessor: nested include macros and functions', () => {
 		expect(def).toBeTruthy();
 		const ev = def!.events.find(e => e.name === 'state_entry');
 		expect(ev).toBeTruthy();
-		let init: any = undefined;
-		const findVarDecl = (node: any): any | undefined => {
+		let init: Expr | undefined = undefined;
+		type VarDecl = Extract<Stmt, { kind: 'VarDecl' }>;
+		const findVarDecl = (node: Stmt | Stmt[] | undefined): VarDecl | undefined => {
 			if (!node) return undefined;
 			if (Array.isArray(node)) {
 				for (const n of node) { const r = findVarDecl(n); if (r) return r; }
 				return undefined;
 			}
-			if (node.kind === 'VarDecl' && node.name === 'x') return node;
+			if (node.kind === 'VarDecl' && node.name === 'x') return node as VarDecl;
 			if (node.kind === 'BlockStmt') return findVarDecl(node.statements);
-			if (node.kind === 'IfStmt') return findVarDecl([node.then, node.else]);
-			if (node.kind === 'ForStmt') return findVarDecl([node.init, node.body]);
+			if (node.kind === 'IfStmt') { const arr: Stmt[] = node.else ? [node.then, node.else] : [node.then]; return findVarDecl(arr); }
+			if (node.kind === 'ForStmt') return findVarDecl(node.body);
 			if (node.kind === 'WhileStmt' || node.kind === 'DoWhileStmt') return findVarDecl(node.body);
 			return undefined;
 		};
 		if (ev) {
-			const decl: any = findVarDecl(ev.body);
+			const decl = findVarDecl(ev.body);
 			expect(decl).toBeTruthy();
 			init = decl?.initializer;
 		}

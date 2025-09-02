@@ -4,6 +4,7 @@ import { URI } from 'vscode-uri';
 import type { Analysis } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import type { Defs } from './defs';
+import type { Token as LexToken } from './lexer';
 
 export type SimpleToken = { kind: string; value: string; start: number; end: number };
 
@@ -52,10 +53,9 @@ export function prepareRename(
 	const name = w.text;
 	const isMacro = Object.prototype.hasOwnProperty.call(pre.macros, name) || Object.prototype.hasOwnProperty.call(pre.funcMacros, name);
 	if (isMacro) return { start: doc.positionAt(w.start), end: doc.positionAt(w.end) };
-	if (pre.includeSymbols && pre.includes && pre.includes.length > 0) {
+	if (pre.includeSymbols && pre.includeSymbols.size > 0) {
 		let found = 0;
-		for (const file of pre.includes) {
-			const info = pre.includeSymbols.get(file);
+		for (const info of pre.includeSymbols.values()) {
 			if (!info) continue;
 			if (info.functions.has(name) || info.globals.has(name) || info.macroObjs.has(name) || info.macroFuncs.has(name)) found++;
 		}
@@ -71,7 +71,7 @@ export function computeRenameEdits(
 	analysis: Analysis,
 	pre: PreprocResult,
 	defs: Defs | null,
-	tokens: SimpleToken[]
+	tokens: ReadonlyArray<LexToken>
 ): { changes: Record<string, TextEdit[]> } {
 	const changes: Record<string, TextEdit[]> = {};
 	const addEdit = (uri: string, start: number, end: number) => {
@@ -85,17 +85,17 @@ export function computeRenameEdits(
 	};
 
 	const w = getWordAt(doc, offset);
-	if (!w) return { changes } as any;
+	if (!w) return { changes };
 	const oldName = w.text;
-	if (oldName === newName) return { changes } as any;
-	if (!/^[A-Za-z_]\w*$/.test(newName)) return { changes } as any;
-	if (isReservedIdentifier(defs, newName)) return { changes } as any;
+	if (oldName === newName) return { changes };
+	if (!/^[A-Za-z_]\w*$/.test(newName)) return { changes };
+	if (isReservedIdentifier(defs, newName)) return { changes };
 
 	let targetDecl = analysis.symbolAt(offset);
 	if (!targetDecl) {
 		for (const r of analysis.refs) {
 			const s = doc.offsetAt(r.range.start); const e = doc.offsetAt(r.range.end);
-			if (offset >= s && offset <= e) { targetDecl = analysis.refAt(s) || null as any; break; }
+			if (offset >= s && offset <= e) { targetDecl = analysis.refAt(s) || null; break; }
 		}
 	}
 
@@ -106,7 +106,7 @@ export function computeRenameEdits(
 			const target = analysis.refAt(s);
 			if (target && target === targetDecl) addEditRange(doc.uri, r.range);
 		}
-		return { changes } as any;
+		return { changes };
 	}
 
 	const isMacro = Object.prototype.hasOwnProperty.call(pre.macros, oldName) || Object.prototype.hasOwnProperty.call(pre.funcMacros, oldName);
@@ -128,9 +128,8 @@ export function computeRenameEdits(
 			}
 			running += L.length + 1;
 		}
-		if (pre.includeSymbols && pre.includes && pre.includes.length > 0) {
-			for (const file of pre.includes) {
-				const info = pre.includeSymbols.get(file);
+		if (pre.includeSymbols && pre.includeSymbols.size > 0) {
+			for (const [file, info] of pre.includeSymbols) {
 				if (!info) continue;
 				const mo = info.macroObjs.get(oldName);
 				const mf = info.macroFuncs.get(oldName);
@@ -144,13 +143,12 @@ export function computeRenameEdits(
 				}
 			}
 		}
-		return { changes } as any;
+		return { changes };
 	}
 
-	if (pre.includeSymbols && pre.includes && pre.includes.length > 0) {
+	if (pre.includeSymbols && pre.includeSymbols.size > 0) {
 		let chosen: { file: string; line: number; col: number; endCol: number } | null = null;
-		for (const file of pre.includes) {
-			const info = pre.includeSymbols.get(file);
+		for (const [file, info] of pre.includeSymbols) {
 			if (!info) continue;
 			const fn = info.functions.get(oldName);
 			const g = info.globals.get(oldName);
@@ -166,13 +164,13 @@ export function computeRenameEdits(
 					if (!resolved) addEdit(doc.uri, t.start, t.end);
 				}
 			}
-			return { changes } as any;
+			return { changes };
 		}
 	}
 
 	// Fallback: rename the word under cursor in this document
 	addEdit(doc.uri, w.start, w.end);
-	return { changes } as any;
+	return { changes };
 }
 
 export function findAllReferences(
@@ -190,7 +188,7 @@ export function findAllReferences(
 	if (!targetDecl) {
 		for (const r of analysis.refs) {
 			const s = doc.offsetAt(r.range.start); const e = doc.offsetAt(r.range.end);
-			if (offset >= s && offset <= e) { targetDecl = analysis.refAt(s) || null as any; break; }
+			if (offset >= s && offset <= e) { targetDecl = analysis.refAt(s) || null; break; }
 		}
 	}
 
@@ -242,9 +240,8 @@ export function findAllReferences(
 		return out;
 	}
 
-	if (pre.includeSymbols && pre.includes) {
-		for (const file of pre.includes) {
-			const info = pre.includeSymbols.get(file);
+	if (pre.includeSymbols && pre.includeSymbols.size > 0) {
+		for (const [file, info] of pre.includeSymbols) {
 			if (!info) continue;
 			const fn = info.functions.get(name);
 			const g = info.globals.get(name);

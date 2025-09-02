@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { docFrom, runPipeline } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
 import { computeRenameEdits } from '../src/navigation';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 
-function posOf(doc: any, needle: string) {
+function posOf(doc: TextDocument, needle: string) {
 	const idx = doc.getText().indexOf(needle);
 	if (idx < 0) throw new Error('needle not found');
 	return idx;
@@ -15,7 +16,7 @@ describe('computeRenameEdits', () => {
 		const doc = docFrom('integer x; default { state_entry() { integer y = x; x = y; } }');
 		const { analysis, pre, tokens } = runPipeline(doc, defs);
 		const offset = posOf(doc, 'x; default');
-		const res = computeRenameEdits(doc, offset, 'x2', analysis, pre, defs, tokens as any);
+		const res = computeRenameEdits(doc, offset, 'x2', analysis, pre, defs, tokens);
 		const edits = res.changes[doc.uri] || [];
 		// At least declaration and 2 refs should be edited
 		expect(edits.length).toBeGreaterThanOrEqual(3);

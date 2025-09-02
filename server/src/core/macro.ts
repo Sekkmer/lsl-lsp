@@ -56,7 +56,7 @@ function parseIncludeTarget(rest: string): string | null {
 	return null;
 }
 
-function parseMacroValue(v: string): any {
+function parseMacroValue(v: string): string | number | boolean {
 	const num = Number(v);
 	if (!Number.isNaN(num)) return num;
 	if (v === 'true' || v === 'TRUE') return true;
@@ -176,8 +176,8 @@ export class MacroConditionalProcessor {
 		const macros: MacroDefines = { ...defines };
 		type Frame = { head: { start: number; end: number }; branches: { span: { start: number; end: number }; active: boolean }[]; current: { start: number; end: number } | null; enabled: boolean; sawElse: boolean; taken: boolean };
 		const groups: Frame[] = [];
-		const out: Frame[] = [];
-		const stack: Array<{ enabled: boolean; sawElse: boolean; taken: boolean } & { idx: number | null } > = [];
+		const out: { head: { start: number; end: number }; branches: { span: { start: number; end: number }; active: boolean }[]; end: number }[] = [];
+		const stack: Array<{ enabled: boolean; sawElse: boolean; taken: boolean; idx: number | null }> = [];
 		const isActive = () => stack.every(f => f.enabled);
 		for (let i = 0; i < this.tokens.length; i++) {
 			const t = this.tokens[i]!;
@@ -193,7 +193,7 @@ export class MacroConditionalProcessor {
 				continue;
 			}
 			if (d.kind === 'ifdef' || d.kind === 'ifndef') {
-				const present = Object.prototype.hasOwnProperty.call(macros, (d as any).name);
+				const present = Object.prototype.hasOwnProperty.call(macros, d.name);
 				const enabled = isActive() && (d.kind === 'ifdef' ? present : !present);
 				const f: Frame = { head: { start: t.span.start, end: t.span.end }, branches: [], current: null, enabled, sawElse: false, taken: enabled };
 				groups.push(f); stack.push({ enabled, sawElse: false, taken: enabled, idx: groups.length - 1 });
@@ -227,17 +227,18 @@ export class MacroConditionalProcessor {
 				continue;
 			}
 			if (d.kind === 'endif') {
-				const top = stack.pop(); const idx = (top as any)?.idx as number | null;
+				const top = stack.pop();
+				const idx = top ? top.idx : null;
 				if (idx != null) {
 					const f = groups[idx]!;
 					if (f.current) { f.current.end = t.span.start; f.branches.push({ span: { ...f.current }, active: f.enabled && f.taken }); f.current = null; }
 					// finalize group end after directive
-					out.push({ ...f, end: t.span.end } as any);
+					out.push({ head: f.head, branches: f.branches, end: t.span.end });
 				}
 				continue;
 			}
 		}
-		return { groups: out as any };
+		return { groups: out };
 	}
 
 	// Collect preprocessor diagnostics: malformed #if/#elif, stray #elif/#else/#endif, unmatched #if at EOF
@@ -312,11 +313,13 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 	let p = 0;
 	const peek = () => toks[p];
 	const take = () => toks[p++];
+	const peekOp = () => (peek() && peek()!.kind === 'op') ? (peek() as Extract<Tok, { kind: 'op' }>).value : undefined;
+	const takeOp = () => { const t = take(); return t && t.kind === 'op' ? t.value : undefined; };
 
 	const truthy = (v: number) => v !== 0;
 	const valOfIdent = (name: string): number => {
 		// defined(NAME) handled in parsePrimary/parseUnary
-		const v = (defs as any)[name];
+		const v = defs[name];
 		if (v === undefined) return 0;
 		if (typeof v === 'number') return v;
 		if (typeof v === 'boolean') return v ? 1 : 0;
@@ -347,7 +350,7 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 					if (peek() && peek()!.kind === 'rparen') take();
 				} else {
 					const id = take();
-					if (id && id.kind === 'ident') name = id.value; else name = (id as any)?.value || '';
+					if (id && id.kind === 'ident') name = id.value; else name = '';
 				}
 				return Object.prototype.hasOwnProperty.call(defs, name) ? 1 : 0;
 			}
@@ -377,8 +380,8 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 
 	function parseMul(): number {
 		let v = parseUnary();
-		while (peek() && peek()!.kind === 'op' && (peek()! as any).value && ['*', '/', '%'].includes((peek()! as any).value)) {
-			const op = (take() as any).value as string;
+		while (peekOp() && ['*', '/', '%'].includes(peekOp()!)) {
+			const op = takeOp()!;
 			const r = parseUnary();
 			if (op === '*') v = v * r; else if (op === '/') v = Math.trunc(v / r); else v = v % r;
 		}
@@ -387,8 +390,8 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 
 	function parseAdd(): number {
 		let v = parseMul();
-		while (peek() && peek()!.kind === 'op' && (peek()! as any).value && ['+', '-'].includes((peek()! as any).value)) {
-			const op = (take() as any).value as string;
+		while (peekOp() && ['+', '-'].includes(peekOp()!)) {
+			const op = takeOp()!;
 			const r = parseMul();
 			if (op === '+') v = v + r; else v = v - r;
 		}
@@ -397,8 +400,8 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 
 	function parseRel(): number {
 		let v = parseAdd();
-		while (peek() && peek()!.kind === 'op' && ['<', '>', '<=', '>='].includes((peek() as any).value)) {
-			const op = (take() as any).value as string;
+		while (peekOp() && ['<', '>', '<=', '>='].includes(peekOp()!)) {
+			const op = takeOp()!;
 			const r = parseAdd();
 			if (op === '<') v = v < r ? 1 : 0;
 			else if (op === '>') v = v > r ? 1 : 0;
@@ -410,8 +413,8 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 
 	function parseEq(): number {
 		let v = parseRel();
-		while (peek() && peek()!.kind === 'op' && ['==', '!='].includes((peek() as any).value)) {
-			const op = (take() as any).value as string;
+		while (peekOp() && ['==', '!='].includes(peekOp()!)) {
+			const op = takeOp()!;
 			const r = parseRel();
 			if (op === '==') v = v === r ? 1 : 0; else v = v !== r ? 1 : 0;
 		}
@@ -420,8 +423,8 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 
 	function parseAnd(): number {
 		let v = parseEq();
-		while (peek() && peek()!.kind === 'op' && (peek() as any).value === '&&') {
-			take();
+		while (peekOp() === '&&') {
+			takeOp();
 			const r = parseEq();
 			v = truthy(v) && truthy(r) ? 1 : 0;
 		}
@@ -430,8 +433,8 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 
 	function parseOr(): number {
 		let v = parseAnd();
-		while (peek() && peek()!.kind === 'op' && (peek() as any).value === '||') {
-			take();
+		while (peekOp() === '||') {
+			takeOp();
 			const r = parseAnd();
 			v = truthy(v) || truthy(r) ? 1 : 0;
 		}
@@ -446,8 +449,8 @@ function computeMacrosDelta(prev: MacroDefines, next: MacroDefines): { changed: 
 	const keys = new Set<string>([...Object.keys(prev), ...Object.keys(next)]);
 	const changedKeys: string[] = [];
 	for (const k of keys) {
-		const a = (prev as any)[k];
-		const b = (next as any)[k];
+		const a = prev[k];
+		const b = next[k];
 		if (a === b) continue;
 		// Compare by stringified value to normalize numeric vs string representations
 		if (JSON.stringify(a) !== JSON.stringify(b)) changedKeys.push(k);
@@ -494,12 +497,12 @@ function validateIfExpr(expr: string): boolean {
 		ok = false; return 0;
 	}
 	function parseUnary(): number { const t = peek(); if (t && t.kind === 'op' && (t.value === '!' || t.value === '+' || t.value === '-')) { take(); return parseUnary(); } return parsePrimary(); }
-	function parseMul(): number { let v = parseUnary(); while (peek() && peek()!.kind === 'op' && ['*', '/', '%'].includes((peek() as any).value)) { take(); v = parseUnary(); } return v; }
-	function parseAdd(): number { let v = parseMul(); while (peek() && peek()!.kind === 'op' && ['+', '-'].includes((peek() as any).value)) { take(); v = parseMul(); } return v; }
-	function parseRel(): number { let v = parseAdd(); while (peek() && peek()!.kind === 'op' && ['<', '>', '<=', '>='].includes((peek() as any).value)) { take(); v = parseAdd(); } return v; }
-	function parseEq(): number { let v = parseRel(); while (peek() && peek()!.kind === 'op' && ['==', '!='].includes((peek() as any).value)) { take(); v = parseRel(); } return v; }
-	function parseAnd(): number { let v = parseEq(); while (peek() && peek()!.kind === 'op' && (peek() as any).value === '&&') { take(); v = parseEq(); } return v; }
-	function parseOr(): number { let v = parseAnd(); while (peek() && peek()!.kind === 'op' && (peek() as any).value === '||') { take(); v = parseAnd(); } return v; }
+	function parseMul(): number { let v = parseUnary(); while (peek() && peek()!.kind === 'op' && ['*', '/', '%'].includes((peek() as { kind: 'op'; value: string }).value)) { take(); v = parseUnary(); } return v; }
+	function parseAdd(): number { let v = parseMul(); while (peek() && peek()!.kind === 'op' && ['+', '-'].includes((peek() as { kind: 'op'; value: string }).value)) { take(); v = parseMul(); } return v; }
+	function parseRel(): number { let v = parseAdd(); while (peek() && peek()!.kind === 'op' && ['<', '>', '<=', '>='].includes((peek() as { kind: 'op'; value: string }).value)) { take(); v = parseAdd(); } return v; }
+	function parseEq(): number { let v = parseRel(); while (peek() && peek()!.kind === 'op' && ['==', '!='].includes((peek() as { kind: 'op'; value: string }).value)) { take(); v = parseRel(); } return v; }
+	function parseAnd(): number { let v = parseEq(); while (peek() && peek()!.kind === 'op' && (peek() as { kind: 'op'; value: string }).value === '&&') { take(); v = parseEq(); } return v; }
+	function parseOr(): number { let v = parseAnd(); while (peek() && peek()!.kind === 'op' && (peek() as { kind: 'op'; value: string }).value === '||') { take(); v = parseAnd(); } return v; }
 	parseOr();
 	if (!ok) return false;
 	const last = toks[toks.length - 1];

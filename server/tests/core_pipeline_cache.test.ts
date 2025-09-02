@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { preprocessTokens, buildIncludeResolver, clearIncludeResolverCache } from '../src/core/pipeline';
+import type { Stats, BigIntStats, PathLike, PathOrFileDescriptor } from 'node:fs';
 
 describe('core pipeline cache', () => {
 	beforeEach(() => clearIncludeResolverCache());
@@ -8,14 +9,24 @@ describe('core pipeline cache', () => {
 		// Fake fs with a single include file we can mutate and control mtime
 		let mtimeMs = 1000;
 		let content = '#define F 1\n';
-		const fakeFs = {
-			existsSync: (p: string) => p.endsWith('/inc.lsl'),
-			readFileSync: (p: string, _enc: BufferEncoding) => {
-				if (!p.endsWith('/inc.lsl')) throw new Error('not found');
-				return content;
-			},
-			statSync: (_p: string) => ({ mtimeMs }),
-		} as any;
+		// Provide a statSync function that is compatible with Node's overloads
+		function statSyncCompat(_p: PathLike): Stats;
+		function statSyncCompat(_p: PathLike, _opts: { bigint: true }): BigIntStats;
+		function statSyncCompat(_p: PathLike, _opts?: { bigint?: boolean }): Stats | BigIntStats {
+			// Our pipeline only calls statSync(path) so returning Stats is sufficient
+			return ({ mtimeMs } as unknown) as Stats;
+		}
+		type RFS = typeof import('node:fs').readFileSync;
+		const readFileSyncCompat: RFS = ((path: PathOrFileDescriptor, _options?: Parameters<RFS>[1]): ReturnType<RFS> => {
+			const sp = typeof path === 'string' ? path : String(path);
+			if (!sp.endsWith('/inc.lsl')) throw new Error('not found');
+			return content as unknown as ReturnType<RFS>;
+		}) as RFS;
+		const fakeFs: import('../src/core/pipeline').IncludeResolverOptions['fs'] = {
+			existsSync: (p: import('node:fs').PathLike) => String(p).endsWith('/inc.lsl'),
+			readFileSync: readFileSyncCompat,
+			statSync: statSyncCompat,
+		};
 		const resolver = buildIncludeResolver({ includePaths: ['/abs'], fs: fakeFs });
 		// First call builds cache
 		const r1 = resolver('inc.lsl', '/abs/main.lsl');

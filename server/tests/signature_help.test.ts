@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { docFrom, runPipeline } from './testUtils';
 import { lslSignatureHelp } from '../src/completions';
 import { loadTestDefs } from './loadDefs.testutil';
+import type { DefFunction } from '../src/defs';
 
 describe('signature help', async () => {
 	const defs = await loadTestDefs();
@@ -26,7 +27,7 @@ describe('signature help', async () => {
 		const defs2 = await loadTestDefs();
 		// Inject synthetic overloads for testing
 		const name = 'testOver';
-		defs2.funcs.set(name, [
+		const overloads: DefFunction[] = [
 			{
 				name,
 				returns: 'integer',
@@ -42,7 +43,8 @@ describe('signature help', async () => {
 					{ type: 'string', name: 'b', doc: 'second' }
 				]
 			}
-		] as any);
+		];
+		defs2.funcs.set(name, overloads);
 
 		const code = 'default { state_entry() { integer x = testOver(1, "x"); } }';
 		const doc = docFrom(code);
@@ -66,7 +68,7 @@ describe('signature help', async () => {
 		const active = sh!.signatures[sh!.activeSignature!];
 		expect(active.label).toMatch(/llSay\s*\(/);
 		expect(sh!.activeParameter).toBe(1);
-		const paramDoc = active.parameters![sh!.activeParameter!].documentation as any;
+		const paramDoc = active.parameters![sh!.activeParameter!].documentation;
 		const docText = typeof paramDoc === 'string' ? paramDoc : (paramDoc?.value ?? '');
 		expect(docText).toMatch(/Expected\s+string,\s+got\s+integer/);
 	});

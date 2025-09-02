@@ -12,7 +12,7 @@ describe('event completions inside state', async () => {
 		const doc = docFrom('state S { \n\t\n}');
 		const { analysis, pre } = runPipeline(doc, defs);
 		const pos = doc.positionAt(doc.getText().indexOf('{') + 3);
-		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, analysis, pre);
+		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos }, defs, analysis, pre);
 		const ls = labels(items);
 		// Should contain known events
 		expect(ls).toContain('state_entry');
@@ -27,10 +27,10 @@ describe('event completions inside state', async () => {
 		const doc = docFrom('default { \n\t\n}');
 		const { analysis, pre } = runPipeline(doc, defs);
 		const pos = doc.positionAt(doc.getText().indexOf('{') + 3);
-		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, analysis, pre);
+		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos }, defs, analysis, pre);
 		const touch = items.find(i => i.label === 'touch_start')!;
 		expect(touch).toBeTruthy();
-		const insert = (touch as any).insertText as string;
+		const insert = touch.insertText as string;
 		expect(insert).toMatch(/touch_start\(integer\s+total_number\)\s*\{[\s\S]*\}/);
 	});
 
@@ -39,7 +39,7 @@ describe('event completions inside state', async () => {
 		const { analysis, pre } = runPipeline(doc, defs);
 		// Position after the first event to request more completions at state top-level
 		const pos = doc.positionAt(doc.getText().lastIndexOf('\n', doc.getText().lastIndexOf('}')));
-		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, analysis, pre);
+		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos }, defs, analysis, pre);
 		const ls = labels(items);
 		expect(ls).not.toContain('touch_start');
 		// Now add a duplicate event and ensure analysis flags duplicate

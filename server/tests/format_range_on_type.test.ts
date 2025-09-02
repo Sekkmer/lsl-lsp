@@ -9,7 +9,7 @@ function mkDoc(text: string) {
 }
 
 function mkPre(): PreprocResult {
-	return { disabledRanges: [], macros: {}, funcMacros: {}, includes: [], includeTargets: [], includeSymbols: new Map() } as any;
+	return { disabledRanges: [], macros: {}, funcMacros: {}, includes: [] };
 }
 
 const fmtSettings: FormatSettings = { enabled: true, braceStyle: 'same-line' };
@@ -61,7 +61,7 @@ describe('range and on-type formatting', () => {
 		// Disabled range spans from after #if 0 to before #endif
 		const disStart = src.indexOf('\n') + 1;
 		const disEnd = src.lastIndexOf('\n');
-		const pre: PreprocResult = { disabledRanges: [{ start: disStart, end: disEnd }], macros: {}, funcMacros: {}, includes: [], includeTargets: [], includeSymbols: new Map() } as any;
+		const pre: PreprocResult = { disabledRanges: [{ start: disStart, end: disEnd }], macros: {}, funcMacros: {}, includes: [] };
 		// Select just the 'a,b' inside the disabled region
 		const selStart = doc.positionAt(src.indexOf('a,b'));
 		const range = { start: selStart, end: { line: selStart.line, character: selStart.character + 3 } };

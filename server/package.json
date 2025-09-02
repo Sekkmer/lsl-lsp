@@ -13,14 +13,15 @@
     "postbuild": "node scripts/copy-defs.cjs",
     "watch": "tsc -w -p tsconfig.json",
     "start": "node out/index.js",
-    "lint": "eslint --ext .ts src tests",
-    "lint:fix": "eslint --ext .ts src tests --fix",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage"
   },
   "dependencies": {
     "ajv": "^8.17.1",
+    "source-map-support": "^0.5.21",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.12",
     "vscode-uri": "^3.1.0",

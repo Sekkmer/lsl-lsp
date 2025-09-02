@@ -57,7 +57,7 @@ describe('events: strict validation and hovers', () => {
 		const idx = code.indexOf('total_number');
 		const hv = lslHover(doc, { position: doc.positionAt(idx + 1) }, defs, analysis, pre);
 		expect(hv).toBeTruthy();
-		const md = (hv!.contents as any).value as string;
+		const md = hv!.contents.value as string;
 		expect(md).toContain('integer total_number');
 		expect(md).toMatch(/Parameter:\s*total_number/i);
 		expect(md).toContain('Number of detected touches.');

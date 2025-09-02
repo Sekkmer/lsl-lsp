@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { docFrom, runPipeline } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
 import { prepareRename } from '../src/navigation';
+import { TextDocument } from 'vscode-languageserver-textdocument';
 
-function offsetOf(doc: any, needle: string): number {
+function offsetOf(doc: TextDocument, needle: string): number {
 	const idx = doc.getText().indexOf(needle);
 	if (idx < 0) throw new Error(`needle not found: ${needle}`);
 	return idx;

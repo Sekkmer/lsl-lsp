@@ -15,7 +15,7 @@ describe('preprocessor: macro list of operators', () => {
 		const { pre } = runPipeline(doc, defs, {});
 		// Expect macro to exist and match exactly (string value)
 		expect(Object.prototype.hasOwnProperty.call(pre.macros, 'SYMBOLS')).toBe(true);
-		const v = (pre.macros as any).SYMBOLS;
+		const v = pre.macros.SYMBOLS;
 		expect(typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean').toBe(true);
 		// Our parser treats quoted strings and non-numeric tokens as strings, so assert exact text
 		expect(v).toBe('["<<", ">>", "+", "-", "**", "*", "/", "%", "^", "~", "&&", "||", "&", "|", "(", ")"]');

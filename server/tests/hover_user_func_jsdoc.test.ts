@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { docFrom, runPipeline } from './testUtils';
+import { docFrom, runPipeline, hoverToString } from './testUtils';
 import { lslHover } from '../src/hover';
 import { loadTestDefs } from './loadDefs.testutil';
 
@@ -22,7 +22,7 @@ describe('hover: user-defined function JSDoc', async () => {
 		const hoverPos = doc.positionAt(code.indexOf('add(') + 1);
 		const hv = lslHover(doc, { position: hoverPos }, defs, analysis, pre);
 		expect(hv).toBeTruthy();
-		const md = (hv!.contents as any).value as string;
+		const md = hoverToString(hv!);
 		expect(md).toContain('integer add(integer a, integer b)');
 		expect(md).toMatch(/Adds two integers\./);
 		expect(md).toMatch(/Returns their sum\./);
@@ -39,7 +39,7 @@ describe('hover: user-defined function JSDoc', async () => {
 		const hoverPos = doc.positionAt(code.indexOf('foo(') + 1);
 		const hv = lslHover(doc, { position: hoverPos }, defs, analysis, pre);
 		expect(hv).toBeTruthy();
-		const md = (hv!.contents as any).value as string;
+		const md = hoverToString(hv!);
 		expect(md).toContain('integer foo(integer n)');
 		expect(md).not.toContain('Not a JSDoc');
 	});

@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { validateOperatorsFromAst } from '../src/op_validate_ast';
-import { Expr, spanFrom } from '../src/ast';
+import { Expr, spanFrom, type UnOp } from '../src/ast';
 import { LSL_DIAGCODES, type Diag } from '../src/parser';
+import { SimpleType } from '../src/ast/infer';
 
 describe('validateOperatorsFromAst (direct AST) - unary operators', () => {
 	function mkDoc(text = '') {
@@ -10,7 +11,7 @@ describe('validateOperatorsFromAst (direct AST) - unary operators', () => {
 	}
 	function id(name: string, s = 0, e = 1): Expr { return { kind: 'Identifier', name, span: spanFrom(s, e) }; }
 	function paren(expr: Expr, s = 0, e = 1): Expr { return { kind: 'Paren', expression: expr, span: spanFrom(s, e) }; }
-	function unary(op: any, arg: Expr, s = 0, e = 1): Expr { return { kind: 'Unary', op, argument: arg, span: spanFrom(s, e) } as Expr; }
+	function unary(op: UnOp, arg: Expr, s = 0, e = 1): Expr { return { kind: 'Unary', op, argument: arg, span: spanFrom(s, e) } as Expr; }
 
 	it('type-checks unary operators when types are known', () => {
 		const doc = mkDoc('');
@@ -21,7 +22,7 @@ describe('validateOperatorsFromAst (direct AST) - unary operators', () => {
 			unary('!', id('f')), // !float -> not integer
 			unary('~', id('f')), // ~float -> not integer
 		];
-		const symbolTypes = new Map<string, any>();
+		const symbolTypes = new Map<string, SimpleType>();
 		symbolTypes.set('s', 'string');
 		symbolTypes.set('f', 'float');
 		validateOperatorsFromAst(doc, exprs, diagnostics, symbolTypes);
@@ -41,7 +42,7 @@ describe('validateOperatorsFromAst (direct AST) - unary operators', () => {
 			unary('++', paren(i)),	// ++(i) -> not assignable
 			unary('++', L),		 // ++L with L:list -> wrong type
 		];
-		const symbolTypes = new Map<string, any>();
+		const symbolTypes = new Map<string, SimpleType>();
 		symbolTypes.set('L', 'list');
 		symbolTypes.set('i', 'integer');
 		validateOperatorsFromAst(doc, exprs, diagnostics, symbolTypes);

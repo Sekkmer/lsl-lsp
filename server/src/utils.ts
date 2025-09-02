@@ -1,7 +1,9 @@
 // Small shared utilities
 
 const IS_TEST = typeof process !== 'undefined' && (
-	(process as any).env?.VITEST_WORKER_ID || (process as any).env?.NODE_ENV === 'test'
+	// Access env in a type-safe way without any
+	(typeof (process as { env?: Record<string, string | undefined> }).env?.VITEST_WORKER_ID === 'string') ||
+	((process as { env?: Record<string, string | undefined> }).env?.NODE_ENV === 'test')
 );
 
 /**

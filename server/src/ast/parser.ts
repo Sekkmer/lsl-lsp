@@ -5,12 +5,14 @@
 */
 import type { Expr, Stmt, Script, Function as FnNode, State, Event, Type, Span, Diagnostic } from './index';
 import { isType, spanFrom } from './index';
-import { Lexer, type Token, type MacroTables } from './lexer';
+import { Lexer, type MacroTables } from './lexer';
+import type { Token } from '../core/tokens';
 import { preprocessForAst } from '../core/pipeline';
+import type { MacroDefines } from '../core/macro';
 import { basenameFromUri } from '../builtins';
 
 type ParseOptions = {
-	macros?: Record<string, any>;
+	macros?: MacroDefines;
 	includePaths?: string[];
 };
 
@@ -48,7 +50,7 @@ class Parser {
 					const end = t.span.end;
 					const closed = end >= 2 && this.src.slice(Math.max(0, end - 2), end) === '*/';
 					if (!closed) {
-						this.report(t as any, 'Unterminated block comment', 'LSL000');
+						this.report(t, 'Unterminated block comment', 'LSL000');
 					}
 				}
 				const text = t.value.replace(/^[ \t]*\/\/?[ \t]?/, '');
@@ -72,7 +74,9 @@ class Parser {
 		// insertion recovery: do not consume unexpected token; fabricate the expected one
 		const pos = t.span.start;
 		this.report(t, `expected ${value ? `'${value}'` : kind ?? 'token'}`);
-		return { kind: (kind ?? t.kind) as any, value: (value ?? '') as any, span: { start: pos, end: pos } } as Token;
+		const k: Token['kind'] = kind ?? t.kind;
+		const v: string = value ?? '';
+		return { kind: k, value: v, span: { start: pos, end: pos } };
 	}
 	private maybe(kind: Token['kind'], value?: string): Token | null {
 		const t = this.peek();
@@ -149,7 +153,7 @@ class Parser {
 		const start = this.peek().span.start;
 		const functions = new Map<string, FnNode>();
 		const states = new Map<string, State>();
-		const globals = new Map<string, any>();
+		const globals = new Map<string, import('./index').GlobalVar>();
 		while (this.peek().kind !== 'eof') {
 			// skip any directives that may have been peeked
 			if (this.peek().kind === 'directive') { this.look = null; this.lx.next(); continue; }
@@ -164,7 +168,7 @@ class Parser {
 					if (this.peek().kind === 'keyword' && this.peek().value === 'default') { this.next(); }
 					else { this.eat('id'); }
 					this.maybe('punct', ';');
-					this.report({ kind: 'id', value: '', span: { start: tState.span.start, end: sc.end } } as any, 'State change statements are only allowed inside event handlers', 'LSL023');
+					this.report({ kind: 'id', value: '', span: { start: tState.span.start, end: sc.end } }, 'State change statements are only allowed inside event handlers', 'LSL023');
 					continue;
 				}
 			}
@@ -183,16 +187,16 @@ class Parser {
 			// function or global var: only start if next is a type keyword
 			const nextTok = this.peek();
 			if (nextTok.kind === 'keyword' && isType(nextTok.value)) {
-				let decl: any;
+				let decl: FnNode | { span: Span; kind: 'GlobalVar'; varType: Type; name: string; initializer?: Expr; comment?: string; };
 				try { decl = this.parseTopLevel(); }
-				catch (e: any) { this.report(this.peek(), String(e.message || e)); this.syncTopLevel(); continue; }
+				catch (e: unknown) { const msg = e instanceof Error ? e.message : String(e); this.report(this.peek(), msg); this.syncTopLevel(); continue; }
 				if ('varType' in decl) {
 					// duplicate global variable
-					if (globals.has(decl.name)) this.report({ kind: 'id', value: decl.name, span: decl.span } as any, 'Duplicate declaration', 'LSL070');
+					if (globals.has(decl.name)) this.report({ kind: 'id', value: decl.name, span: decl.span }, 'Duplicate declaration', 'LSL070');
 					globals.set(decl.name, decl);
 				} else {
 					// duplicate function
-					if (functions.has(decl.name)) this.report({ kind: 'id', value: decl.name, span: decl.span } as any, 'Duplicate declaration', 'LSL070');
+					if (functions.has(decl.name)) this.report({ kind: 'id', value: decl.name, span: decl.span }, 'Duplicate declaration', 'LSL070');
 					functions.set(decl.name, decl);
 				}
 				continue;
@@ -205,8 +209,8 @@ class Parser {
 				const params = this.parseParamList();
 				const body = this.parseBlock(/*inFunctionOrEvent*/ true);
 				const span = spanFrom(nameTok.span.start, body.span.end);
-				const node: FnNode = { span, kind: 'Function', name: nameTok.value, parameters: params, body, comment: leading, returnType: 'void' } as any;
-				if (functions.has(node.name)) this.report({ kind: 'id', value: node.name, span } as any, 'Duplicate declaration', 'LSL070');
+				const node: FnNode = { span, kind: 'Function', name: nameTok.value, parameters: params, body, comment: leading, returnType: 'void' };
+				if (functions.has(node.name)) this.report({ kind: 'id', value: node.name, span }, 'Duplicate declaration', 'LSL070');
 				functions.set(node.name, node);
 				continue;
 			}
@@ -233,7 +237,7 @@ class Parser {
 			const params = this.parseParamList();
 			const body = this.parseBlock(/*inFunctionOrEvent*/ true);
 			const span = spanFrom(first.span.start, body.span.end);
-			const node: FnNode = { span, kind: 'Function', name, parameters: params, body, comment: leading, returnType: varType } as any;
+			const node: FnNode = { span, kind: 'Function', name, parameters: params, body, comment: leading, returnType: varType };
 			return node;
 		}
 		// global var
@@ -393,13 +397,13 @@ class Parser {
 							const kw = this.eat('keyword', 'state');
 							if (this.peek().kind === 'keyword' && this.peek().value === 'default') this.next(); else this.eat('id');
 							const body = this.parseBlock(true);
-							this.report({ kind: 'id', value: '', span: { start: kw.span.start, end: body.span.end } } as any, 'State declarations are only allowed at global scope', 'LSL022');
+							this.report({ kind: 'id', value: '', span: { start: kw.span.start, end: body.span.end } }, 'State declarations are only allowed at global scope', 'LSL022');
 							statements.push({ span: spanFrom(kw.span.start, body.span.end), kind: 'ErrorStmt' } as Stmt);
 							continue;
 						} else if (isDefaultStateDecl) {
 							const def = this.eat('keyword', 'default');
 							const body = this.parseBlock(true);
-							this.report({ kind: 'id', value: '', span: { start: def.span.start, end: body.span.end } } as any, 'State declarations are only allowed at global scope', 'LSL022');
+							this.report({ kind: 'id', value: '', span: { start: def.span.start, end: body.span.end } }, 'State declarations are only allowed at global scope', 'LSL022');
 							statements.push({ span: spanFrom(def.span.start, body.span.end), kind: 'ErrorStmt' } as Stmt);
 							continue;
 						}
@@ -441,7 +445,7 @@ class Parser {
 				while (j >= 0) { const ch = this.src[j]!; if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') { j--; continue; } break; }
 				const prevCh = j >= 0 ? this.src[j]! : '';
 				if (prevCh === '}' && statements.length > 0) {
-					const prev = statements[statements.length - 1] as any;
+					const prev = statements[statements.length - 1];
 					if (prev && prev.kind === 'IfStmt' && !prev.else) {
 						this.eat('keyword', 'else');
 						let elseStmt: Stmt;
@@ -449,7 +453,7 @@ class Parser {
 						else if (this.peek().kind === 'punct' && this.peek().value === '{') elseStmt = this.parseBlock(inFunctionOrEvent);
 						else elseStmt = this.parseStmtInner(inFunctionOrEvent);
 						prev.else = elseStmt;
-						(prev as any).span = spanFrom(prev.span.start, elseStmt.span.end);
+						prev.span = spanFrom(prev.span.start, elseStmt.span.end);
 						continue;
 					}
 				}
@@ -462,7 +466,7 @@ class Parser {
 			// tolerate EOF to avoid crashes
 			if (this.peek().kind === 'eof') { this.report(this.peek(), 'missing } before end of file', 'LSL000'); break; }
 			try { statements.push(this.parseStmt(inFunctionOrEvent)); }
-			catch (e: any) { this.report(this.peek(), String(e.message || e), 'LSL000'); this.syncTo([';', '}']); if (this.maybe('punct', ';')) continue; if (this.maybe('punct', '}')) { rbraceEnd = this.peek().span.end; break; } continue; }
+			catch (e: unknown) { const msg = e instanceof Error ? e.message : String(e); this.report(this.peek(), msg, 'LSL000'); this.syncTo([';', '}']); if (this.maybe('punct', ';')) continue; if (this.maybe('punct', '}')) { rbraceEnd = this.peek().span.end; break; } continue; }
 		}
 		const end = rbraceEnd ?? this.peek().span.end;
 		return { span: spanFrom(lbrace.span.start, end), kind: 'BlockStmt', statements };
@@ -636,7 +640,7 @@ class Parser {
 					else { nameTok = this.eat('id'); }
 					if (this.peek().kind === 'punct' && this.peek().value === '{') {
 						const body = this.parseBlock(true);
-						this.report({ kind: 'id', value: '', span: { start: kw.span.start, end: body.span.end } } as any, 'State declarations are only allowed at global scope', 'LSL022');
+						this.report({ kind: 'id', value: '', span: { start: kw.span.start, end: body.span.end } }, 'State declarations are only allowed at global scope', 'LSL022');
 						return { span: spanFrom(kw.span.start, body.span.end), kind: 'ErrorStmt' } as Stmt;
 					}
 					this.maybe('punct', ';');
@@ -647,7 +651,7 @@ class Parser {
 					if (this.lx.peek().kind === 'punct' && this.lx.peek().value === '{') {
 						const def = this.eat('keyword', 'default');
 						const body = this.parseBlock(true);
-						this.report({ kind: 'id', value: '', span: { start: def.span.start, end: body.span.end } } as any, 'State declarations are only allowed at global scope', 'LSL022');
+						this.report({ kind: 'id', value: '', span: { start: def.span.start, end: body.span.end } }, 'State declarations are only allowed at global scope', 'LSL022');
 						return { span: spanFrom(def.span.start, body.span.end), kind: 'ErrorStmt' } as Stmt;
 					}
 					break;
@@ -671,7 +675,7 @@ class Parser {
 			if (t2.kind === 'punct' && t2.value === ':') {
 				const nameTok = this.next();
 				const colon = this.eat('punct', ':');
-				this.report(nameTok as any, `Labels must start with @ (use "@${nameTok.value};")`, 'LSL000');
+				this.report(nameTok, `Labels must start with @ (use "@${nameTok.value};")`, 'LSL000');
 				return { span: spanFrom(nameTok.span.start, colon.span.end), kind: 'LabelStmt', name: nameTok.value } as Stmt;
 			}
 		}
@@ -681,7 +685,7 @@ class Parser {
 			const target = this.eat('id');
 			const semi = this.maybe('punct', ';');
 			const end = semi ? semi.span.end : target.span.end;
-			return { span: spanFrom(kw.span.start, end), kind: 'JumpStmt', target: { span: target.span, kind: 'Identifier', name: target.value } as Expr } as Stmt;
+			return { span: spanFrom(kw.span.start, end), kind: 'JumpStmt', target: { span: target.span, kind: 'Identifier', name: target.value } } as Stmt;
 		}
 		// expr;
 		try {
@@ -700,8 +704,9 @@ class Parser {
 			}
 			const end = semi ? semi.span.end : this.peek().span.end;
 			return { span: spanFrom(expr.span.start, end), kind: 'ExprStmt', expression: expr };
-		} catch (e: any) {
-			this.report(this.peek(), String(e.message || e), 'LSL000');
+		} catch (e: unknown) {
+			const msg = e instanceof Error ? e.message : String(e);
+			this.report(this.peek(), msg, 'LSL000');
 			this.syncTo([';', '}']);
 			this.maybe('punct', ';');
 			return { span: t.span, kind: 'ErrorStmt' } as Stmt;
@@ -762,7 +767,7 @@ class Parser {
 			this.eat('punct', ')');
 		}
 		const body = this.parseStmtInner(inFunctionOrEvent);
-		return { span: spanFrom(kw.span.start, body.span.end), kind: 'ForStmt', init, condition: cond, update, body } as any;
+		return { span: spanFrom(kw.span.start, body.span.end), kind: 'ForStmt', init, condition: cond, update, body } as Stmt;
 	}
 
 	// Helper to ensure inFunctionOrEvent flag is passed into nested blocks/statements
@@ -800,13 +805,13 @@ class Parser {
 
 	private parseExpr(stopOps?: Set<string>): Expr {
 		try { return this.parseAssign(stopOps); }
-		catch (e: any) { this.report(this.peek(), String(e.message || e)); return { span: this.peek().span, kind: 'ErrorExpr' } as Expr; }
+		catch (e: unknown) { const msg = e instanceof Error ? e.message : String(e); this.report(this.peek(), msg); return { span: this.peek().span, kind: 'ErrorExpr' } as Expr; }
 	}
 
 	private parseAssign(stopOps?: Set<string>): Expr {
 		const left = this.parseBinary(1, stopOps);
 		if (this.peek().kind === 'op' && ['=', '+=', '-=', '*=', '/=', '%='].includes(this.peek().value)) {
-			const op = this.next().value as any;
+			const op = this.next().value as import('./index').BinOp;
 			const right = this.parseAssign(stopOps);
 			return { span: spanFrom(left.span.start, right.span.end), kind: 'Binary', op, left, right };
 		}
@@ -847,7 +852,7 @@ class Parser {
 			const prec = this.prec(look.value);
 			if (prec === 0 || prec < minPrec) break;
 			// consume operator
-			const op = this.next().value as any;
+			const op = this.next().value as import('./index').BinOp;
 			// Left-associative for all binary operators handled here
 			const nextMinPrec = prec + 1;
 			const right = this.parseBinary(nextMinPrec, stopOps);
@@ -859,7 +864,7 @@ class Parser {
 	private parseUnary(): Expr {
 		const t = this.peek();
 		if (t.kind === 'op' && ['!', '~', '++', '--', '+', '-'].includes(t.value)) {
-			const op = this.next().value as any;
+			const op = this.next().value as import('./index').UnOp;
 			const arg = this.parseUnary();
 			return { span: spanFrom(t.span.start, arg.span.end), kind: 'Unary', op, argument: arg };
 		}
@@ -894,11 +899,11 @@ class Parser {
 				case 'ListLiteral':
 				case 'VectorLiteral':
 				case 'Cast': {
-					(e as any).span = spanFrom(t.span.start, close.span.end);
-					return this.parsePostfix(e);
+					const widened = { ...e, span: spanFrom(t.span.start, close.span.end) } as Expr;
+					return this.parsePostfix(widened);
 				}
 				default:
-					return this.parsePostfix({ span: spanFrom(t.span.start, close.span.end), kind: 'Paren', expression: e } as Expr);
+					return this.parsePostfix({ span: spanFrom(t.span.start, close.span.end), kind: 'Paren', expression: e });
 			}
 		}
 		if (t.kind === 'keyword' && isType(t.value) && this.maybe('punct', '(')) {
@@ -951,27 +956,27 @@ class Parser {
 					if (++guard > 20000) { this.report(this.peek(), 'parser recovery limit in call args', 'LSL000'); break; }
 					const e = this.parseExpr(); args.push(e); this.maybe('punct', ',');
 				}
-				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Call', callee: expr, args } as any;
+				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Call', callee: expr, args };
 				continue;
 			}
 			if (this.maybe('op', '.')) {
 				const prop = this.eat('id').value;
-				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Member', object: expr, property: prop } as any;
+				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Member', object: expr, property: prop };
 				continue;
 			}
 			if (this.maybe('op', '++')) {
-				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Unary', op: '++', argument: expr } as any;
+				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Unary', op: '++', argument: expr };
 				continue;
 			}
 			if (this.maybe('op', '--')) {
-				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Unary', op: '--', argument: expr } as any;
+				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Unary', op: '--', argument: expr };
 				continue;
 			}
 			// unsupported indexing operator expr[...]
 			if (this.maybe('punct', '[')) {
 				while (!this.maybe('punct', ']') && this.peek().kind !== 'eof') { try { this.parseExpr(); } catch { this.next(); } this.maybe('punct', ','); }
-				this.report({ kind: 'punct', value: '[]', span: { start: expr.span.start, end: this.peek().span.end } } as any, 'Indexing with [] is not supported', 'LSL000');
-				expr = { ...expr, span: spanFrom(expr.span.start, this.peek().span.end) } as any;
+				this.report({ kind: 'punct', value: '[]', span: { start: expr.span.start, end: this.peek().span.end } }, 'Indexing with [] is not supported', 'LSL000');
+				expr = { ...expr, span: spanFrom(expr.span.start, this.peek().span.end) };
 				continue;
 			}
 			break;

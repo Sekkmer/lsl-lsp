@@ -15,7 +15,7 @@ function fmt(input: string, settings?: Partial<FormatSettings>, pre?: Partial<Pr
 	};
 	const fmtSettings: FormatSettings = {
 		enabled: true,
-		braceStyle: (settings?.braceStyle ?? 'same-line') as any,
+		braceStyle: (settings?.braceStyle ?? 'same-line'),
 	};
 	const edits = formatDocumentEdits(doc, preFull, fmtSettings);
 	if (edits.length === 0) return input;

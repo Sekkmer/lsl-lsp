@@ -4,7 +4,7 @@ import {
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs, normalizeType } from './defs';
-import type { Analysis } from './analysisTypes';
+import type { Analysis, Decl } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -217,7 +217,7 @@ export function lslCompletions(
 function findStateTopLevelContextAst(doc: TextDocument, analysis: Analysis, offset: number): { inStateTopLevel: boolean; stateRange?: { start: Position; end: Position } } {
 	const pos = doc.positionAt(offset);
 	// Prefer full/header/body ranges when available to disambiguate header vs body
-	let found: { state: any; body: { start: Position; end: Position } } | null = null;
+	let found: { state: Decl; body: { start: Position; end: Position } } | null = null;
 	for (const d of analysis.decls) {
 		if (d.kind !== 'state') continue;
 		const body = d.bodyRange as { start: Position; end: Position } | undefined;
@@ -386,7 +386,7 @@ function dirnameOfDoc(doc: TextDocument): string {
 
 // Simpler overload choice without token inference
 function chooseBestOverloadAst(overloads: { params: { type: string }[] }[], ctx: { argIndex: number }) {
-	if (!overloads || overloads.length === 0) return null as any;
+	if (!overloads || overloads.length === 0) return null;
 	const candidates = overloads.filter(fn => ctx.argIndex < fn.params.length);
 	const list = (candidates.length > 0 ? candidates : overloads)
 		.slice().sort((a, b) => a.params.length - b.params.length);
@@ -400,21 +400,21 @@ function extractWordPrefix(text: string, offset: number): string {
 	return text.slice(i, offset);
 }
 
-function macroValueType(v: any): string {
+function macroValueType(v: unknown): string {
 	if (typeof v === 'number') return Number.isInteger(v) ? 'integer' : 'float';
 	if (typeof v === 'boolean') return 'integer'; // TRUE/FALSE treated as integer in LSL
 	if (typeof v === 'string') return 'string';
 	return 'any';
 }
 
-type ScoredItem = CompletionItem & { _score?: number };
+type ScoredItem = CompletionItem & { _score?: number; _itemType?: string };
 
 function scored(item: CompletionItem, base = 0): ScoredItem { (item as ScoredItem)._score = base; return item as ScoredItem; }
 function typeScored(item: CompletionItem, itemType: string, opts?: { local?: boolean; boost?: number }): ScoredItem {
 	const it = item as ScoredItem;
 	it._score = (opts?.boost ?? 0) + (opts?.local ? 2 : 0);
 	// defer exact type match scoring until rank stage where expectedType is known
-	(it as any)._itemType = itemType;
+	it._itemType = itemType;
 	return it;
 }
 
@@ -422,7 +422,7 @@ function rankAndFinalize(items: CompletionItem[], expectedType: string | 'any', 
 	const out: ScoredItem[] = [];
 	for (const it of items as ScoredItem[]) {
 		let s = it._score || 0;
-		const itemType = (it as any)._itemType as string | undefined;
+		const itemType = it._itemType as string | undefined;
 		if (itemType && expectedType && expectedType !== 'any') {
 			if (typeMatches(expectedType, itemType)) s += 50;
 		}
@@ -430,7 +430,7 @@ function rankAndFinalize(items: CompletionItem[], expectedType: string | 'any', 
 		if (prefix && typeof it.label === 'string' && (it.label as string).toLowerCase().startsWith(prefix.toLowerCase())) s += 10;
 		// small tie-break by kind
 		if (it.kind === CompletionItemKind.Variable) s += 1;
-		(it as any).sortText = String(1000000 - s).padStart(7, '0');
+		it.sortText = String(1000000 - s).padStart(7, '0');
 		out.push(it);
 	}
 	// Deduplicate by (label, kind)
@@ -440,8 +440,8 @@ function rankAndFinalize(items: CompletionItem[], expectedType: string | 'any', 
 		const key = `${String(it.label)}#${it.kind ?? ''}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
-		const { _score, ...clean } = it as any;
-		delete (clean as any)._itemType;
+		const { _score, ...clean } = it;
+		delete clean._itemType;
 		deduped.push(clean);
 	}
 	return deduped;

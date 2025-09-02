@@ -39,7 +39,7 @@ describe('core pipeline', () => {
 			readFileSync: (p: string, _enc: string) => files.get(p) as string,
 			statSync: (_p: string) => ({ mtimeMs: 1 }),
 		};
-		const { tokens, includes } = preprocessTokens(files.get('/v/main.lsl')!, { includePaths: ['/v'], fromPath: '/v/main.lsl', fs: fakeFs as any });
+		const { tokens, includes } = preprocessTokens(files.get('/v/main.lsl')!, { includePaths: ['/v'], fromPath: '/v/main.lsl', fs: fakeFs });
 		// Should have included the file and produced tokens from both
 		expect(includes).toContain('/v/inc.lsl');
 		const ids = tokens.filter(t => t.kind === 'id').map(t => t.value);

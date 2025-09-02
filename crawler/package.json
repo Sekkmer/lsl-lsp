@@ -3,7 +3,10 @@
   "version": "0.1.1",
   "private": true,
   "license": "MIT",
-  "author": { "name": "Sekkmer", "email": "sekkmer@gmail.com" },
+  "author": {
+    "name": "Sekkmer",
+    "email": "sekkmer@gmail.com"
+  },
   "type": "module",
   "main": "out/index.js",
   "bin": {
@@ -14,8 +17,8 @@
     "watch": "tsc -p . -w",
     "start": "node out/index.js",
     "dev": "tsx src/index.ts",
-    "lint": "eslint --ext .ts src",
-    "lint:fix": "eslint --ext .ts src --fix"
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
   },
   "dependencies": {
     "cheerio": "^1.1.2",
@@ -24,6 +27,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "domhandler": "^5.0.3",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }

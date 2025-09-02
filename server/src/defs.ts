@@ -4,10 +4,10 @@ import { parse as parseYAML } from 'yaml';
 import Ajv2020 from 'ajv/dist/2020';
 import schema from '../../common/lslDefSchema.json';
 
-export interface DefParam { name: string; type: string; doc?: string; default?: any; }
+export interface DefParam { name: string; type: string; doc?: string; default?: string | number | boolean | null };
 export interface DefFunction { name: string; returns: string; params: DefParam[]; doc?: string; deprecated?: boolean; overloads?: DefFunction[]; wiki?: string; }
 export interface DefEvent { name: string; params: DefParam[]; doc?: string; wiki?: string; }
-export interface DefConst { name: string; type: string; value?: any; doc?: string; deprecated?: boolean; wiki?: string; }
+export interface DefConst { name: string; type: string; value?: string | number | boolean | null; doc?: string; deprecated?: boolean; wiki?: string; }
 export interface DefFile {
 	version: string;
 	types: string[];
@@ -60,7 +60,7 @@ export async function loadDefs(defPath: string): Promise<Defs> {
 		raw = await fs.readFile(bundled, 'utf8');
 	}
 	const ext = path.extname(defPath).toLowerCase();
-	let obj: any;
+	let obj: unknown;
 	try {
 		obj = (ext === '.yaml' || ext === '.yml') ? parseYAML(raw) : JSON.parse(raw);
 	} catch {

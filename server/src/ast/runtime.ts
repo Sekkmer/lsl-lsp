@@ -14,7 +14,7 @@ export type StringVal = { kind: 'value'; type: 'string'; value: string };
 export type VectorVal = { kind: 'value'; type: 'vector'; value: Vec3 };
 export type RotationVal = { kind: 'value'; type: 'rotation'; value: Quat };
 export type KeyVal = { kind: 'value'; type: 'key'; value: string };
-export type ListVal = { kind: 'value'; type: 'list'; value: any[] };
+export type ListVal = { kind: 'value'; type: 'list'; value: Value[] };
 export type Value = IntVal | FloatVal | StringVal | VectorVal | RotationVal | KeyVal | ListVal | Unknown;
 
 // ===== Helpers & types =====
@@ -244,7 +244,7 @@ export function llBase64ToString(src: Value): Value {
 }
 
 // ===== List helpers =====
-const toList = (v: Value): any[] | null => v.kind === 'value' && v.type === 'list' ? v.value : null;
+const toList = (v: Value): Value[] | null => v.kind === 'value' && v.type === 'list' ? v.value : null;
 
 export function llGetListLength(list: Value): Value {
 	const arr = toList(list);
@@ -471,7 +471,7 @@ export function llOrd(s: Value, index: Value): Value {
 export function llCSV2List(src: Value): Value {
 	if (!isStr(src)) return unknown('list');
 	const s = src.value;
-	const out: string[] = [];
+	const out: Value[] = [];
 	let i = 0, cur = '';
 	let inAngle = 0;
 	while (i < s.length) {
@@ -479,14 +479,14 @@ export function llCSV2List(src: Value): Value {
 		if (ch === '<') { inAngle++; cur += ch; i++; continue; }
 		if (ch === '>') { if (inAngle > 0) inAngle--; cur += ch; i++; continue; }
 		if (ch === ',' && inAngle === 0) {
-			out.push(cur); cur = ''; i++;
+			out.push(asStrVal(cur)); cur = ''; i++;
 			// consume one leading space from next token per LSL behavior
 			if (s[i] === ' ') i++;
 			continue;
 		}
 		cur += ch; i++;
 	}
-	out.push(cur);
+	out.push(asStrVal(cur));
 	return { kind: 'value', type: 'list', value: out };
 }
 
@@ -502,11 +502,15 @@ export function llList2Integer(list: Value, index: Value): Value {
 	const i = i32(index.value); if (i < -arr.length || i >= arr.length) return asIntVal(0);
 	const j = i < 0 ? arr.length + i : i;
 	const x = arr[j];
-	if (typeof x === 'number') return asIntVal(x);
-	if (typeof x === 'string') {
-		// decimal or 0x... hex gets parsed per wiki caveat
-		const m = x.trim().match(/^([+-]?0x[0-9a-f]+|[+-]?\d+)/i);
-		return asIntVal(m ? parseInt(m[1], 0) : 0);
+	switch (x.kind) {
+		case 'value':
+			if (typeof x.value === 'number') return asIntVal(x.value);
+			if (typeof x.value === 'string') {
+				// decimal or 0x... hex gets parsed per wiki caveat
+				const m = x.value.trim().match(/^([+-]?0x[0-9a-f]+|[+-]?\d+)/i);
+				return asIntVal(m ? parseInt(m[1], 0) : 0);
+			}
+			break;
 	}
 	return asIntVal(0);
 }
@@ -544,13 +548,7 @@ export function llList2Vector(list: Value, index: Value): Value {
 	const j = i < 0 ? arr.length + i : i;
 	const x = arr[j];
 	if (Array.isArray(x) && x.length === 3) return asVecVal([+x[0], +x[1], +x[2]]);
-	if (typeof x === 'string') {
-		const m = x.match(/<\s*([^,>]+)\s*,\s*([^,>]+)\s*,\s*([^,>]+)\s*>/);
-		if (m) {
-			const a = [Number(m[1]), Number(m[2]), Number(m[3])];
-			if (a.every(Number.isFinite)) return asVecVal(a as Vec3);
-		}
-	}
+	if (x.kind === 'value' && x.type === 'vector') return asVecVal(x.value);
 	return asVecVal([0, 0, 0]);
 }
 
@@ -560,13 +558,7 @@ export function llList2Rot(list: Value, index: Value): Value {
 	const j = i < 0 ? arr.length + i : i;
 	const x = arr[j];
 	if (Array.isArray(x) && x.length === 4) return asRotVal([+x[0], +x[1], +x[2], +x[3]]);
-	if (typeof x === 'string') {
-		const m = x.match(/<\s*([^,>]+)\s*,\s*([^,>]+)\s*,\s*([^,>]+)\s*,\s*([^,>]+)\s*>/);
-		if (m) {
-			const a = [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])];
-			if (a.every(Number.isFinite)) return asRotVal(a as Quat);
-		}
-	}
+	if (x.kind === 'value' && x.type === 'rotation') return asRotVal(x.value);
 	return asRotVal([0, 0, 0, 1]);
 }
 
@@ -576,7 +568,7 @@ export function llList2ListStrided(list: Value, start: Value, end: Value, stride
 	if (!arr.length) return { kind: 'value', type: 'list', value: [] };
 	const i0 = toIndex(arr.length, start.value);
 	const j0 = toIndex(arr.length, end.value);
-	const range: any[] = [];
+	const range: Value[] = [];
 	if (i0 <= j0) {
 		for (let i = i0; i <= j0; i += st) range.push(arr[i]);
 	} else {
@@ -592,7 +584,7 @@ export function llList2ListSlice(list: Value, start: Value, end: Value, stride: 
 	if (si < 0) si = st + si;
 	const i0 = toIndex(arr.length, start.value);
 	const j0 = toIndex(arr.length, end.value);
-	const out: any[] = [];
+	const out: Value[] = [];
 	const collect = (from: number, to: number) => {
 		for (let i = from; i <= to; i += st) {
 			const base = i - (i % st);
@@ -609,9 +601,9 @@ export function llListSort(list: Value, stride: Value, ascending: Value): Value 
 	const st = Math.max(1, i32(stride.value));
 	const asc = i32(ascending.value) !== 0;
 	if (arr.length === 0) return { kind: 'value', type: 'list', value: [] };
-	const chunks: any[][] = [];
+	const chunks: Value[][] = [];
 	for (let i = 0; i < arr.length; i += st) chunks.push(arr.slice(i, Math.min(arr.length, i + st)));
-	const key = (x: any) => (typeof x === 'number') ? x : String(x);
+	const key = (x: Value) => (x.kind === 'value' && typeof x.value === 'number') ? x.value : String(x);
 	chunks.sort((a, b) => {
 		const ka = key(a[0]), kb = key(b[0]);
 		if (ka < kb) return asc ? -1 : 1;

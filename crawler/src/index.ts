@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { fetch as undiciFetch } from 'undici';
 import * as cheerio from 'cheerio';
+import type { Element } from 'domhandler';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -145,7 +146,7 @@ async function listFunctionLinks(html: string): Promise<string[]> {
 	const $ = cheerio.load(html);
 	// On the category page, function links are in the content area; avoid nav/sidebar
 	const links: string[] = [];
-	$('#mw-content-text a').each((_: number, a: any) => {
+	$('#mw-content-text a').each((_: number, a) => {
 		const href = $(a).attr('href');
 		const title = $(a).attr('title') || '';
 		if (!href) return;
@@ -181,7 +182,7 @@ async function listAllFunctionLinks(): Promise<string[]> {
 	try {
 		const html = await fetchHtml(PREFIX_FUNCS);
 		const $ = cheerio.load(html);
-		$('#mw-content-text a').each((_: number, a: any) => {
+		$('#mw-content-text a').each((_: number, a) => {
 			const href = $(a).attr('href');
 			const text = ($(a).attr('title') || $(a).text() || '').trim();
 			if (href && href.startsWith('/wiki/') && /^ll[A-Z]/i.test(text)) all.push(WIKI_BASE + href);
@@ -197,7 +198,7 @@ async function listConstantLinks(html: string): Promise<string[]> {
 	const $ = cheerio.load(html);
 	const links: string[] = [];
 	// Category members usually appear under .mw-category
-	$('#mw-content-text .mw-category a, #mw-pages a').each((_: number, a: any) => {
+	$('#mw-content-text .mw-category a, #mw-pages a').each((_: number, a) => {
 		const href = $(a).attr('href');
 		const title = $(a).attr('title') || '';
 		if (!href) return;
@@ -250,7 +251,7 @@ async function listAllConstantLinks(): Promise<string[]> {
 async function listEventLinks(html: string): Promise<string[]> {
 	const $ = cheerio.load(html);
 	const links: string[] = [];
-	$('#mw-content-text .mw-category a, #mw-pages a').each((_: number, a: any) => {
+	$('#mw-content-text .mw-category a, #mw-pages a').each((_: number, a) => {
 		const href = $(a).attr('href');
 		const title = $(a).attr('title') || '';
 		if (!href) return;
@@ -286,7 +287,7 @@ async function listAllEventLinks(): Promise<string[]> {
 	return unique(all).sort();
 }
 
-const TYPE_SET = new Set(['integer','float','string','key','vector','rotation','list','void']);
+const TYPE_SET = new Set(['integer', 'float', 'string', 'key', 'vector', 'rotation', 'list', 'void']);
 // Only real LSL functions match this (e.g., llGetPos, llList2CSV). No underscores/hyphens/punctuation.
 const VALID_FUNC_NAME = /^ll[A-Za-z0-9]+$/;
 
@@ -341,21 +342,44 @@ type ViewerKeywords = {
 	events: Map<string, ViewerEvent>;
 };
 
-function getDocFrom(obj: any): string | undefined {
+function getDocFrom(obj: Record<string, unknown>): string | undefined {
 	if (!obj || typeof obj !== 'object') return undefined;
 	const keys = ['tooltip', 'desc', 'description', 'help', 'help_text'];
 	for (const k of keys) {
-		const v = obj[k];
+		const v = (obj as Record<string, unknown>)[k];
 		if (typeof v === 'string' && v.trim().length > 0) return v.trim();
 	}
 	return undefined;
 }
 
-function parseLLSD(xml: string): any {
+type LLSD = string | number | boolean | null | LLSD[] | { [key: string]: LLSD };
+function llsdGet(llsd: LLSD, next: string | number): LLSD {
+	if (Array.isArray(llsd)) {
+		if (typeof next === 'number' && next >= 0 && next < llsd.length) {
+			return llsd[next];
+		}
+		return null;
+	}
+	if (typeof llsd === 'object' && llsd !== null) {
+		return llsd[next];
+	}
+	return null;
+}
+function llsdGetObj(llsd: LLSD, next: string | number): { [key: string]: LLSD } | null {
+	const obj = llsdGet(llsd, next);
+	return (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) ? obj : null;
+}
+function isMap(v: LLSD): v is { [key: string]: LLSD } { return typeof v === 'object' && v !== null && !Array.isArray(v); }
+function toStringLLSD(v: LLSD | undefined): string { if (v == null) return ''; if (typeof v === 'string') return v; if (typeof v === 'number' || typeof v === 'boolean') return String(v); return ''; }
+function isTruthyLLSD(v: LLSD | undefined): boolean { return v === true || v === 'true' || v === 1 || v === '1'; }
+
+function parseLLSD(xml: string): LLSD {
 	// Use cheerio in XML mode to preserve order; LLSD <map> alternates <key>name</key><value>
 	const $ = cheerio.load(xml, { xmlMode: true });
-	function parseValue(node: any): any {
-		const tag = (node && (node as any).name || '').toLowerCase();
+	const root = $('llsd > map').get(0);
+
+	function parseValue(node: typeof root): LLSD {
+		const tag = (node && node.name || '').toLowerCase();
 		if (tag === 'map') return parseMap(node);
 		if (tag === 'array') return $(node).children().toArray().map(ch => parseValue(ch));
 		if (tag === 'string' || tag === 'uuid') return $(node).text();
@@ -366,138 +390,163 @@ function parseLLSD(xml: string): any {
 		if (tag === 'key') return $(node).text();
 		// Unknown: return text
 		return $(node).text();
- 	}
- 
- 	function parseMap(node: any): any {
- 		const obj: any = {};
- 		const kids = $(node).children().toArray();
- 		for (let i = 0; i < kids.length; i++) {
- 			const k = kids[i];
- 			if (!k || (k as any).name !== 'key') continue;
- 			const name = $(k).text();
- 			const v = kids[i + 1];
- 			if (!v) { obj[name] = null; continue; }
- 			obj[name] = parseValue(v);
- 			i++;
- 		}
- 		return obj;
- 	}
+	}
 
-	const root = $('llsd > map').get(0);
- 	if (!root) throw new Error('Invalid LLSD xml: root <llsd><map> not found');
- 	return parseMap(root);
+	function parseMap(node: Element | undefined) {
+		const obj: Record<string, LLSD> = {};
+		const kids = $(node).children().toArray();
+		for (let i = 0; i < kids.length; i++) {
+			const k = kids[i];
+			if (!k || k.name !== 'key') continue;
+			const name = $(k).text();
+			const v = kids[i + 1];
+			if (!v) { obj[name] = null; continue; }
+			obj[name] = parseValue(v);
+			i++;
+		}
+		return obj;
+	}
+
+
+	if (!root) throw new Error('Invalid LLSD xml: root <llsd><map> not found');
+	return parseMap(root);
 }
 
 async function fetchViewerKeywords(): Promise<ViewerKeywords> {
- 	const xml = await fetchHtml(VIEWER_KEYWORDS_URL);
- 	const top = parseLLSD(xml);
- 	const functions = new Map<string, ViewerFunction>();
- 	const constants = new Map<string, ViewerConstant>();
- 	const events = new Map<string, ViewerEvent>();
- 	// Events are nested under top.events map
- 	if (top && typeof top.events === 'object' && top.events) {
- 		for (const [ename, edata] of Object.entries<any>(top.events)) {
- 			const ps: { name: string; type: string; doc?: string }[] = [];
- 			const arr = edata?.arguments;
- 			if (Array.isArray(arr)) {
- 				for (const item of arr) {
- 					const [pname, pinfo] = Object.entries<any>(item)[0] || [undefined, undefined];
- 					if (!pname || !pinfo) continue;
- 					const ptype = (pinfo.type || '').toString().toLowerCase();
-					const pdoc = getDocFrom(pinfo);
-					ps.push({ name: pname, type: TYPE_SET.has(ptype) ? ptype : (ptype || 'string'), ...(pdoc ? { doc: pdoc } : {}) });
- 				}
- 			}
-			const edoc = getDocFrom(edata);
-			events.set(ename.toLowerCase(), { params: ps, ...(edoc ? { doc: edoc } : {}) });
- 		}
- 	}
-	// Top-level entries: functions (ll*)
- 	for (const [k, v] of Object.entries<any>(top)) {
- 		if (k === 'events' || k === 'controls' || k === 'llsd-lsl-syntax-version' || k === 'default') continue;
- 		if (typeof v !== 'object' || v == null || Array.isArray(v)) continue;
-		if (/^ll/i.test(k) && (Object.prototype.hasOwnProperty.call(v, 'return') || Object.prototype.hasOwnProperty.call(v, 'arguments'))) {
- 			const returns = (v.return || 'void').toString().toLowerCase();
- 			const arr = Array.isArray(v.arguments) ? v.arguments as any[] : [];
- 			const ps: { name: string; type: string; doc?: string }[] = [];
- 			for (const item of arr) {
- 				const [pname, pinfo] = Object.entries<any>(item)[0] || [undefined, undefined];
- 				if (!pname || !pinfo) continue;
- 				const ptype = (pinfo.type || '').toString().toLowerCase();
-				const pdoc = getDocFrom(pinfo);
-				ps.push({ name: pname, type: TYPE_SET.has(ptype) ? ptype : (ptype || 'string'), ...(pdoc ? { doc: pdoc } : {}) });
- 			}
-			// Some viewer builds may nest function entries deeper; perform a recursive fallback scan
-			const seen = new Set<string>(Array.from(functions.keys()).map(k => k.toLowerCase()));
-			function collectFunctions(node: any) {
-				if (!node || typeof node !== 'object' || Array.isArray(node)) return;
-				for (const [k, v] of Object.entries<any>(node)) {
-					if (!v || typeof v !== 'object' || Array.isArray(v)) { continue; }
-					const isFuncKey = /^ll/i.test(k);
-					const hasSig = Object.prototype.hasOwnProperty.call(v, 'return') || Object.prototype.hasOwnProperty.call(v, 'arguments');
-					if (isFuncKey && hasSig) {
-						const key = canonicalizeLl(k)!;
-						if (!seen.has(key.toLowerCase())) {
-							const returns = (v.return || 'void').toString().toLowerCase();
-							const arr = Array.isArray(v.arguments) ? v.arguments as any[] : [];
-							const ps: { name: string; type: string; doc?: string }[] = [];
-							for (const item of arr) {
-								const [pname, pinfo] = Object.entries<any>(item)[0] || [undefined, undefined];
-								if (!pname || !pinfo) continue;
-								const ptype = (pinfo.type || '').toString().toLowerCase();
-								const pdoc = getDocFrom(pinfo);
-								ps.push({ name: pname, type: TYPE_SET.has(ptype) ? ptype : (ptype || 'string'), ...(pdoc ? { doc: pdoc } : {}) });
-							}
-							const fdoc = getDocFrom(v);
-							functions.set(key, { returns: TYPE_SET.has(returns) ? returns : returns || 'void', params: ps, ...(fdoc ? { doc: fdoc } : {}), ...(v.deprecated ? { deprecated: true } : {}) });
-							seen.add(key.toLowerCase());
-						}
+	const xml = await fetchHtml(VIEWER_KEYWORDS_URL);
+	const top = parseLLSD(xml);
+	const functions = new Map<string, ViewerFunction>();
+	const constants = new Map<string, ViewerConstant>();
+	const events = new Map<string, ViewerEvent>();
+	// Events are nested under top.events map
+	{
+		const evs = llsdGetObj(top, 'events');
+		if (evs) {
+			for (const [ename, edataRaw] of Object.entries(evs)) {
+				const ps: { name: string; type: string; doc?: string }[] = [];
+				const argsVal = isMap(edataRaw) ? (edataRaw['arguments'] as LLSD) : undefined;
+				if (Array.isArray(argsVal)) {
+					for (const item of argsVal) {
+						if (!isMap(item)) continue;
+						const first = Object.entries(item as Record<string, LLSD>)[0] || [undefined, undefined];
+						const pname = first[0] as string | undefined;
+						const pinfo = first[1] as LLSD | undefined;
+						if (!pname || !pinfo || !isMap(pinfo)) continue;
+						const ptype = toStringLLSD(pinfo['type']).toLowerCase();
+						const pdoc = getDocFrom(pinfo as unknown as Record<string, unknown>);
+						ps.push({ name: pname, type: TYPE_SET.has(ptype) ? ptype : (ptype || 'string'), ...(pdoc ? { doc: pdoc } : {}) });
 					}
-					collectFunctions(v);
 				}
+				const edoc = isMap(edataRaw) ? getDocFrom(edataRaw as unknown as Record<string, unknown>) : undefined;
+				events.set(ename.toLowerCase(), { params: ps, ...(edoc ? { doc: edoc } : {}) });
 			}
-			collectFunctions(top);
-			const fdoc = getDocFrom(v);
-			functions.set(canonicalizeLl(k)!, { returns: TYPE_SET.has(returns) ? returns : returns || 'void', params: ps, ...(fdoc ? { doc: fdoc } : {}), ...(v.deprecated ? { deprecated: true } : {}) });
- 			continue;
- 		}
- 	}
+		}
+	}
+	// Top-level entries: functions (ll*)
+	{
+		const topMap: Record<string, LLSD> = isMap(top) ? (top as Record<string, LLSD>) : {};
+		for (const [k, v] of Object.entries(topMap)) {
+			if (k === 'events' || k === 'controls' || k === 'llsd-lsl-syntax-version' || k === 'default' || k === 'constants' || k === 'functions') continue;
+			if (!isMap(v)) continue;
+			if (/^ll/i.test(k) && (Object.prototype.hasOwnProperty.call(v, 'return') || Object.prototype.hasOwnProperty.call(v, 'arguments'))) {
+				const returns = toStringLLSD(v['return'] || 'void').toLowerCase();
+				const arrVal = v['arguments'];
+				const arr = Array.isArray(arrVal) ? arrVal : [];
+				const ps: { name: string; type: string; doc?: string }[] = [];
+				for (const item of arr) {
+					if (!isMap(item)) continue;
+					const [pname, pinfo] = Object.entries(item as Record<string, LLSD>)[0] || [undefined, undefined];
+					if (!pname || !pinfo || !isMap(pinfo)) continue;
+					const ptype = toStringLLSD(pinfo['type']).toLowerCase();
+					const pdoc = getDocFrom(pinfo as unknown as Record<string, unknown>);
+					ps.push({ name: pname, type: TYPE_SET.has(ptype) ? ptype : (ptype || 'string'), ...(pdoc ? { doc: pdoc } : {}) });
+				}
+				// Some viewer builds may nest function entries deeper; perform a recursive fallback scan
+				const seen = new Set<string>(Array.from(functions.keys()).map(k => k.toLowerCase()));
+				function collectFunctions(node: LLSD) {
+					if (!isMap(node)) return;
+					for (const [k, v] of Object.entries(node as Record<string, LLSD>)) {
+						if (!isMap(v)) { continue; }
+						const isFuncKey = /^ll/i.test(k);
+						const hasSig = Object.prototype.hasOwnProperty.call(v, 'return') || Object.prototype.hasOwnProperty.call(v, 'arguments');
+						if (isFuncKey && hasSig) {
+							const key = canonicalizeLl(k)!;
+							if (!seen.has(key.toLowerCase())) {
+								const returns = toStringLLSD(v['return'] || 'void').toLowerCase();
+								const arrVal = v['arguments'];
+								const arr = Array.isArray(arrVal) ? arrVal : [];
+								const ps: { name: string; type: string; doc?: string }[] = [];
+								for (const item of arr) {
+									if (!isMap(item)) continue;
+									const [pname, pinfo] = Object.entries(item as Record<string, LLSD>)[0] || [undefined, undefined];
+									if (!pname || !pinfo || !isMap(pinfo)) continue;
+									const ptype = toStringLLSD(pinfo['type']).toLowerCase();
+									const pdoc = getDocFrom(pinfo as unknown as Record<string, unknown>);
+									ps.push({ name: pname, type: TYPE_SET.has(ptype) ? ptype : (ptype || 'string'), ...(pdoc ? { doc: pdoc } : {}) });
+								}
+								const fdoc = getDocFrom(v as unknown as Record<string, unknown>);
+								const deprecated = isTruthyLLSD(v['deprecated']);
+								functions.set(key, { returns: TYPE_SET.has(returns) ? returns : returns || 'void', params: ps, ...(fdoc ? { doc: fdoc } : {}), ...(deprecated ? { deprecated: true } : {}) });
+								seen.add(key.toLowerCase());
+							}
+						}
+						collectFunctions(v);
+					}
+				}
+				collectFunctions(top);
+				const fdoc = getDocFrom(v as unknown as Record<string, unknown>);
+				const deprecated = isTruthyLLSD(v['deprecated']);
+				functions.set(canonicalizeLl(k)!, { returns: TYPE_SET.has(returns) ? returns : returns || 'void', params: ps, ...(fdoc ? { doc: fdoc } : {}), ...(deprecated ? { deprecated: true } : {}) });
+				continue;
+			}
+		}
+	}
 	// Also support viewer XML variants where functions are under an explicit 'functions' map
-	if (top && typeof (top as any).functions === 'object' && (top as any).functions) {
-		for (const [fname, fdata] of Object.entries<any>((top as any).functions)) {
-			if (!fdata || typeof fdata !== 'object' || Array.isArray(fdata)) continue;
-			const hasSig = Object.prototype.hasOwnProperty.call(fdata, 'return') || Object.prototype.hasOwnProperty.call(fdata, 'arguments');
-			if (!/^ll/i.test(fname) || !hasSig) continue;
-			const returns = (fdata.return || 'void').toString().toLowerCase();
-			const arr = Array.isArray(fdata.arguments) ? (fdata.arguments as any[]) : [];
-			const ps: { name: string; type: string; doc?: string }[] = [];
-			for (const item of arr) {
-				const [pname, pinfo] = Object.entries<any>(item)[0] || [undefined, undefined];
-				if (!pname || !pinfo) continue;
-				const ptype = (pinfo.type || '').toString().toLowerCase();
-				const pdoc = getDocFrom(pinfo);
-				ps.push({ name: pname, type: TYPE_SET.has(ptype) ? ptype : (ptype || 'string'), ...(pdoc ? { doc: pdoc } : {}) });
-			}
-			const fdoc = getDocFrom(fdata);
-			const key = canonicalizeLl(fname)!;
-			if (!functions.has(key)) {
-				functions.set(key, { returns: TYPE_SET.has(returns) ? returns : returns || 'void', params: ps, ...(fdoc ? { doc: fdoc } : {}), ...(fdata.deprecated ? { deprecated: true } : {}) });
+	{
+		const fns = llsdGetObj(top, 'functions');
+		if (fns) {
+			for (const [fname, fdata] of Object.entries(fns)) {
+				if (!isMap(fdata)) continue;
+				const hasSig = Object.prototype.hasOwnProperty.call(fdata, 'return') || Object.prototype.hasOwnProperty.call(fdata, 'arguments');
+				if (!/^ll/i.test(fname) || !hasSig) continue;
+				const returns = toStringLLSD(fdata['return'] || 'void').toLowerCase();
+				const arrVal = fdata['arguments'];
+				const arr = Array.isArray(arrVal) ? arrVal : [];
+				const ps: { name: string; type: string; doc?: string }[] = [];
+				for (const item of arr) {
+					if (!isMap(item)) continue;
+					const [pname, pinfo] = Object.entries(item as Record<string, LLSD>)[0] || [undefined, undefined];
+					if (!pname || !pinfo || !isMap(pinfo)) continue;
+					const ptype = toStringLLSD(pinfo['type']).toLowerCase();
+					const pdoc = getDocFrom(pinfo as unknown as Record<string, unknown>);
+					ps.push({ name: pname, type: TYPE_SET.has(ptype) ? ptype : (ptype || 'string'), ...(pdoc ? { doc: pdoc } : {}) });
+				}
+				const fdoc = getDocFrom(fdata as unknown as Record<string, unknown>);
+				const key = canonicalizeLl(fname)!;
+				const deprecated = isTruthyLLSD(fdata['deprecated']);
+				if (!functions.has(key)) {
+					functions.set(key, { returns: TYPE_SET.has(returns) ? returns : returns || 'void', params: ps, ...(fdoc ? { doc: fdoc } : {}), ...(deprecated ? { deprecated: true } : {}) });
+				}
 			}
 		}
 	}
 
 	// Constants live under the 'constants' map
-	if (top && typeof (top as any).constants === 'object' && (top as any).constants) {
-		for (const [name, v] of Object.entries<any>((top as any).constants)) {
-			if (!v || typeof v !== 'object') continue;
-			if (!Object.prototype.hasOwnProperty.call(v, 'type')) continue;
-			const t = (v.type || '').toString().toLowerCase();
-			const normalized = normalizeConstantValue(t, v.value);
-			const cdoc = getDocFrom(v);
-			constants.set(name, { type: TYPE_SET.has(t) ? t : t, ...(normalized !== undefined ? { value: normalized } : {}), ...(cdoc ? { doc: cdoc } : {}), ...(v.deprecated ? { deprecated: true } : {}) });
+	{
+		const cs = llsdGetObj(top, 'constants');
+		if (cs) {
+			for (const [name, v] of Object.entries(cs)) {
+				if (!isMap(v)) continue;
+				if (!Object.prototype.hasOwnProperty.call(v, 'type')) continue;
+				const t = toStringLLSD(v['type']).toLowerCase();
+				const normalized = normalizeConstantValue(t, v['value'] as string | number | null);
+				const cdoc = getDocFrom(v as unknown as Record<string, unknown>);
+				const deprecated = isTruthyLLSD(v['deprecated']);
+				constants.set(name, { type: TYPE_SET.has(t) ? t : t, ...(normalized !== undefined ? { value: normalized } : {}), ...(cdoc ? { doc: cdoc } : {}), ...(deprecated ? { deprecated: true } : {}) });
+			}
 		}
 	}
- 	return { functions, constants, events };
+	return { functions, constants, events };
 }
 
 function parseParams(raw: string) {
@@ -551,7 +600,7 @@ function splitTopLevelArgs(argText: string): string[] {
 	const args: string[] = [];
 	let buf = '';
 	let pd = 0, bd = 0, cd = 0, vd = 0; // paren, bracket, brace, angle
-	let inStr: '"'|'\''|null = null;
+	let inStr: '"' | '\'' | null = null;
 	for (let i = 0; i < argText.length; i++) {
 		const ch = argText[i];
 		if (inStr) {
@@ -560,7 +609,7 @@ function splitTopLevelArgs(argText: string): string[] {
 			if (ch === inStr) inStr = null;
 			continue;
 		}
-		if (ch === '"' || ch === '\'') { inStr = ch as any; buf += ch; continue; }
+		if (ch === '"' || ch === '\'') { inStr = ch; buf += ch; continue; }
 		if (ch === '(') { pd++; buf += ch; continue; }
 		if (ch === ')') { if (pd > 0) pd--; buf += ch; continue; }
 		if (ch === '[') { bd++; buf += ch; continue; }
@@ -580,7 +629,7 @@ function splitTopLevelArgs(argText: string): string[] {
 
 function inferTypeFromArg(arg: string): string {
 	const s = arg.trim();
-	if (!s) return 'any' as any;
+	if (!s) return 'any';
 	if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith('\'') && s.endsWith('\''))) return 'string';
 	if (/^0x[0-9a-f]+$/i.test(s) || /^[+-]?\d+$/.test(s)) return 'integer';
 	if (/^[+-]?(?:\d+\.?\d*|\d*\.\d+)(?:[eE][+-]?\d+)?$/.test(s)) return 'float';
@@ -592,7 +641,12 @@ function inferTypeFromArg(arg: string): string {
 	return 'string';
 }
 
-export async function parseFunctionPage(html: string, expectedName?: string) {
+export async function parseFunctionPage(html: string, expectedName?: string): Promise<{
+	title: string;
+	signature: string;
+	function: { name: string; returns: string; params: { name: string; type: string; default?: string }[]; doc?: string; wiki?: string } | null;
+	quality?: number;
+}> {
 	const $ = cheerio.load(html);
 	const title = $('#firstHeading').text().trim();
 	// Build a robust name pattern: accept raw title, underscore variant, and canonical 'll' prefixed variant
@@ -615,7 +669,7 @@ export async function parseFunctionPage(html: string, expectedName?: string) {
 
 	const allCandidates: string[] = [];
 	const typedCandidates: string[] = [];
-	$('table.infobox pre, table.infobox code, #mw-content-text pre, #mw-content-text code, tt').each((_: number, el: any) => {
+	$('table.infobox pre, table.infobox code, #mw-content-text pre, #mw-content-text code, tt').each((_: number, el) => {
 		const txt = $(el).text();
 		if (!txt) return;
 		for (const rawLine of txt.split(/\r?\n/)) {
@@ -639,7 +693,7 @@ export async function parseFunctionPage(html: string, expectedName?: string) {
 	const expected = canonicalizeLl(expectedName || title) || '';
 	const declLike = uniq(allCandidates).filter(l => /^(\s*function\b)/i.test(l) || /^\s*(?:integer|float|string|key|vector|rotation|list|void)\s+l{1,2}\w+\s*\(/i.test(l));
 
-	let parsed: { name: string; returns: string; params: { name: string; type: string; default?: string }[] } | null = null;
+	let parsed: { name: string; returns: string; params: { name: string; type: string; default?: string }[]; doc?: string; wiki?: string } | null = null;
 	// If expectedName provided, bias towards candidates that contain it
 	const prefer = (arr: string[]) => expectedName ? arr.filter(l => new RegExp(`\\b${expectedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(l)).concat(arr.filter(l => !new RegExp(`\\b${expectedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(l))) : arr;
 	// First, try typed candidates that explicitly contain our name
@@ -698,7 +752,7 @@ export async function parseFunctionPage(html: string, expectedName?: string) {
 						const argsText = s.slice(idx + 1, end);
 						const args = splitTopLevelArgs(argsText);
 						if (args.length > 0) {
-							const params = args.map((a, k) => ({ name: `arg${k+1}`, type: inferTypeFromArg(a) }));
+							const params = args.map((a, k) => ({ name: `arg${k + 1}`, type: inferTypeFromArg(a) }));
 							parsed = { name, returns: 'string', params };
 							quality = 1;
 							break;
@@ -712,7 +766,7 @@ export async function parseFunctionPage(html: string, expectedName?: string) {
 				const [, name, argsText] = m2;
 				const args = splitTopLevelArgs(argsText);
 				if (args.length > 0) {
-					const params = args.map((a, idx) => ({ name: `arg${idx+1}`, type: inferTypeFromArg(a) }));
+					const params = args.map((a, idx) => ({ name: `arg${idx + 1}`, type: inferTypeFromArg(a) }));
 					parsed = { name: canonicalizeLl(name)!, returns: 'string', params };
 					quality = 1;
 					break;
@@ -741,7 +795,7 @@ export async function parseFunctionPage(html: string, expectedName?: string) {
 	}
 	if (parsed && (!parsed.returns || !TYPE_SET.has(parsed.returns))) {
 		let ret: string | null = null;
-		$('*').each((_: number, el: any) => {
+		$('*').each((_: number, el) => {
 			const text = $(el).text().trim();
 			if (/^Returns?:/i.test(text)) {
 				const next = $(el).next().text() || text.replace(/^Returns?:/i, '').trim();
@@ -770,7 +824,7 @@ export async function parseFunctionPage(html: string, expectedName?: string) {
 	if (parsed) {
 		const wikiDoc = extractWikiDoc();
 		if (wikiDoc && (!('doc' in parsed) || !parsed.doc)) {
-			(parsed as any).doc = wikiDoc;
+			parsed.doc = wikiDoc;
 		}
 	}
 
@@ -787,7 +841,7 @@ export async function parseConstantPage(html: string) {
 	// Try infobox rows like: Type, Value
 	let type: string | null = null;
 	let value: string | number | null = null;
-	$('table.infobox tr').each((_: number, tr: any) => {
+	$('table.infobox tr').each((_: number, tr) => {
 		const cells = $(tr).find('th,td');
 		if (cells.length >= 2) {
 			const key = $(cells[0]).text().trim();
@@ -804,7 +858,7 @@ export async function parseConstantPage(html: string) {
 	});
 	// Fallback: look in first code/pre block for patterns like 'integer CONST = 42;'
 	if (!type || value == null) {
-		$('pre, code').each((_: number, el: any) => {
+		$('pre, code').each((_: number, el) => {
 			if (type && value != null) return;
 			const txt = $(el).text();
 			const m = new RegExp(`(integer|float|string|key|vector|rotation|list)\\s+(${namePattern})\\s*=\\s*([^;]+);`, 'i').exec(txt || '');
@@ -823,7 +877,7 @@ export async function parseConstantPage(html: string) {
 	}
 	// Fallback: detect type from categories (e.g., LSL Integer/Float/String Constants)
 	if (!type) {
-		const cats = $('#catlinks a').map((_: number, a: any) => $(a).text().toLowerCase()).get().join(' ');
+		const cats = $('#catlinks a').map((_: number, a) => $(a).text().toLowerCase()).get().join(' ');
 		for (const t of TYPE_SET) {
 			if (/(integer|float|string|key|vector|rotation|list)/.test(t)) {
 				// no-op: t already valid
@@ -914,7 +968,7 @@ function extractConstantsFromHtml(html: string): { name: string; type: string; v
 		found.push({ name, type: t, ...(normalized !== undefined ? { value: normalized } : {}) });
 	};
 	// Look at code-like blocks for typed definitions and #defines
-	$('pre, code, tt').each((_: number, el: any) => {
+	$('pre, code, tt').each((_: number, el) => {
 		const txt = $(el).text();
 		if (!txt) return;
 		for (const raw of txt.split(/\r?\n/)) {
@@ -937,7 +991,7 @@ function extractConstantsFromHtml(html: string): { name: string; type: string; v
 		}
 		// Also collect bare mentions like "Returns LINKSETDATA_OK" with unknown value
 		const names = new Set<string>();
-		for (const txt of [body, $('pre, code, tt').map((_: number, el: any) => $(el).text()).get().join('\n')]) {
+		for (const txt of [body, $('pre, code, tt').map((_: number, el) => $(el).text()).get().join('\n')]) {
 			const re2 = /\b(LINKSETDATA_[A-Z0-9_]+)\b/g;
 			let m2: RegExpExecArray | null;
 			while ((m2 = re2.exec(txt))) names.add(m2[1]);
@@ -960,7 +1014,7 @@ export async function parseEventPage(html: string) {
 
 	// Collect candidate lines from code/pre/tt that contain the event name and a param list
 	const candidates: string[] = [];
-	$('table.infobox pre, table.infobox code, #mw-content-text pre, #mw-content-text code, tt').each((_: number, el: any) => {
+	$('table.infobox pre, table.infobox code, #mw-content-text pre, #mw-content-text code, tt').each((_: number, el) => {
 		const txt = $(el).text();
 		if (!txt) return;
 		for (const line of txt.split(/\r?\n/)) {
@@ -970,7 +1024,7 @@ export async function parseEventPage(html: string) {
 		}
 	});
 	// Try to parse a signature line like: eventName(type a, type b)
-	const nameRegex = new RegExp(`\\b(${displayNamePattern})\\s*\\(([^)]*)\\)` , 'i');
+	const nameRegex = new RegExp(`\\b(${displayNamePattern})\\s*\\(([^)]*)\\)`, 'i');
 	for (const line of candidates) {
 		const m = nameRegex.exec(line);
 		if (m) {
@@ -982,7 +1036,7 @@ export async function parseEventPage(html: string) {
 	}
 	// Fallback: scan entire code/pre blocks if not found
 	if (!params) {
-		$('pre, code').each((_: number, el: any) => {
+		$('pre, code').each((_: number, el) => {
 			if (params) return;
 			const txt = $(el).text();
 			const m = nameRegex.exec(txt || '');
@@ -1015,13 +1069,13 @@ export async function parseEventPage(html: string) {
 
 function getAllTypes(): string[] {
 	// Stable order similar to common/lsl-defs.json
-	const order = ['integer','float','string','key','vector','rotation','list','void'];
+	const order = ['integer', 'float', 'string', 'key', 'vector', 'rotation', 'list', 'void'];
 	return order.filter(t => TYPE_SET.has(t));
 }
 
 function getKeywords(): string[] {
 	// Minimal set; can be extended later
-	return ['if','else','for','while','do','return','state','default','jump','label'];
+	return ['if', 'else', 'for', 'while', 'do', 'return', 'state', 'default', 'jump', 'label'];
 }
 
 async function assembleDefs(): Promise<LslDefs> {
@@ -1035,8 +1089,8 @@ async function assembleDefs(): Promise<LslDefs> {
 			const slug = canonicalizeLl(url.replace(/^.*\//, ''));
 			const info = await parseFunctionPage(page, slug);
 			if (info.function && VALID_FUNC_NAME.test(info.function.name)) {
-				(info.function as any).wiki = url;
-				return { fn: info.function as any, q: info.quality ?? 0 } as any;
+				info.function.wiki = url;
+				return { fn: info.function, q: info.quality ?? 0 };
 			}
 		} catch (e) {
 			console.error(`[warn] function failed ${url}:`, (e as Error).message);
@@ -1074,7 +1128,7 @@ async function assembleDefs(): Promise<LslDefs> {
 		try {
 			const page = await fetchHtml(url);
 			const info = await parseConstantPage(page);
-			if (info) return { ...(info as any), wiki: url };
+			if (info) return { ...(info), wiki: url };
 		} catch (e) {
 			console.error(`[warn] constant failed ${url}:`, (e as Error).message);
 		}
@@ -1099,7 +1153,7 @@ async function assembleDefs(): Promise<LslDefs> {
 		try {
 			const page = await fetchHtml(url);
 			const info = await parseEventPage(page);
-			if (info) return { ...(info as any), wiki: url };
+			if (info) return { ...(info), wiki: url };
 		} catch (e) {
 			console.error(`[warn] event failed ${url}:`, (e as Error).message);
 		}
@@ -1182,14 +1236,14 @@ async function assembleDefs(): Promise<LslDefs> {
 					const b = vf.params[i];
 					if (a && b) {
 						const preferViewer = !a.name || /^arg\d+$/i.test(a.name);
-						let nameFinal = preferViewer ? (b.name || a.name || `arg${i+1}`) : a.name;
+						let nameFinal = preferViewer ? (b.name || a.name || `arg${i + 1}`) : a.name;
 						if (preferViewer && nameFinal) nameFinal = nameFinal.toLowerCase();
 						const typeFinal = a.type || b.type;
 						merged.push({ name: nameFinal, type: typeFinal, ...(a.default ? { default: a.default } : {}), ...(b.doc ? { doc: b.doc } : {}) });
 					} else if (a && !b) {
 						merged.push(a);
 					} else if (!a && b) {
-						const n = typeof b.name === 'string' ? b.name.toLowerCase() : `arg${i+1}`;
+						const n = typeof b.name === 'string' ? b.name.toLowerCase() : `arg${i + 1}`;
 						merged.push({ name: n, type: b.type, ...(b.doc ? { doc: b.doc } : {}) });
 					}
 				}
@@ -1199,7 +1253,7 @@ async function assembleDefs(): Promise<LslDefs> {
 			if (vf.doc) {
 				if (!cur.doc || cur.doc.length < vf.doc.length) cur.doc = vf.doc;
 			}
-			if (vf.deprecated) (cur as any).deprecated = true;
+			if (vf.deprecated) cur.deprecated = true;
 			// keep wiki link if present
 			fMap.set(key, cur);
 		}
@@ -1208,7 +1262,7 @@ async function assembleDefs(): Promise<LslDefs> {
 
 		// Merge constants
 		const cMapOut = new Map<string, LslDefs['constants'][number]>();
-		for (const c of constantsOut) cMapOut.set(c.name, c as any);
+		for (const c of constantsOut) cMapOut.set(c.name, c);
 		for (const [name, vc] of viewer.constants) {
 			const cur = cMapOut.get(name);
 			if (!cur) {
@@ -1217,20 +1271,20 @@ async function assembleDefs(): Promise<LslDefs> {
 				continue;
 			}
 			// Prefer value from XML when missing in current
-			if ((cur as any).value === undefined && vc.value !== undefined) (cur as any).value = vc.value as any;
+			if ((cur).value === undefined && vc.value !== undefined) cur.value = vc.value;
 			// Prefer concrete type when ours is missing
 			if (!cur.type && vc.type) cur.type = vc.type;
 			if (vc.doc) {
 				if (!cur.doc || cur.doc.length < vc.doc.length) cur.doc = vc.doc;
 			}
-			if (vc.deprecated) (cur as any).deprecated = true;
+			if (vc.deprecated) cur.deprecated = true;
 			cMapOut.set(name, cur);
 		}
 		const constantsMerged = Array.from(cMapOut.values()).sort((a, b) => a.name.localeCompare(b.name));
 
 		// Merge events
 		const eMapOut = new Map<string, LslDefs['events'][number]>();
-		for (const e of eventsOut) eMapOut.set(e.name, e as any);
+		for (const e of eventsOut) eMapOut.set(e.name, e);
 		for (const [name, ve] of viewer.events) {
 			const cur = eMapOut.get(name);
 			if (!cur) continue;
@@ -1242,14 +1296,14 @@ async function assembleDefs(): Promise<LslDefs> {
 					const b = ve.params[i];
 					if (a && b) {
 						const preferViewer = !a.name || /^arg\d+$/i.test(a.name);
-						let nameFinal = preferViewer ? (b.name || a.name || `arg${i+1}`) : a.name;
+						let nameFinal = preferViewer ? (b.name || a.name || `arg${i + 1}`) : a.name;
 						nameFinal = (nameFinal || '').toLowerCase();
 						const typeFinal = a.type || b.type;
 						merged.push({ name: nameFinal, type: typeFinal, ...(b.doc ? { doc: b.doc } : {}) });
 					} else if (a && !b) {
-						merged.push({ ...a, name: (a.name || `arg${i+1}`).toLowerCase() });
+						merged.push({ ...a, name: (a.name || `arg${i + 1}`).toLowerCase() });
 					} else if (!a && b) {
-						const n = typeof b.name === 'string' ? b.name.toLowerCase() : `arg${i+1}`;
+						const n = typeof b.name === 'string' ? b.name.toLowerCase() : `arg${i + 1}`;
 						merged.push({ name: n, type: b.type, ...(b.doc ? { doc: b.doc } : {}) });
 					}
 				}
@@ -1263,15 +1317,15 @@ async function assembleDefs(): Promise<LslDefs> {
 		// Ensure wiki links are present for all entries (use captured URL or fallback to wiki by name)
 		const withWikiFuncs = functionsMerged.map(f => ({
 			...f,
-			wiki: (f as any).wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(f.name)}`
+			wiki: f.wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(f.name)}`
 		}));
 		const withWikiConsts = constantsMerged.map(c => ({
 			...c,
-			wiki: (c as any).wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(c.name)}`
+			wiki: c.wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(c.name)}`
 		}));
 		const withWikiEvents = eventsMerged.map(e => ({
 			...e,
-			wiki: (e as any).wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(e.name)}`
+			wiki: e.wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(e.name)}`
 		}));
 
 		return {
@@ -1286,9 +1340,9 @@ async function assembleDefs(): Promise<LslDefs> {
 		if (VERBOSE) console.error('[warn] viewer keywords merge failed:', (e as Error).message);
 		// Fall back to wiki-only data
 		// Ensure wiki links exist even in fallback mode
-		const withWikiFuncs = functionsOut.map(f => ({ ...f, wiki: (f as any).wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(f.name)}` }));
-		const withWikiConsts = constantsOut.map(c => ({ ...c, wiki: (c as any).wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(c.name)}` }));
-		const withWikiEvents = eventsOut.map(e => ({ ...e, wiki: (e as any).wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(e.name)}` }));
+		const withWikiFuncs = functionsOut.map(f => ({ ...f, wiki: f.wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(f.name)}` }));
+		const withWikiConsts = constantsOut.map(c => ({ ...c, wiki: c.wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(c.name)}` }));
+		const withWikiEvents = eventsOut.map(e => ({ ...e, wiki: e.wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(e.name)}` }));
 		return {
 			version,
 			types: getAllTypes(),
@@ -1329,11 +1383,11 @@ async function main() {
 		// Inline minimal copy of candidate extraction for debug output
 		const $ = cheerio.load(html);
 		const TYPE_SET_DBG = TYPE_SET;
-		function _esc(s: string){return s.replace(/\n/g,'\\n');}
+		function _esc(s: string) { return s.replace(/\n/g, '\\n'); }
 		const title = $('#firstHeading').text().trim();
 		const candidates: string[] = [];
 		const typed: string[] = [];
-		$('table.infobox pre, table.infobox code, #mw-content-text pre, #mw-content-text code, tt').each((_: number, el: any) => {
+		$('table.infobox pre, table.infobox code, #mw-content-text pre, #mw-content-text code, tt').each((_: number, el) => {
 			const txt = $(el).text();
 			if (!txt) return;
 			for (const rawLine of txt.split(/\r?\n/)) {
@@ -1491,22 +1545,23 @@ async function main() {
 		if (rest.startsWith('search:')) {
 			const q = rest.slice('search:'.length).toLowerCase();
 			const xml = await fetchHtml(VIEWER_KEYWORDS_URL);
-			const top = parseLLSD(xml) as any;
-			const keysTop = Object.keys(top || {});
-			const keysFuncs = Object.keys((top?.functions as any) || {});
-			const events = Object.keys((top?.events as any) || {});
+			const top = parseLLSD(xml);
+			const topObj = isMap(top) ? top : {};
+			const keysTop = Object.keys(topObj);
+			const keysFuncs = Object.keys(llsdGetObj(top, 'functions') || {});
+			const events = Object.keys(llsdGetObj(top, 'events') || {});
 			const match = (arr: string[]) => arr.filter(k => k.toLowerCase().includes(q)).sort();
-			console.log(JSON.stringify({ query: q, functions: match(keysTop.filter(k => /^ll/i.test(k)).concat(keysFuncs)), constants: match(Object.keys((top?.constants as any) || {})), events: match(events) }, null, 2));
+			console.log(JSON.stringify({ query: q, functions: match(keysTop.filter(k => /^ll/i.test(k)).concat(keysFuncs)), constants: match(Object.keys(llsdGetObj(top, 'constants') || {})), events: match(events) }, null, 2));
 			return;
 		}
 		const parts = rest.split(':');
 		if (parts[0] === 'stats') {
 			const xml = await fetchHtml(VIEWER_KEYWORDS_URL);
-			const top = parseLLSD(xml) as any;
+			const top = parseLLSD(xml);
 			const parsed = await fetchViewerKeywords();
 			const topKeys = Object.keys(top || {});
 			const funcTop = topKeys.filter(k => /^ll/i.test(k));
-			const funcMap = Object.keys((top?.functions as any) || {});
+			const funcMap = Object.keys(llsdGetObj(top, 'functions') || {});
 			const sampleTop = funcTop.slice(0, 10);
 			const sampleMap = funcMap.slice(0, 10);
 			console.log(JSON.stringify({
@@ -1516,21 +1571,36 @@ async function main() {
 				has_llGetPos: parsed.functions.has('llGetPos'),
 				topLevelFuncKeys: sampleTop,
 				functionsMapKeys: sampleMap,
-				flags: { hasTopFunctions: !!(top && top.functions), topFuncCount: funcTop.length, mapFuncCount: funcMap.length }
+				flags: { hasTopFunctions: !!llsdGetObj(top, 'functions'), topFuncCount: funcTop.length, mapFuncCount: funcMap.length }
 			}, null, 2));
 			return;
 		}
-		let kind: 'func'|'const'|'event'|'auto' = 'auto';
+		let kind: 'func' | 'const' | 'event' | 'auto' = 'auto';
 		let name = parts[0];
-		if (parts.length >= 2) { kind = (parts[0] as any) || 'auto'; name = parts.slice(1).join(':'); }
+		if (parts.length >= 2) {
+			const k = parts[0].toLowerCase();
+			kind = (k === 'func' || k === 'const' || k === 'event' || k === 'auto') ? k : 'auto';
+			name = parts.slice(1).join(':');
+		}
 		const xml = await fetchHtml(VIEWER_KEYWORDS_URL);
 		const top = parseLLSD(xml);
 		const parsed = await fetchViewerKeywords();
-		const result: any = { name, kind: kind === 'auto' ? undefined : kind };
+		interface ViewerLookupResult {
+			name: string;
+			kind?: 'func' | 'const' | 'event';
+			raw?: LLSD | null;
+			parsed?: ViewerFunction | ViewerConstant | ViewerEvent | null;
+			suggestions?: string[];
+			resolvedName?: string;
+			rawXmlPath?: string[];
+			error?: string;
+		}
+		const result: ViewerLookupResult = { name, kind: kind === 'auto' ? undefined : kind };
 		const cName = canonicalizeLl(name);
-		const isEvent = kind === 'event' || (kind === 'auto' && (top as any)?.events && Object.prototype.hasOwnProperty.call((top as any).events, name));
+		const evMap = llsdGetObj(top, 'events');
+		const isEvent = kind === 'event' || (kind === 'auto' && evMap && Object.prototype.hasOwnProperty.call(evMap, name));
 		if (isEvent) {
-			const raw = (top as any)?.events?.[name];
+			const raw = evMap?.[name];
 			const p = parsed.events.get(name) || parsed.events.get(name.toLowerCase());
 			result.kind = 'event';
 			result.raw = raw ?? null;
@@ -1540,23 +1610,23 @@ async function main() {
 			return;
 		}
 		// Non-events live at the top level map
-		let rawEntry: any = undefined;
+		let rawEntry: LLSD = null;
 		if (kind === 'func' || kind === 'auto') {
 			// try exact, canonical, and then case-insensitive resolution
-			const topAny = top as any;
-			rawEntry = (cName && topAny?.[cName]) ?? topAny?.[name];
+			rawEntry = (cName && llsdGetObj(top, cName)) ?? llsdGetObj(top, name);
 			let resolvedKey: string | undefined = undefined;
 			if (!rawEntry) {
-				const keys = Object.keys(topAny || {});
+				const topObj = isMap(top) ? top : {};
+				const keys = Object.keys(topObj);
 				const target = (cName || name || '').toLowerCase();
 				const hit = keys.find(k => k.toLowerCase() === target) || keys.find(k => k.toLowerCase().includes(target));
-				if (hit) { resolvedKey = hit; rawEntry = topAny?.[hit]; }
+				if (hit) { resolvedKey = hit; rawEntry = llsdGetObj(top, hit); }
 			}
 			// recursive find in case functions are nested
 			if (!rawEntry) {
 				let foundPath: string[] | null = null;
-				function findFunc(obj: any, path: string[]): any {
-					if (!obj || typeof obj !== 'object') return null;
+				function findFunc(obj: LLSD, path: string[]): { [key: string]: LLSD } | null {
+					if (!isMap(obj)) return null;
 					if (Object.prototype.hasOwnProperty.call(obj, 'return') || Object.prototype.hasOwnProperty.call(obj, 'arguments')) {
 						// path key name check
 						const lastKey = path[path.length - 1] || '';
@@ -1565,21 +1635,21 @@ async function main() {
 						if (lk === target) return obj;
 					}
 					for (const [k, v] of Object.entries(obj)) {
-						if (v && typeof v === 'object') {
+						if (isMap(v)) {
 							const res = findFunc(v, path.concat(k));
 							if (res) { foundPath = path.concat(k); return res; }
 						}
 					}
 					return null;
 				}
-				const rec = findFunc(topAny, []);
-				if (rec) { rawEntry = rec; resolvedKey = (foundPath || []).slice(-1)[0]; (result as any).rawXmlPath = foundPath; }
+				const rec = findFunc(top, []);
+				if (rec) { rawEntry = rec; resolvedKey = (foundPath || []).slice(-1)[0]; result.rawXmlPath = foundPath || undefined; }
 			}
 			const looksFunc = rawEntry && (Object.prototype.hasOwnProperty.call(rawEntry, 'return') || Object.prototype.hasOwnProperty.call(rawEntry, 'arguments'));
 			if (looksFunc || kind === 'func') {
 				// try canonical, resolvedKey, and exact name in parsed map
 				const keyCandidates = [cName, resolvedKey && canonicalizeLl(resolvedKey), name].filter(Boolean) as string[];
-				let p = undefined as any;
+				let p = undefined;
 				for (const k of keyCandidates) { p = parsed.functions.get(k); if (p) break; }
 				if (!p) {
 					// case-insensitive fallback
@@ -1590,37 +1660,38 @@ async function main() {
 				result.raw = rawEntry ?? null;
 				result.parsed = p ?? null;
 				if (!result.raw) {
-					const keys = Object.keys(top as any);
+					const topObj = isMap(top) ? top : {};
+					const keys = Object.keys(topObj);
 					const target = (cName || name || '').toLowerCase();
 					result.suggestions = keys.filter(k => k.toLowerCase() === target || k.toLowerCase().includes(target)).slice(0, 20);
 					result.resolvedName = cName || name;
 				}
-				result.rawXmlPath = (result as any).rawXmlPath || [resolvedKey || cName || name];
+				result.rawXmlPath = result.rawXmlPath || [resolvedKey || cName || name];
 				console.log(JSON.stringify(result, null, 2));
 				return;
 			}
 		}
 		if (kind === 'const' || kind === 'auto') {
-			const topAny = top as any;
 			// constants under top.constants map
-			rawEntry = topAny?.constants?.[name];
+			const cMap = llsdGetObj(top, 'constants');
+			rawEntry = cMap?.[name] ?? null;
 			let resolvedKey: string | undefined = undefined;
 			if (!rawEntry) {
-				const keys = Object.keys((topAny?.constants as any) || {});
+				const keys = Object.keys(cMap || {});
 				const target = (name || '').toLowerCase();
 				const hit = keys.find(k => k.toLowerCase() === target) || keys.find(k => k.toLowerCase().includes(target));
-				if (hit) { resolvedKey = hit; rawEntry = topAny?.constants?.[hit]; }
+				if (hit) { resolvedKey = hit; rawEntry = (cMap || {})[hit] ?? null; }
 			}
 			const looksConst = rawEntry && Object.prototype.hasOwnProperty.call(rawEntry, 'type');
 			if (looksConst || kind === 'const') {
 				const keyCandidates = [name, resolvedKey].filter(Boolean) as string[];
-				let p = undefined as any;
+				let p = undefined;
 				for (const k of keyCandidates) { p = parsed.constants.get(k!); if (p) break; }
 				result.kind = 'const';
 				result.raw = rawEntry ?? null;
 				result.parsed = p ?? null;
 				if (!result.raw) {
-					const keys = Object.keys((topAny?.constants as any) || {});
+					const keys = Object.keys(cMap || {});
 					const target = (name || '').toLowerCase();
 					result.suggestions = keys.filter(k => k.toLowerCase() === target || k.toLowerCase().includes(target)).slice(0, 20);
 				}

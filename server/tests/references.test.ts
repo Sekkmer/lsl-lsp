@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { docFrom, runPipeline } from './testUtils';
+import { docFrom, runPipeline, toSimpleTokens } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
 import { findAllReferences } from '../src/navigation';
 
-function posOf(doc: any, needle: string) {
+function posOf(doc: { getText(): string }, needle: string) {
 	const idx = doc.getText().indexOf(needle);
 	if (idx < 0) throw new Error('needle not found');
 	// Return the start index of the needle; callers pass a snippet starting at the target identifier
@@ -16,7 +16,7 @@ describe('findAllReferences', () => {
 		const doc = docFrom('integer x; default { state_entry() { integer y = x; x = y; } }');
 		const { analysis, pre, tokens } = runPipeline(doc, defs);
 		const offset = posOf(doc, 'x; default');
-		const results = findAllReferences(doc, offset, true, analysis, pre, tokens as any);
+		const results = findAllReferences(doc, offset, true, analysis, pre, toSimpleTokens(tokens));
 		// decl + 2 refs
 		expect(results.filter(r => r.uri === doc.uri).length).toBeGreaterThanOrEqual(3);
 	});
@@ -34,7 +34,7 @@ describe('findAllReferences', () => {
 		const doc = docFrom(code, 'file:///proj/refs_inc.lsl');
 		const { analysis, pre, tokens } = runPipeline(doc, defs, { includePaths: [dir] });
 		const offset = posOf(doc, 'myApi');
-		const results = findAllReferences(doc, offset, true, analysis, pre, tokens as any);
+		const results = findAllReferences(doc, offset, true, analysis, pre, toSimpleTokens(tokens));
 		expect(results.some(r => r.uri.endsWith('api.lslh'))).toBe(true);
 	});
 });

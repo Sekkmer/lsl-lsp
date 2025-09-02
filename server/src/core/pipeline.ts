@@ -69,7 +69,7 @@ export function preprocessMacros(text: string, opts: IncludeResolverOptions & { 
 
 // Compute data required by AST lexer: final macro tables split into obj/func and disabled ranges for the root file.
 export function preprocessForAst(text: string, opts: IncludeResolverOptions & { defines?: MacroDefines }): {
-	macros: Record<string, any>;
+	macros: MacroDefines;
 	funcMacros: Record<string, string>;
 	includes: string[];
 	disabledRanges: { start: number; end: number }[];
@@ -87,7 +87,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	const mcp = new MacroConditionalProcessor(toks, { resolveInclude, fromId: opts.fromPath, includeStack: opts.fromPath ? [opts.fromPath] : [] });
 	const { macros: finalMacros, includes } = mcp.processToMacros(opts.defines || {});
 	// Split function-like macros from object-like
-	const macros: Record<string, any> = {};
+	const macros: MacroDefines = {};
 	const funcMacros: Record<string, string> = {};
 	for (const [k, v] of Object.entries(finalMacros)) {
 		if (typeof v === 'string' && /^\([^)]*\)\s/.test(v)) funcMacros[k] = v;
@@ -106,7 +106,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	const openOrNull = () => disabledRanges.find(r => r.end === -1) || null;
 	const closeOpen = (endAt: number) => { const r = openOrNull(); if (r) r.end = Math.max(0, endAt); };
 	// current macros while scanning main file (order-sensitive)
-	const localMacros: Record<string, any> = { ...(opts.defines || {}) };
+	const localMacros: MacroDefines = { ...(opts.defines || {}) };
 	// Merge in prior macros only when they are truly built-ins from opts; included macros will be applied at include points below
 	// Walk tokens in order
 	// Helper to parse suppression directives from comments
@@ -252,7 +252,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 				includeTargets.push({ start: t.span.start, end: t.span.end, file: target, resolved: inc.id });
 				// Merge macros from included file at this point in a guard-aware way.
 				// Build initial defines that include both object- and function-like macros so `defined(NAME)` works for either.
-				const initialDefs: Record<string, any> = { ...localMacros };
+				const initialDefs: MacroDefines = { ...localMacros };
 				for (const [fk, fv] of Object.entries(funcMacros)) initialDefs[fk] = fv;
 				const nested = new MacroConditionalProcessor(inc.tokens, { resolveInclude, fromId: inc.id, includeStack: (opts.fromPath ? [opts.fromPath] : []).concat([inc.id]) });
 				const r = nested.processToMacros(initialDefs);
@@ -266,7 +266,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 						delete funcMacros[k];
 						continue;
 					}
-					const v = (r.macros as any)[k];
+					const v = r.macros[k];
 					const isFunc = (typeof v === 'string' && /^\([^)]*\)\s/.test(v));
 					const hasLocalObj = Object.prototype.hasOwnProperty.call(localMacros, k);
 					const hasLocalFn = Object.prototype.hasOwnProperty.call(funcMacros, k);
@@ -321,11 +321,11 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	let conditionalGroups: ConditionalGroup[] | undefined;
 	try {
 		const cg = mcp.collectConditionalGroups(localMacros);
-		conditionalGroups = (cg.groups as any) as ConditionalGroup[];
+		conditionalGroups = cg.groups;
 	} catch { /* optional */ }
 
 	try {
-		const diags = mcp.collectDiagnostics(localMacros as any);
+		const diags = mcp.collectDiagnostics(localMacros);
 		preprocDiagnostics.push(...diags);
 	} catch { /* optional */ }
 
@@ -335,7 +335,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 }
 
 // Local helpers mirroring macroConditional behavior
-function evalExprQuick(expr: string, defs: Record<string, any>, fnDefs?: Record<string, string>): boolean {
+function evalExprQuick(expr: string, defs: import('./macro').MacroDefines, fnDefs?: Record<string, string>): boolean {
 	type Tok = { kind: 'num'; value: number } | { kind: 'ident'; value: string } | { kind: 'op'; value: string } | { kind: 'lparen' } | { kind: 'rparen' };
 	const s = expr.trim();
 	if (!s) return false;
@@ -369,9 +369,14 @@ function evalExprQuick(expr: string, defs: Record<string, any>, fnDefs?: Record<
 	let p = 0;
 	const peek = () => toks[p];
 	const take = () => toks[p++];
+	const peekOp = () => (peek() && peek()!.kind === 'op') ? (peek() as Extract<Tok, { kind: 'op' }>).value : undefined;
+	const takeOp = () => {
+		const tk = take();
+		return tk && tk.kind === 'op' ? tk.value : undefined;
+	};
 	const truthy = (v: number) => v !== 0;
 	const valOfIdent = (name: string): number => {
-		const v = (defs as any)[name];
+		const v = defs[name];
 		if (v === undefined) return (fnDefs && Object.prototype.hasOwnProperty.call(fnDefs, name)) ? 1 : 0;
 		if (typeof v === 'number') return v;
 		if (typeof v === 'boolean') return v ? 1 : 0;
@@ -401,7 +406,7 @@ function evalExprQuick(expr: string, defs: Record<string, any>, fnDefs?: Record<
 					if (peek() && peek()!.kind === 'rparen') take();
 				} else {
 					const id = take();
-					if (id && id.kind === 'ident') name = id.value; else name = (id as any)?.value || '';
+					if (id && id.kind === 'ident') name = id.value; else name = '';
 				}
 				return (Object.prototype.hasOwnProperty.call(defs, name) || (fnDefs ? Object.prototype.hasOwnProperty.call(fnDefs, name) : false)) ? 1 : 0;
 			}
@@ -431,8 +436,8 @@ function evalExprQuick(expr: string, defs: Record<string, any>, fnDefs?: Record<
 
 	function parseMul(): number {
 		let v = parseUnary();
-		while (peek() && peek()!.kind === 'op' && ['*', '/', '%'].includes((peek() as any).value)) {
-			const op = (take() as any).value as string;
+		while (peekOp() && ['*', '/', '%'].includes(peekOp()!)) {
+			const op = takeOp()!;
 			const r = parseUnary();
 			if (op === '*') v = v * r; else if (op === '/') v = Math.trunc(v / r); else v = v % r;
 		}
@@ -441,8 +446,8 @@ function evalExprQuick(expr: string, defs: Record<string, any>, fnDefs?: Record<
 
 	function parseAdd(): number {
 		let v = parseMul();
-		while (peek() && peek()!.kind === 'op' && ['+', '-'].includes((peek() as any).value)) {
-			const op = (take() as any).value as string;
+		while (peekOp() && ['+', '-'].includes(peekOp()!)) {
+			const op = takeOp()!;
 			const r = parseMul();
 			if (op === '+') v = v + r; else v = v - r;
 		}
@@ -451,8 +456,8 @@ function evalExprQuick(expr: string, defs: Record<string, any>, fnDefs?: Record<
 
 	function parseRel(): number {
 		let v = parseAdd();
-		while (peek() && peek()!.kind === 'op' && ['<', '>', '<=', '>='].includes((peek() as any).value)) {
-			const op = (take() as any).value as string;
+		while (peekOp() && ['<', '>', '<=', '>='].includes(peekOp()!)) {
+			const op = takeOp()!;
 			const r = parseAdd();
 			if (op === '<') v = v < r ? 1 : 0;
 			else if (op === '>') v = v > r ? 1 : 0;
@@ -464,8 +469,8 @@ function evalExprQuick(expr: string, defs: Record<string, any>, fnDefs?: Record<
 
 	function parseEq(): number {
 		let v = parseRel();
-		while (peek() && peek()!.kind === 'op' && ['==', '!='].includes((peek() as any).value)) {
-			const op = (take() as any).value as string;
+		while (peekOp() && ['==', '!='].includes(peekOp()!)) {
+			const op = takeOp()!;
 			const r = parseRel();
 			if (op === '==') v = v === r ? 1 : 0; else v = v !== r ? 1 : 0;
 		}
@@ -474,8 +479,8 @@ function evalExprQuick(expr: string, defs: Record<string, any>, fnDefs?: Record<
 
 	function parseAnd(): number {
 		let v = parseEq();
-		while (peek() && peek()!.kind === 'op' && (peek() as any).value === '&&') {
-			take();
+		while (peekOp() === '&&') {
+			takeOp();
 			const r = parseEq();
 			v = truthy(v) && truthy(r) ? 1 : 0;
 		}
@@ -484,8 +489,8 @@ function evalExprQuick(expr: string, defs: Record<string, any>, fnDefs?: Record<
 
 	function parseOr(): number {
 		let v = parseAnd();
-		while (peek() && peek()!.kind === 'op' && (peek() as any).value === '||') {
-			take();
+		while (peekOp() === '||') {
+			takeOp();
 			const r = parseAnd();
 			v = truthy(v) || truthy(r) ? 1 : 0;
 		}
@@ -495,7 +500,7 @@ function evalExprQuick(expr: string, defs: Record<string, any>, fnDefs?: Record<
 	const result = parseOr();
 	return truthy(result);
 }
-function parseMacroValueCompat(v: string): any {
+function parseMacroValueCompat(v: string): string | number | boolean {
 	const num = Number(v);
 	if (!Number.isNaN(num)) return num;
 	if (v === 'true' || v === 'TRUE') return true;

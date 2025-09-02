@@ -12,7 +12,7 @@ describe('preproc: stringify and paste', () => {
 		const st = script.states.get('default');
 		expect(st).toBeTruthy();
 		const ev = st!.events[0]!;
-		const stmt = (ev.body as any).statements[0];
+		const stmt = ev.body.statements[0];
 		expect(stmt.kind).toBe('VarDecl');
 		const init = stmt.initializer;
 		expect(init.kind).toBe('StringLiteral');
@@ -29,7 +29,7 @@ describe('preproc: stringify and paste', () => {
 		const st = script.states.get('default');
 		expect(st).toBeTruthy();
 		const ev = st!.events[0]!;
-		const stmt = (ev.body as any).statements[1];
+		const stmt = ev.body.statements[1];
 		expect(stmt.kind).toBe('VarDecl');
 		const init = stmt.initializer;
 		expect(init.kind).toBe('Identifier');

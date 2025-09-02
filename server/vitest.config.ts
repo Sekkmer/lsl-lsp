@@ -4,8 +4,9 @@ export default defineConfig({
 	test: {
 		environment: 'node',
 		include: ['tests/**/*.test.ts'],
+		setupFiles: ['tests/setup.ts'],
 		pool: 'forks',
-		isolate: true, 
+		isolate: true,
 		slowTestThreshold: 1_000,
 		testTimeout: 2_000,
 		hookTimeout: 10_000,

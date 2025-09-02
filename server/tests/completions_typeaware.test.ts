@@ -12,7 +12,7 @@ describe('type-aware completions', async () => {
 		const doc = docFrom('default { state_entry() { llSay(0, ); } }');
 		const { analysis, pre } = runPipeline(doc, defs);
 		const pos = doc.positionAt(doc.getText().indexOf(',') + 2); // after comma+space
-		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, analysis, pre);
+		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos }, defs, analysis, pre);
 		// Expect string-typed constants/macros to rank higher than others when present; in our simple defs, expect built-ins present
 		// Check that string is among types (we mock by checking TRUE, FALSE (integer) are not before typical string suggestions when prefix empty)
 		// We can at least assert that function llGetOwner (key) is not top-preferred over string-y items like constants are minimal; rely on sortText scoring
@@ -23,7 +23,7 @@ describe('type-aware completions', async () => {
 		const doc = docFrom('default { state_entry() { vector v; v. } }');
 		const { analysis, pre } = runPipeline(doc, defs);
 		const pos = doc.positionAt(doc.getText().lastIndexOf('.') + 1);
-		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos } as any, defs, analysis, pre);
+		const items = lslCompletions(doc, { textDocument: { uri: doc.uri }, position: pos }, defs, analysis, pre);
 		const ls = labels(items);
 		expect(ls).toContain('x');
 		expect(ls).toContain('y');

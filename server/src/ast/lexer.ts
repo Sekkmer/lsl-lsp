@@ -1,15 +1,11 @@
 /*
 	LSL lexer with basic macro expansion and comment tracking for AST parser
 */
-import { type Span, TYPES } from './index';
-import { TokenStream } from '../core/tokens';
+import { TYPES } from './index';
+import { TokenStream, type Token } from '../core/tokens';
 import { builtinMacroForLexer } from '../builtins';
 
-export type TokKind =
-	| 'id' | 'number' | 'string' | 'op' | 'punct' | 'keyword'
-	| 'comment-line' | 'comment-block' | 'directive' | 'eof';
-
-export interface Token { kind: TokKind; value: string; span: Span; }
+// Note: Token and Span are imported from core/tokens to keep a single token model.
 
 const KEYWORDS = [
 	'if', 'else', 'while', 'do', 'for', 'return', 'state', 'default', 'jump',
@@ -52,7 +48,7 @@ export class Lexer {
 		this.disabled = opts?.disabled ?? [];
 		this.filename = opts?.filename ?? 'memory.lsl';
 		// Drive tokens via TokenStream so EOF handling is centralized and pushback is unified
-		this.ts = new TokenStream({ producer: () => this.produceOne() as any });
+		this.ts = new TokenStream({ producer: (): Token => this.produceOne() });
 	}
 
 	public next(): Token {
@@ -404,7 +400,7 @@ export class Lexer {
 		let i = pos; while (i < this.n && this.text[i] !== '\n') i++; return i;
 	}
 
-	private mk(kind: TokKind, value: string, start: number, end: number): Token {
+	private mk(kind: Token['kind'], value: string, start: number, end: number): Token {
 		return { kind, value, span: { start, end } };
 	}
 

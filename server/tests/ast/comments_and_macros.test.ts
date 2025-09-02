@@ -22,7 +22,7 @@ describe('AST parser: comments and macros', () => {
 		// Expect initializer to be Binary(Number(10), '+', Number(5))
 		const init = gv!.initializer!;
 		expect(init.kind).toBe('Binary');
-		const left = (init as any).left;
+		const left = init.left;
 		expect(left.kind).toBe('NumberLiteral');
 		expect(left.raw).toBe('10');
 	});
@@ -44,12 +44,12 @@ describe('AST parser: comments and macros', () => {
 		const script = parseScriptFromText(src, 'file:///path/to/test.lsl');
 		const a = script.globals.get('a');
 		expect(a).toBeTruthy();
-		const fa = a!.initializer as any;
+		const fa = a!.initializer!;
 		expect(fa.kind).toBe('NumberLiteral');
 		expect(fa.raw).toBe('1'); // first line
 		const f = script.globals.get('f');
 		expect(f).toBeTruthy();
-		const fi = f!.initializer as any;
+		const fi = f!.initializer!;
 		expect(fi.kind).toBe('StringLiteral');
 		// should be quoted basename of uri
 		expect(fi.value).toBe('test.lsl');

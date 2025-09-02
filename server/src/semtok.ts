@@ -143,7 +143,7 @@ export function buildSemanticTokens(
 			if (qm1 >= 0 && qm2 > qm1) {
 				const s = it.start + qm1;
 				const e = it.start + qm2 + 1; // include closing quote
-				const tok: Token = { kind: 'str', value: '', start: s, end: e } as any;
+				const tok: Token = { kind: 'str', value: '', start: s, end: e };
 				push(tok, idx('string'));
 			} else {
 				// Fallback: highlight only after the keyword 'include' if present
@@ -151,7 +151,7 @@ export function buildSemanticTokens(
 				if (m) {
 					const after = text.indexOf(m[1]);
 					if (after >= 0) {
-						const tok: Token = { kind: 'str', value: '', start: it.start + after, end: it.end } as any;
+						const tok: Token = { kind: 'str', value: '', start: it.start + after, end: it.end };
 						push(tok, idx('string'));
 					}
 				}
@@ -163,7 +163,7 @@ export function buildSemanticTokens(
 	if (conflictBlocks.length > 0) {
 		for (const blk of conflictBlocks) {
 			for (const ln of blk.markerLines) {
-				const tok: Token = { kind: 'id', value: '<<<<<<<', start: ln.start, end: ln.end } as any;
+				const tok: Token = { kind: 'id', value: '<<<<<<<', start: ln.start, end: ln.end };
 				push(tok, idx('regexp'));
 			}
 		}
@@ -192,7 +192,7 @@ export function buildSemanticTokens(
 				const dirIdxInLine = text.indexOf(dir);
 				if (dirIdxInLine >= 0) {
 					const dirStart = t.start + dirIdxInLine;
-					const tok: Token = { kind: 'id', value: dir, start: dirStart, end: dirStart + dir.length } as any;
+					const tok: Token = { kind: 'id', value: dir, start: dirStart, end: dirStart + dir.length };
 					push(tok, idx('keyword'));
 				}
 				// If define, highlight the macro name as macro
@@ -201,7 +201,7 @@ export function buildSemanticTokens(
 					const nameIdxInLine = text.indexOf(name, dirIdxInLine + dir.length);
 					if (nameIdxInLine >= 0) {
 						const s = t.start + nameIdxInLine;
-						const tok: Token = { kind: 'id', value: name, start: s, end: s + name.length } as any;
+						const tok: Token = { kind: 'id', value: name, start: s, end: s + name.length };
 						push(tok, idx('macro'));
 					}
 				}
@@ -248,7 +248,7 @@ export function buildSemanticTokens(
 					// Built-in function: defaultLibrary and possibly deprecated
 					let mods = bit('defaultLibrary');
 					const overloads = defs.funcs.get(t.value)!;
-					if (overloads.some(o => (o as any).deprecated)) mods |= bit('deprecated');
+					if (overloads.some(o => o.deprecated)) mods |= bit('deprecated');
 					push(t, idx('function'), mods); continue;
 				}
 				if ((analysis && analysis.functions.has(t.value)) || inIncluded) {
@@ -258,7 +258,7 @@ export function buildSemanticTokens(
 			// (types and keywords handled above)
 			if (defs.consts.has(t.value)) {
 				let mods = bit('defaultLibrary');
-				const c = defs.consts.get(t.value)! as any;
+				const c = defs.consts.get(t.value);
 				if (c && c.deprecated) mods |= bit('deprecated');
 				push(t, idx('enumMember'), mods); continue;
 			}

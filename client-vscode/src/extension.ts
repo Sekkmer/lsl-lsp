@@ -116,7 +116,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	const debugChannel = vscode.window.createOutputChannel('LSL Debug');
 	const traceChannel = vscode.window.createOutputChannel('LSL Language Server Trace');
 
-	const log = (...args: any[]) => { if (debugEnabled) debugChannel.appendLine(args.map(String).join(' ')); };
+	const log = (...args: unknown[]) => { if (debugEnabled) debugChannel.appendLine(args.map(String).join(' ')); };
 	if (devPath) log('[LSL] candidate server path ->', devPath);
 
 	const serverModule = devPath

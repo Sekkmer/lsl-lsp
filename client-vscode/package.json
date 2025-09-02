@@ -121,7 +121,7 @@
 		"package": "pnpm exec vsce package --no-dependencies && node scripts/cleanup-after-package.cjs",
 		"publish": "pnpm exec vsce publish && node scripts/cleanup-after-package.cjs",
 		"watch": "tsc -w -p tsconfig.json",
-		"lint": "eslint --ext .ts src",
-		"lint:fix": "eslint --ext .ts src --fix"
+		"lint": "eslint src",
+		"lint:fix": "eslint src --fix"
 	}
 }

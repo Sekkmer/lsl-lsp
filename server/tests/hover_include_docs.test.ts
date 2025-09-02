@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { docFrom, runPipeline } from './testUtils';
+import { docFrom, runPipeline, hoverToString } from './testUtils';
 import { lslHover } from '../src/hover';
 import { loadTestDefs } from './loadDefs.testutil';
 
@@ -34,7 +34,7 @@ describe('hover: include docs for functions/globals', async () => {
 		const hoverPos = doc.positionAt(code.indexOf('addi(') + 1);
 		const hv = lslHover(doc, { position: hoverPos }, defs, analysis, pre);
 		expect(hv).toBeTruthy();
-		const md = (hv!.contents as any).value as string;
+		const md = hoverToString(hv!);
 		expect(md).toContain('integer addi(integer a, integer b)');
 		expect(md).toMatch(/Adds two numbers \(include\)\./);
 	});
@@ -51,7 +51,7 @@ describe('hover: include docs for functions/globals', async () => {
 		const hoverPos = doc.positionAt(code.indexOf('GLOB_X') + 2);
 		const hv = lslHover(doc, { position: hoverPos }, defs, analysis, pre);
 		expect(hv).toBeTruthy();
-		const md = (hv!.contents as any).value as string;
+		const md = hoverToString(hv!);
 		expect(md).toContain('integer GLOB_X');
 		expect(md).toMatch(/global in header/);
 	});

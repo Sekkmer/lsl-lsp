@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { docFrom, runPipeline } from './testUtils';
+import { docFrom, runPipeline, type SemSpan } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
 import { semanticTokensLegend } from '../src/semtok';
 
@@ -36,8 +36,8 @@ integer ParseKeyList(string message)
 		const unusedLocal = analysis.diagnostics.find(d => d.code === 'LSL101' && d.message.includes('count'));
 		expect(unusedLocal).toBeFalsy();
 		// Semantic tokens: any variable/parameter span for 'count' should be readonly (assigned once)
-		const spans = ((): { line: number; char: number; len: number; type: number; mod: number }[] => {
-			const out: any[] = [];
+		const spans = ((): SemSpan[] => {
+			const out: SemSpan[] = [];
 			const d = sem.data; let line = 0; let ch = 0;
 			for (let i = 0; i < d.length; i += 5) { line += d[i]; if (d[i] !== 0) ch = 0; ch += d[i+1]; out.push({ line, char: ch, len: d[i+2], type: d[i+3], mod: d[i+4] }); }
 			return out;

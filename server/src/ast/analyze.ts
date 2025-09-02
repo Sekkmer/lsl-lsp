@@ -2,7 +2,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range } from 'vscode-languageserver/node';
 import type { Defs } from '../defs';
 import type { PreprocResult } from '../core/preproc';
-import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, TYPES } from './index';
+import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, TYPES, Stmt } from './index';
 import { validateOperatorsFromAst } from '../op_validate_ast';
 import type { SimpleType } from './infer';
 import { inferExprTypeFromAst } from './infer';
@@ -28,9 +28,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 
 	// Track label declarations within the current function/event body (for validating jump targets)
 	let currentLabels: Set<string> | null = null;
-	function collectLabels(stmt: any): Set<string> {
+	function collectLabels(stmt: Stmt | null): Set<string> {
 		const labels = new Set<string>();
-		function visit(s: any) {
+		function visit(s: Stmt | null) {
 			if (!s) return;
 			switch (s.kind) {
 				case 'BlockStmt': for (const ch of s.statements) visit(ch); break;
@@ -134,8 +134,13 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 
 	// Convert AST diagnostics into LSP diagnostics (these are also surfaced by the server separately)
 	for (const d of script.diagnostics || []) {
+		const diagCode = ((): import('../analysisTypes').DiagCode => {
+			const v = d.code as unknown;
+			const allowed = Object.values(LSL_DIAGCODES) as string[];
+			return (typeof v === 'string' && allowed.includes(v)) ? (v as import('../analysisTypes').DiagCode) : LSL_DIAGCODES.SYNTAX;
+		})();
 		diagnostics.push({
-			code: (d.code as any) || LSL_DIAGCODES.SYNTAX,
+			code: diagCode,
 			message: d.message,
 			range: spanToRange(doc, d.span),
 			severity: d.severity === 'warning' ? DiagnosticSeverity.Warning : d.severity === 'info' ? DiagnosticSeverity.Information : DiagnosticSeverity.Error,
@@ -148,7 +153,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	// Helper: find the identifier range for a given name inside a node's span
 	// If headerOnly is true, search only up to the first '{' to avoid matching inside bodies
 	function findNameRangeInSpan(name: string, span: { start: number; end: number }, headerOnly = false): Range {
-		const fullRange = spanToRange(doc, span as any);
+		const fullRange = spanToRange(doc, span);
 		const startOff = doc.offsetAt(fullRange.start);
 		const endOff = doc.offsetAt(fullRange.end);
 		let slice = doc.getText().slice(startOff, endOff);
@@ -207,7 +212,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				severity: DiagnosticSeverity.Error,
 			});
 		}
-		const d: Decl = { name, range: findNameRangeInSpan(name, f.span, true), kind: 'func', type: (f.returnType as any) ?? undefined, params: [] };
+		const d: Decl = { name, range: findNameRangeInSpan(name, f.span, true), kind: 'func', type: (f.returnType ?? undefined), params: [] };
 		// Enrich with full/header/body ranges
 		try {
 			const fullR = spanToRange(doc, f.span);
@@ -237,7 +242,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		} catch { /* ignore */ }
 		decls.push(d); states.set(name, d);
 		for (const ev of st.events) {
-			const evDecl: Decl = { name: ev.name, range: findNameRangeInSpan(ev.name, ev.span, true), kind: 'event', params: [...ev.parameters].map(([n, t]) => ({ name: n, type: t })) } as any;
+			const evDecl: Decl = { name: ev.name, range: findNameRangeInSpan(ev.name, ev.span, true), kind: 'event', params: [...ev.parameters].map(([n, t]) => ({ name: n, type: t })) };
 			// Ranges for event declaration
 			try {
 				const fullR = spanToRange(doc, ev.span);
@@ -246,7 +251,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				const headerEndOff = braceIdx >= 0 ? (doc.offsetAt(fullR.start) + braceIdx) : doc.offsetAt(fullR.start);
 				const headerRange = { start: fullR.start, end: doc.positionAt(headerEndOff) };
 				const bodyRange = braceIdx >= 0 ? { start: doc.positionAt(headerEndOff), end: fullR.end } : undefined;
-				(evDecl as any).fullRange = fullR; (evDecl as any).headerRange = headerRange; (evDecl as any).bodyRange = bodyRange;
+				evDecl.fullRange = fullR; evDecl.headerRange = headerRange; evDecl.bodyRange = bodyRange;
 			} catch { /* ignore */ }
 			decls.push(evDecl);
 		}
@@ -257,8 +262,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	// - Skip this check for files that look like headers (path contains "/include/" or common include guards like #pragma once / #ifndef INCLUDE_)
 	// - Match only real event handler definitions: "eventName(type name, ...) {" (no return type before), not mere prototypes/macros
 	if (script.states.size === 0) {
-		const text: string = (doc as any).getText ? (doc as any).getText() : '';
-		const uri: string = (doc as any).uri || '';
+		const text: string = doc.getText ? doc.getText() : '';
+		const uri: string = doc.uri || '';
 		const startsWithPreproc = /^[\s\r\n]*#/.test(text);
 		const headerLike = /\/include\//.test(uri)
 			|| /^[ \t]*#pragma\s+once/m.test(text)
@@ -431,7 +436,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		}
 		// Collect returns and compute simple all-paths-return for top-level body
 		const returns: { expr?: Expr; span: { start: number; end: number } }[] = [];
-		function scanReturns(stmt: any) {
+		function scanReturns(stmt: Stmt) {
 			if (!stmt) return;
 			switch (stmt.kind) {
 				case 'ReturnStmt': returns.push({ expr: stmt.expression, span: stmt.span }); break;
@@ -444,7 +449,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 		}
 		// helper: does this statement guarantee a return along all paths?
-		function allPathsReturn(stmt: any): boolean {
+		function allPathsReturn(stmt: Stmt): boolean {
 			if (!stmt) return false;
 			switch (stmt.kind) {
 				case 'ReturnStmt': return true;
@@ -493,14 +498,14 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (returnType === 'void') {
 			for (const r of returns) {
 				if (r.expr) {
-					diagnostics.push({ code: LSL_DIAGCODES.RETURN_IN_VOID, message: 'Returning a value in a void function', range: spanToRange(doc, r.span as any), severity: DiagnosticSeverity.Warning });
+					diagnostics.push({ code: LSL_DIAGCODES.RETURN_IN_VOID, message: 'Returning a value in a void function', range: spanToRange(doc, r.span), severity: DiagnosticSeverity.Warning });
 				}
 			}
 		} else {
 			for (const r of returns) {
 				const t = r.expr ? normalizeType(inferTypeOf(r.expr, ts)) : 'void';
-				if (r.expr && !typesCompatible((returnType as any), t)) {
-					diagnostics.push({ code: LSL_DIAGCODES.RETURN_WRONG_TYPE, message: `Function ${fn.name} returns ${returnType} but returning ${t}`, range: spanToRange(doc, r.span as any), severity: DiagnosticSeverity.Error });
+				if (r.expr && !typesCompatible(returnType, t)) {
+					diagnostics.push({ code: LSL_DIAGCODES.RETURN_WRONG_TYPE, message: `Function ${fn.name} returns ${returnType} but returning ${t}`, range: spanToRange(doc, r.span), severity: DiagnosticSeverity.Error });
 				}
 			}
 			const guaranteed = allPathsReturn(fn.body);
@@ -543,9 +548,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		currentLabels = savedLabels;
 	}
 
-	function inferTypeOf(e: Expr, typeScope: any): string {
+	type TypeScopeView = { view: Map<string, SimpleType> | ReadonlyMap<string, SimpleType> };
+	function inferTypeOf(e: Expr, typeScope: TypeScopeView): string {
 		// Use direct import to work in both test and build environments
-		return inferExprTypeFromAst(e, typeScope.view) as string;
+		const v = typeScope.view as Map<string, SimpleType>;
+		return inferExprTypeFromAst(e, v) as string;
 	}
 
 	function typesCompatible(expected: string, got: string): boolean {
@@ -668,7 +675,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		validateOperatorsFromAst(doc, [expr], diagnostics, typeScope.view, functionReturnTypes, callSignatures);
 	}
 
-	function visitStmt(stmt: any, scope: Scope, typeScope: TypeScope) {
+	function visitStmt(stmt: Stmt | null, scope: Scope, typeScope: TypeScope) {
 		if (!stmt) return;
 		switch (stmt.kind) {
 			case 'BlockStmt': {
@@ -794,7 +801,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 		}
 		// Dead code detection: if next statement starts on same line after a terminating stmt (return/state-change/jump)
-		const term = (s: any) => s && (s.kind === 'ReturnStmt' || s.kind === 'StateChangeStmt' || s.kind === 'JumpStmt');
+		const term = (s: Stmt | null) => s && (s.kind === 'ReturnStmt' || s.kind === 'StateChangeStmt' || s.kind === 'JumpStmt');
 		if (term(stmt)) {
 			// We don't have direct access to following tokens here; approximate by comparing end line of this stmt to start line of next sibling within a containing block.
 			// This check is best-effort: actual parser already slices spans including semicolons, so next sibling starting on same line can be detected at block visit.
@@ -840,7 +847,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		prev.push(params);
 		callSignatures.set(name, prev);
 		// Return type
-		const r = toSimpleType((f.returnType as any) || 'void');
+		const r = toSimpleType(f.returnType || 'void');
 		functionReturnTypes.set(name, r);
 		// no separate void set needed; we record 'void' in functionReturnTypes
 	}
@@ -861,7 +868,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				// If this function already exists in built-in defs or is defined in the current script,
 				// report a duplicate declaration error at the include site and do not import the signature.
 				if (defs.funcs.has(name) || localFuncNames.has(name)) {
-					const where = rangeForIncludeFile((info as any).file || '');
+					const where = rangeForIncludeFile(info.file || '');
 					diagnostics.push({
 						code: LSL_DIAGCODES.DUPLICATE_DECL,
 						message: `Duplicate declaration of function ${name} from include` + (defs.funcs.has(name) ? ' (conflicts with built-in)' : ' (conflicts with local function)'),
@@ -917,7 +924,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	for (const [, g] of script.globals) {
 		if (g.initializer) {
 			// Walk the initializer to record refs and surface UNKNOWN_IDENTIFIER, then validate operators/types
-			walkExpr(g.initializer as any, globalScope, globalTypeScope);
+			walkExpr(g.initializer, globalScope, globalTypeScope);
 			validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures);
 		}
 	}

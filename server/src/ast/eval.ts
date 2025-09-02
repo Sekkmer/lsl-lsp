@@ -410,11 +410,11 @@ export function evalExpr(expr: Expr | null, env: Env = new Env()): Value {
 			// Only resolve simple identifier callee to a runtime function (if present)
 			if (expr.callee.kind !== 'Identifier') return runtime.unknown('integer');
 			const name = expr.callee.name as keyof typeof runtime;
-			const fn = (runtime as any)[name];
+			const fn = runtime[name] as (...args: Value[]) => Value;
 			if (typeof fn === 'function') {
 				const args = expr.args.map(a => evalExpr(a, env));
 				try {
-					return fn(...args) as Value;
+					return fn(...args);
 				} catch {
 					return runtime.unknown('integer');
 				}
@@ -564,14 +564,7 @@ export function evalStmt(stmt: Stmt, env: Env = new Env()): Value | null {
 		case 'LabelStmt':
 			return null;
 
-		case 'StateChangeStmt': {
-			// Record the state change if the environment supports it
-			const anyEnv = env as any;
-			if (typeof anyEnv.setState === 'function') anyEnv.setState(stmt.state);
-			else anyEnv.nextState = stmt.state;
-			// In LSL, "state X;" ends the current event immediately. Signal outward to abort.
-			throw new StateChangeSignal(stmt.state);
-		}
+		case 'StateChangeStmt': throw new StateChangeSignal(stmt.state);
 
 		case 'BlockStmt': {
 			const innerEnv = env.child();
@@ -589,7 +582,7 @@ export function evalStmt(stmt: Stmt, env: Env = new Env()): Value | null {
 				try {
 					const out = evalStmt(s, innerEnv);
 					if (out !== null) return out;
-				} catch (sig: any) {
+				} catch (sig: unknown) {
 					if (sig instanceof JumpSignal) {
 						// If this block owns the label, reposition; otherwise bubble out
 						const idx = labels.get(sig.label);

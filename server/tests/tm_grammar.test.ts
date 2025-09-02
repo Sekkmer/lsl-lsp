@@ -8,8 +8,6 @@ type TMRule = {
 	end?: string;
 	match?: string;
 	patterns?: TMRule[];
-	beginCaptures?: any;
-	captures?: any;
 };
 
 function loadGrammar(): { scopeName: string; patterns: TMRule[] } {
@@ -30,7 +28,7 @@ function findRuleByName(root: TMRule[] | undefined, name: string): TMRule | unde
 }
 
 function collectMatches(rule: TMRule, out: string[] = []): string[] {
-	if ((rule as any).match) out.push((rule as any).match);
+	if (rule.match) out.push(rule.match);
 	for (const p of rule.patterns || []) collectMatches(p, out);
 	return out;
 }
