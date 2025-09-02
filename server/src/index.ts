@@ -504,6 +504,17 @@ async function validateTextDocument(doc: TextDocument) {
 		}
 		// swallow
 	}
+
+	// After diagnostics, send disabled ranges for editor decoration
+	try {
+		const ranges = (pre.disabledRanges || []).map(r => ({
+			start: { line: doc.positionAt(r.start).line, character: doc.positionAt(r.start).character },
+			end: { line: doc.positionAt(r.end).line, character: doc.positionAt(r.end).character }
+		}));
+		connection.sendNotification('lsl/disabledRanges', { uri: doc.uri, ranges });
+	} catch {
+		// non-fatal
+	}
 }
 
 connection.onCompletion((params: CompletionParams, token): CompletionItem[] => {

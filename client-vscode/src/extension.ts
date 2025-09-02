@@ -5,6 +5,95 @@ import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, St
 
 let client: LanguageClient;
 
+// Decoration for disabled ranges (dim text)
+let disabledDecoration: vscode.TextEditorDecorationType | null = null;
+// Cache disabled ranges per document URI as LSP-like ranges
+const disabledRangesByUri = new Map<string, { start: { line: number; character: number }, end: { line: number; character: number } }[]>();
+
+function ensureDecoration(): vscode.TextEditorDecorationType {
+	if (!disabledDecoration) {
+		disabledDecoration = vscode.window.createTextEditorDecorationType({
+			opacity: '0.45',
+			// Don't underline/overdraw; just dim text
+			rangeBehavior: vscode.DecorationRangeBehavior.OpenOpen,
+		});
+	}
+	return disabledDecoration;
+}
+
+function findMergeConflictBlocks(doc: vscode.TextDocument): vscode.Range[] {
+	const out: vscode.Range[] = [];
+	const lineCount = doc.lineCount;
+	let i = 0;
+	while (i < lineCount) {
+		const text = doc.lineAt(i).text;
+		if (/^<{7}/.test(text)) {
+			const start = new vscode.Position(i, 0);
+			let hasSep = false;
+			let endLine = i;
+			let j = i + 1;
+			for (; j < lineCount; j++) {
+				const t = doc.lineAt(j).text;
+				if (!hasSep && /^={7}/.test(t)) hasSep = true;
+				if (/^>{7}/.test(t)) { endLine = j; j++; break; }
+			}
+			const end = new vscode.Position(endLine, doc.lineAt(endLine).text.length);
+			out.push(new vscode.Range(start, end));
+			i = Math.max(i + 1, j);
+			continue;
+		}
+		i++;
+	}
+	return out;
+}
+
+function subtractRanges(doc: vscode.TextDocument, base: vscode.Range[], subtract: vscode.Range[]): vscode.Range[] {
+	if (!subtract.length) return base;
+	const result: vscode.Range[] = [];
+	for (const a of base) {
+		let segments: vscode.Range[] = [a];
+		for (const b of subtract) {
+			const newSegs: vscode.Range[] = [];
+			for (const s of segments) {
+				if (s.end.isBeforeOrEqual(b.start) || s.start.isAfterOrEqual(b.end)) {
+					newSegs.push(s);
+					continue;
+				}
+				const aStart = doc.offsetAt(s.start);
+				const aEnd = doc.offsetAt(s.end);
+				const bStart = doc.offsetAt(b.start);
+				const bEnd = doc.offsetAt(b.end);
+				// Left part if any
+				if (aStart < bStart) {
+					newSegs.push(new vscode.Range(doc.positionAt(aStart), doc.positionAt(Math.max(aStart, Math.min(aEnd, bStart)))));
+				}
+				// Right part if any
+				if (bEnd < aEnd) {
+					newSegs.push(new vscode.Range(doc.positionAt(Math.min(aEnd, Math.max(aStart, bEnd))), doc.positionAt(aEnd)));
+				}
+			}
+			segments = newSegs;
+		}
+		for (const s of segments) if (!s.isEmpty) result.push(s);
+	}
+	return result;
+}
+
+function applyDisabledDecorationsForEditor(editor: vscode.TextEditor) {
+	const uri = editor.document.uri.toString();
+	const data = disabledRangesByUri.get(uri);
+	const deco = ensureDecoration();
+	if (!data || data.length === 0) {
+		editor.setDecorations(deco, []);
+		return;
+	}
+	const doc = editor.document;
+	const conflicts = findMergeConflictBlocks(doc);
+	const ranges = data.map(r => new vscode.Range(new vscode.Position(r.start.line, r.start.character), new vscode.Position(r.end.line, r.end.character)));
+	const filtered = subtractRanges(doc, ranges, conflicts);
+	editor.setDecorations(deco, filtered);
+}
+
 export async function activate(context: vscode.ExtensionContext) {
 	// In dev, prefer a fixed repo server path relative to the extension folder,
 	// so it works even when VS Code opens a different workspace.
@@ -154,6 +243,30 @@ export async function activate(context: vscode.ExtensionContext) {
 				});
 		}
 	});
+
+	// Listen for disabled ranges and decorate editors
+	client.onNotification('lsl/disabledRanges', async (payload: { uri: string, ranges: { start: { line: number; character: number }, end: { line: number; character: number } }[] }) => {
+		try {
+			disabledRangesByUri.set(payload.uri, payload.ranges || []);
+			// Apply to any visible editor with this URI
+			for (const ed of vscode.window.visibleTextEditors) {
+				if (ed.document.uri.toString() === payload.uri) applyDisabledDecorationsForEditor(ed);
+			}
+		} catch {
+			/* ignore */
+		}
+	});
+
+	// Update decorations when visible editors change or document content changes (to re-evaluate conflict blocks)
+	context.subscriptions.push(vscode.window.onDidChangeVisibleTextEditors(eds => {
+		for (const ed of eds) applyDisabledDecorationsForEditor(ed);
+	}));
+	context.subscriptions.push(vscode.workspace.onDidChangeTextDocument(ev => {
+		for (const ed of vscode.window.visibleTextEditors) {
+			if (ed.document === ev.document) applyDisabledDecorationsForEditor(ed);
+		}
+	}));
+
 	await client.start();
 	// Set trace level from config
 	switch (traceLevel) {
@@ -162,9 +275,13 @@ export async function activate(context: vscode.ExtensionContext) {
 		case 'verbose': client.setTrace(Trace.Verbose); break;
 	}
 	status.text = 'LSL: running';
-	context.subscriptions.push({ dispose: () => client.stop() });
+	context.subscriptions.push({ dispose: () => {
+		client.stop();
+		if (disabledDecoration) disabledDecoration.dispose();
+	}});
 }
 
 export function deactivate(): Thenable<void> | undefined {
+	if (disabledDecoration) { disabledDecoration.dispose(); disabledDecoration = null; }
 	return client ? client.stop() : undefined;
 }
