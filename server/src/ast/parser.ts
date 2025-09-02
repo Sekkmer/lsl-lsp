@@ -3,11 +3,10 @@
 	It uses the preprocessor to get macro tables and disabled ranges, then tokenizes
 	the active code, attaches leading comments as `comment` on decl nodes.
 */
-import { TextDocument } from 'vscode-languageserver-textdocument';
 import type { Expr, Stmt, Script, Function as FnNode, State, Event, Type, Span, Diagnostic } from './index';
 import { isType, spanFrom } from './index';
 import { Lexer, type Token, type MacroTables } from './lexer';
-import { preprocess } from '../preproc';
+import { preprocessForAst } from '../core/pipeline';
 import { basenameFromUri } from '../builtins';
 
 type ParseOptions = {
@@ -16,12 +15,13 @@ type ParseOptions = {
 };
 
 export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', opts?: ParseOptions): Script {
-	// Run preprocessor to collect macros and disabled ranges
-	const doc = TextDocument.create(uri, 'lsl', 0, text);
-	const pre = preprocess(doc, opts?.macros ?? {}, opts?.includePaths ?? [], {} as any);
-	const macros: MacroTables = { obj: pre.macros, fn: pre.funcMacros };
-	// Derive a basename for __FILE__ from the URI
+	// Run new tokenizer+macro pipeline to collect macros and disabled ranges
+	const fromPath = uri.startsWith('file://') ? require('vscode-uri').URI.parse(uri).fsPath : undefined;
+	// Derive a basename for __FILE__ from the URI and inject as a built-in define for conditional evaluation
 	const basename = basenameFromUri(uri);
+	const baseDefines = { ...(opts?.macros ?? {}), __FILE__: basename };
+	const pre = preprocessForAst(text, { includePaths: opts?.includePaths ?? [], fromPath, defines: baseDefines });
+	const macros: MacroTables = { obj: pre.macros, fn: pre.funcMacros };
 	const lx = new Lexer(text, { macros, disabled: pre.disabledRanges, filename: basename });
 	const P = new Parser(lx, text);
 	return P.parseScript();
@@ -124,19 +124,22 @@ class Parser {
 			let t = nextRaw();
 			while (isTrivia(t)) t = nextRaw();
 			// push back for normal consumption by parser.next()
-			this.lx.pushBack(t);
+			if (t.kind !== 'eof') this.lx.pushBack(t);
 			t0 = t;
 		}
 		out.push(t0);
+		// If we're already at EOF, don't attempt to pull further tokens
+		if (t0.kind === 'eof') { this.look = savedLook; return out; }
 		// Collect further tokens by pulling from lexer and then pushing back
 		for (let i = 1; i < k; i++) {
 			let t = nextRaw();
 			while (isTrivia(t)) t = nextRaw();
 			out.push(t);
+			if (t.kind === 'eof') break;
 		}
 		// Restore stream: push back only tokens after the first in reverse order.
 		// The first token is either already stored in this.look or was already pushBack'ed above.
-		for (let i = out.length - 1; i >= 1; i--) this.lx.pushBack(out[i]!);
+		for (let i = out.length - 1; i >= 1; i--) { const t = out[i]!; if (t.kind !== 'eof') this.lx.pushBack(t); }
 		// Restore look token
 		this.look = savedLook;
 		return out;
@@ -244,7 +247,13 @@ class Parser {
 	private parseParamList(): Map<string, Type> {
 		// we are after '('
 		const params = new Map<string, Type>();
+		let guard = 0;
 		while (!this.maybe('punct', ')')) {
+			// EOF/stuck protection
+			if (this.peek().kind === 'eof') { this.report(this.peek(), "missing ) to close parameter list", 'LSL000'); break; }
+			// If we encounter a block start before closing ')', assume missing ')' and recover
+			if (this.peek().kind === 'punct' && this.peek().value === '{') { this.report(this.peek(), "missing ) to close parameter list", 'LSL000'); break; }
+			if (++guard > 10000) { this.report(this.peek(), 'parser recovery limit in parameter list', 'LSL000'); break; }
 			const tType = this.next();
 			if (!(tType.kind === 'keyword' && isType(tType.value))) throw this.err(tType, 'expected param type');
 			const tName = this.eatNameToken();
@@ -398,7 +407,57 @@ class Parser {
 					this.report(look, 'missing } before next declaration', 'LSL000');
 					break;
 				}
-				if (isFuncDecl) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
+				if (isFuncDecl) {
+					// Heuristic: if the immediate non-trivia character before this token is '}',
+					// assume the enclosing block just ended and avoid a spurious LSL000.
+					// This helps when preprocessor boundaries or recovery consumed the '}' token
+					// before we observed it here.
+					const prevNonTrivia = (() => {
+						let i = look.span.start - 1;
+						// skip whitespace
+						while (i >= 0) {
+							const ch = this.src[i]!;
+							if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') { i--; continue; }
+							// skip line comments
+							if (ch === '\n') { i--; continue; }
+							// crude skip for block comments/endings handled above in scanning forward paths
+							return ch;
+						}
+						return '';
+					})();
+					if (prevNonTrivia === '}') { break; }
+					this.report(look, 'missing } before next declaration', 'LSL000');
+					break;
+				}
+			}
+			// Recovery for missing '}' before an 'else' that begins a line inside a block.
+			// Treat this as the end of the current block and let the enclosing parser (e.g., parseIf)
+			// consume the 'else'. Do not consume 'else' here.
+			if (look.kind === 'keyword' && look.value === 'else' && this.atLineStart(look.span.start)) {
+				// Only attach an 'else' to the preceding IfStmt when the raw source contains a
+				// closing '}' immediately before 'else' (possibly inside a disabled preprocessor range).
+				// This keeps the grammar sound while still handling preprocessor-split branches.
+				let j = look.span.start - 1;
+				while (j >= 0) { const ch = this.src[j]!; if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') { j--; continue; } break; }
+				const prevCh = j >= 0 ? this.src[j]! : '';
+				if (prevCh === '}' && statements.length > 0) {
+					const prev = statements[statements.length - 1] as any;
+					if (prev && prev.kind === 'IfStmt' && !prev.else) {
+						this.eat('keyword', 'else');
+						let elseStmt: Stmt;
+						if (this.peek().kind === 'keyword' && this.peek().value === 'if') elseStmt = this.parseIf(inFunctionOrEvent);
+						else if (this.peek().kind === 'punct' && this.peek().value === '{') elseStmt = this.parseBlock(inFunctionOrEvent);
+						else elseStmt = this.parseStmtInner(inFunctionOrEvent);
+						prev.else = elseStmt;
+						(prev as any).span = spanFrom(prev.span.start, elseStmt.span.end);
+						continue;
+					}
+				}
+				// No matching if (or no preceding '}'): report and consume the stray else to avoid stalling
+				this.report(look, "unexpected 'else' without matching 'if'", 'LSL000');
+				this.next();
+				try { this.parseStmtInner(inFunctionOrEvent); } catch { /* ignore; already reported */ }
+				continue;
 			}
 			// tolerate EOF to avoid crashes
 			if (this.peek().kind === 'eof') { this.report(this.peek(), 'missing } before end of file', 'LSL000'); break; }
@@ -560,6 +619,7 @@ class Parser {
 		if (t.kind === 'punct' && t.value === ';') { const semi = this.next(); return { span: semi.span, kind: 'EmptyStmt' } as Stmt; }
 		// block
 		if (t.kind === 'punct' && t.value === '{') return this.parseBlock(inFunctionOrEvent);
+		// Standalone 'else' is handled at the block level to allow attaching to the previous IfStmt.
 		// if/while/for/return
 		if (t.kind === 'keyword') {
 			switch (t.value) {
@@ -848,7 +908,12 @@ class Parser {
 		if (t.kind === 'punct' && t.value === '[') {
 			// list literal [a, b, c]
 			const elements: Expr[] = [];
-			while (!this.maybe('punct', ']')) { const e = this.parseExpr(); elements.push(e); this.maybe('punct', ','); }
+			let guard = 0;
+			while (!this.maybe('punct', ']')) {
+				if (this.peek().kind === 'eof') { this.report(this.peek(), 'missing ] to close list literal', 'LSL000'); break; }
+				if (++guard > 20000) { this.report(this.peek(), 'parser recovery limit in list literal', 'LSL000'); break; }
+				const e = this.parseExpr(); elements.push(e); this.maybe('punct', ',');
+			}
 			return this.parsePostfix({ span: spanFrom(t.span.start, this.peek().span.end), kind: 'ListLiteral', elements });
 		}
 		if ((t.kind === 'punct' && t.value === '<') || (t.kind === 'op' && t.value === '<')) {
@@ -879,7 +944,13 @@ class Parser {
 		for (; ;) {
 			if (this.maybe('punct', '(')) {
 				const args: Expr[] = [];
-				while (!this.maybe('punct', ')')) { const e = this.parseExpr(); args.push(e); this.maybe('punct', ','); }
+				let guard = 0;
+				while (!this.maybe('punct', ')')) {
+					// Prevent runaway EOF loops when ')' is missing
+					if (this.peek().kind === 'eof') { this.report(this.peek(), 'missing ) to close call', 'LSL000'); break; }
+					if (++guard > 20000) { this.report(this.peek(), 'parser recovery limit in call args', 'LSL000'); break; }
+					const e = this.parseExpr(); args.push(e); this.maybe('punct', ',');
+				}
 				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Call', callee: expr, args } as any;
 				continue;
 			}

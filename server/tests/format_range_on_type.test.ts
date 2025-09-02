@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Range } from 'vscode-languageserver/node';
-import { PreprocResult } from '../src/preproc';
+import type { PreprocResult } from '../src/core/preproc';
 import { formatRangeEdits, type FormatSettings } from '../src/format';
 
 function mkDoc(text: string) {
@@ -9,7 +9,7 @@ function mkDoc(text: string) {
 }
 
 function mkPre(): PreprocResult {
-	return { disabledRanges: [], includeTargets: [], includeSymbols: new Map(), missingIncludes: [] } as any;
+	return { disabledRanges: [], macros: {}, funcMacros: {}, includes: [], includeTargets: [], includeSymbols: new Map() } as any;
 }
 
 const fmtSettings: FormatSettings = { enabled: true, braceStyle: 'same-line' };
@@ -53,5 +53,20 @@ describe('range and on-type formatting', () => {
 		expect(out).toContain('for (i = 0; i < 10; i++)');
 		// ensure space before opening brace on same line style
 		expect(out).toContain(') {');
+	});
+
+	it('range formatting inside disabled region honors outside context', () => {
+		const src = '#if 0\n\tif(true){\n\t\tllOwnerSay("a,b");\n\t}\n#endif\n';
+		const doc = mkDoc(src);
+		// Disabled range spans from after #if 0 to before #endif
+		const disStart = src.indexOf('\n') + 1;
+		const disEnd = src.lastIndexOf('\n');
+		const pre: PreprocResult = { disabledRanges: [{ start: disStart, end: disEnd }], macros: {}, funcMacros: {}, includes: [], includeTargets: [], includeSymbols: new Map() } as any;
+		// Select just the 'a,b' inside the disabled region
+		const selStart = doc.positionAt(src.indexOf('a,b'));
+		const range = { start: selStart, end: { line: selStart.line, character: selStart.character + 3 } };
+		const edits = formatRangeEdits(doc, pre, fmtSettings, range);
+		expect(edits.length).toBe(1);
+		expect(edits[0].newText).toBe('a, b');
 	});
 });

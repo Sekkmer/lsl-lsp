@@ -2,7 +2,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Range, TextEdit } from 'vscode-languageserver/node';
 import { URI } from 'vscode-uri';
 import type { Analysis } from './analysisTypes';
-import type { PreprocResult } from './preproc';
+import type { PreprocResult } from './core/preproc';
 import type { Defs } from './defs';
 
 export type SimpleToken = { kind: string; value: string; start: number; end: number };

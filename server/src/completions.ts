@@ -5,7 +5,7 @@ import {
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs, normalizeType } from './defs';
 import type { Analysis } from './analysisTypes';
-import type { PreprocResult } from './preproc';
+import type { PreprocResult } from './core/preproc';
 import path from 'node:path';
 import fs from 'node:fs';
 
@@ -167,7 +167,7 @@ export function lslCompletions(
 				if (!seenNames.has(gname)) items.push(scored({ label: gname, kind: CompletionItemKind.Variable }));
 			}
 			for (const [fname, f] of info.functions) {
-				const sig = `${f.returns} ${fname}(${f.params.map(p => `${p.type}${p.name ? ' ' + p.name : ''}`).join(', ')})`;
+				const sig = `${f.returns} ${fname}(${f.params.map((p: { type: string; name?: string }) => `${p.type}${p.name ? ' ' + p.name : ''}`).join(', ')})`;
 				items.push(typeScored({ label: fname, kind: CompletionItemKind.Function, detail: sig }, f.returns));
 			}
 		}

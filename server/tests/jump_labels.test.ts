@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { docFrom, runPipeline } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
-import { LSL_DIAGCODES } from '../src/parser';
+import { LSL_DIAGCODES } from '../src/analysisTypes';
 
 describe('jump label handling', () => {
 	it('does not flag jump target when label exists', async () => {

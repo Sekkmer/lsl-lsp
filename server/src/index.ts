@@ -24,7 +24,8 @@ import {
 } from 'vscode-languageserver/node';
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { loadDefs, Defs } from './defs';
-import { preprocess, PreprocResult } from './preproc';
+import type { PreprocResult } from './core/preproc';
+import { preprocessForAst } from './core/pipeline';
 import { lex } from './lexer';
 import { Analysis, LSL_DIAGCODES } from './analysisTypes';
 import { semanticTokensLegend, buildSemanticTokens } from './semtok';
@@ -41,6 +42,7 @@ import { prepareRename as navPrepareRename, computeRenameEdits, findAllReference
 import { parseScriptFromText } from './ast/parser';
 import { analyzeAst } from './ast/analyze';
 import { isType } from './ast';
+import { preprocessMacros } from './core/pipeline';
 
 const connection: Connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -78,10 +80,150 @@ type PipelineCache = {
 	// AST script used by the analysis pipeline
 	ast?: import('./ast').Script;
 	sem?: SemanticTokens & { resultId?: string };
+	// Track macros-only includes to avoid unnecessary reindex work
+	macrosOnlyIncludes?: string[];
+	// Hash of macros+includePaths to guard cache reuse
+	configHash: number;
 };
 const pipelineCache = new Map<string, PipelineCache>(); // key: doc.uri
 // Reverse include index: include file URI -> set of doc URIs that include it
 const includeToDocs = new Map<string, Set<string>>();
+
+// ------------------------
+// Include symbols indexing
+// ------------------------
+type IncludeFunction = { name: string; returns: string; params: { type: string; name?: string }[]; line: number; col: number; endCol: number; doc?: string };
+type IncludeGlobal = { name: string; type: string; line: number; col: number; endCol: number; doc?: string };
+type IncludeMacro = { name: string; line: number; col: number; endCol: number };
+type IncludeInfo = {
+	file: string;
+	functions: Map<string, IncludeFunction>;
+	globals: Map<string, IncludeGlobal>;
+	macroObjs: Map<string, IncludeMacro>;
+	macroFuncs: Map<string, IncludeMacro>;
+	states: Set<string>;
+};
+
+type IncludeCacheEntry = { mtimeMs: number; info: IncludeInfo };
+const includeSymbolsCache = new Map<string, IncludeCacheEntry>();
+
+function cleanBlockDoc(raw: string): string {
+	const lines = raw.split(/\r?\n/);
+	const body = lines.map(l => l.replace(/^\s*\*\s?/, '').trimEnd());
+	// drop leading/trailing empty lines
+	while (body.length && body[0].trim() === '') body.shift();
+	while (body.length && body[body.length - 1].trim() === '') body.pop();
+	return body.join('\n');
+}
+
+function parseIncludeSymbols(file: string): IncludeInfo | null {
+	try {
+		const fs = require('node:fs') as typeof import('node:fs');
+		const stat = fs.statSync(file);
+		const mtimeMs = Number(stat?.mtimeMs ?? 0) || 0;
+		const cached = includeSymbolsCache.get(file);
+		if (cached && cached.mtimeMs === mtimeMs) return cached.info;
+		const text = fs.readFileSync(file, 'utf8');
+		const lines = text.split(/\r?\n/);
+		const info: IncludeInfo = {
+			file,
+			functions: new Map(),
+			globals: new Map(),
+			macroObjs: new Map(),
+			macroFuncs: new Map(),
+			states: new Set(),
+		};
+		let pendingDoc: string | null = null;
+		let braceDepth = 0;
+		for (let i = 0; i < lines.length; i++) {
+			const rawLine = lines[i]!;
+			const L = rawLine;
+			// Detect single-line block comment used as doc: /* ... */
+			const mSingle = /^\s*\/\*([\s\S]*?)\*\/\s*$/.exec(L);
+			if (mSingle) {
+				pendingDoc = cleanBlockDoc(mSingle[1] || '');
+				// consumed as pending doc; continue
+				continue;
+			}
+			// Detect start of multiline block doc /** ... */ accumulating until end
+			if (/^\s*\/\*/.test(L) && !/\*\//.test(L)) {
+				let body = L.replace(/^\s*\/\*/, '');
+				let j = i + 1;
+				for (; j < lines.length; j++) {
+					const ln = lines[j]!;
+					body += '\n' + ln;
+					if (/\*\//.test(ln)) { j++; break; }
+				}
+				i = j - 1;
+				// Trim closing */
+				body = body.replace(/\*\/\s*$/, '');
+				pendingDoc = cleanBlockDoc(body);
+				// consumed as pending doc; continue
+				continue;
+			}
+			// Strip line comments for matching, but keep for macro line position
+			const noLineComments = L.replace(/\/\/.*$/, '');
+			// Macros (object-like)
+			let m = /^\s*#\s*define\s+([A-Za-z_]\w*)(?!\s*\()/.exec(L);
+			if (m) {
+				const name = m[1]!;
+				const col = L.indexOf(name);
+				info.macroObjs.set(name, { name, line: i, col: col >= 0 ? col : 0, endCol: (col >= 0 ? col + name.length : 0) });
+				pendingDoc = null; continue;
+			}
+			// Macros (function-like)
+			m = /^\s*#\s*define\s+([A-Za-z_]\w*)\s*\(.*\)/.exec(L);
+			if (m) {
+				const name = m[1]!;
+				const col = L.indexOf(name);
+				info.macroFuncs.set(name, { name, line: i, col: col >= 0 ? col : 0, endCol: (col >= 0 ? col + name.length : 0) });
+				pendingDoc = null; continue;
+			}
+			if (braceDepth === 0) {
+				// States
+				const st = /^\s*state\s+([A-Za-z_]\w*)\b/.exec(noLineComments);
+				if (st) { info.states.add(st[1]!); }
+				// Globals: [const] type name [= expr] ;
+				const gg = /^\s*(?:const\s+)?([A-Za-z_]\w+)\s+([A-Za-z_]\w+)\s*(?:=|;)\s*/.exec(noLineComments);
+				if (gg) {
+					const type = gg[1]!; const name = gg[2]!;
+					const col = L.indexOf(name);
+					const g: IncludeGlobal = { name, type, line: i, col: col >= 0 ? col : 0, endCol: (col >= 0 ? col + name.length : 0) };
+					if (pendingDoc && pendingDoc.trim()) g.doc = pendingDoc;
+					info.globals.set(name, g); pendingDoc = null; continue;
+				}
+				// Function headers: returnType name(params) followed by ; or { or EOL
+				const ff = /^\s*([A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:[;{]|$)/.exec(noLineComments);
+				if (ff) {
+					const returns = ff[1]!; const name = ff[2]!; const rawParams = (ff[3] || '').trim();
+					const params: { type: string; name?: string }[] = [];
+					if (rawParams.length > 0) {
+						for (const piece of rawParams.split(',')) {
+							const p = piece.trim().replace(/\s+/g, ' ');
+							const parts = p.split(' ');
+							const ty = parts[0] || 'any';
+							const pn = parts[1];
+							params.push(pn ? { type: ty, name: pn } : { type: ty });
+						}
+					}
+					const col = L.indexOf(name);
+					const f: IncludeFunction = { name, returns, params, line: i, col: col >= 0 ? col : 0, endCol: (col >= 0 ? col + name.length : 0) };
+					if (pendingDoc && pendingDoc.trim()) f.doc = pendingDoc;
+					  info.functions.set(name, f); pendingDoc = null; continue;
+				}
+			}
+			// update brace depth for entire raw line
+			for (let k = 0; k < noLineComments.length; k++) {
+				const ch = noLineComments[k]!; if (ch === '{') braceDepth++; else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1);
+			}
+			// advance to next line
+		}
+		includeSymbolsCache.set(file, { mtimeMs, info });
+		return info;
+	} catch {
+		return null;
+	}
+}
 
 function indexIncludes(docUri: string, pre: PreprocResult) {
 	// Remove previous entries for this doc
@@ -94,8 +236,45 @@ function indexIncludes(docUri: string, pre: PreprocResult) {
 	}
 }
 
+function indexIncludesList(docUri: string, includes: string[]) {
+	// Remove previous entries for this doc
+	for (const set of includeToDocs.values()) set.delete(docUri);
+	for (const inc of includes) {
+		const incUri = URI.file(inc).toString();
+		let set = includeToDocs.get(incUri);
+		if (!set) { set = new Set(); includeToDocs.set(incUri, set); }
+		set.add(docUri);
+	}
+}
+
+function arraysShallowEqual(a: string[] | undefined, b: string[] | undefined): boolean {
+	if (a === b) return true;
+	if (!a || !b) return false;
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+	return true;
+}
+
 function getDocVersion(doc: TextDocument): number {
 	return (doc as any).version ?? 0;
+}
+
+// Stable stringify for objects by sorting keys; handles primitives and arrays
+function stableStringify(value: any): string {
+	if (value === null || typeof value !== 'object') return JSON.stringify(value);
+	if (Array.isArray(value)) return '[' + value.map(v => stableStringify(v)).join(',') + ']';
+	const keys = Object.keys(value).sort();
+	return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify(value[k])).join(',') + '}';
+}
+// Simple djb2 hash for short strings
+function djb2Hash(str: string): number {
+	let h = 5381 >>> 0;
+	for (let i = 0; i < str.length; i++) h = (((h << 5) + h) ^ str.charCodeAt(i)) >>> 0;
+	return h >>> 0;
+}
+function computeConfigHash(macros: Record<string, any>, includePaths: string[]): number {
+	const s = stableStringify({ macros, includePaths });
+	return djb2Hash(s);
 }
 
 function getPipeline(doc: TextDocument): PipelineCache | null {
@@ -103,15 +282,58 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 	const key = doc.uri;
 	const currentVersion = getDocVersion(doc);
 	const hit = pipelineCache.get(key);
-	if (hit && hit.version === currentVersion) return hit;
+	const currentHash = computeConfigHash(settings.macros, settings.includePaths);
+	if (hit && hit.version === currentVersion && hit.configHash === currentHash) return hit;
 
-	const pre: PreprocResult = preprocess(doc, settings.macros, settings.includePaths, connection);
+	// Run macros-only prepass to cheaply compute includes and avoid unnecessary reindex work
+	let macrosOnlyIncludes: string[] = [];
+	try {
+		const fromPath = URI.parse(doc.uri).fsPath;
+		const mr = preprocessMacros(doc.getText(), { includePaths: settings.includePaths, fromPath, defines: settings.macros });
+		macrosOnlyIncludes = mr.includes || [];
+		if (!arraysShallowEqual(hit?.macrosOnlyIncludes, macrosOnlyIncludes)) {
+			indexIncludesList(key, macrosOnlyIncludes);
+		}
+	} catch {
+		// ignore macros-only failures; fall back to legacy indexing later
+	}
+
+	// Use new tokenizer+macro pipeline for disabled ranges/macros/includes; keep legacy PreprocResult shape for analyzeAst compatibility
+	const full = preprocessForAst(doc.getText(), { includePaths: settings.includePaths, fromPath: URI.parse(doc.uri).fsPath, defines: settings.macros });
+	const pre: PreprocResult = {
+		disabledRanges: full.disabledRanges,
+		macros: full.macros,
+		funcMacros: full.funcMacros,
+		includes: full.includes,
+		includeSymbols: new Map(),
+		includeTargets: full.includeTargets,
+		missingIncludes: full.missingIncludes,
+		preprocDiagnostics: full.preprocDiagnostics,
+		diagDirectives: full.diagDirectives,
+		conditionalGroups: full.conditionalGroups,
+	};
+	// Populate includeSymbols by parsing resolved include files (best-effort)
+	try {
+		if (full.includeTargets && full.includeTargets.length > 0) {
+			for (const it of full.includeTargets) {
+				if (!it.resolved) continue;
+				const info = parseIncludeSymbols(it.resolved);
+				if (info) pre.includeSymbols!.set(it.resolved, info);
+			}
+		} else if (full.includes && full.includes.length > 0) {
+			for (const file of full.includes) {
+				const info = parseIncludeSymbols(file);
+				if (info) pre.includeSymbols!.set(file, info);
+			}
+		}
+	} catch { /* ignore include symbol extraction errors */ }
 	const tokens = lex(doc, pre.disabledRanges);
 	const ast: import('./ast').Script = parseScriptFromText(doc.getText(), doc.uri, { macros: settings.macros, includePaths: settings.includePaths });
 	const analysis: Analysis = analyzeAst(doc, ast, defs, pre);
-	const entry: PipelineCache = { version: currentVersion, pre, tokens, analysis, ast };
+	const entry: PipelineCache = { version: currentVersion, pre, tokens, analysis, ast, macrosOnlyIncludes, configHash: currentHash };
 	pipelineCache.set(key, entry);
-	indexIncludes(key, pre);
+	// Only fall back to legacy include indexing if macros-only prepass failed to provide includes
+	if (!macrosOnlyIncludes || macrosOnlyIncludes.length === 0) indexIncludes(key, pre);
 	return entry;
 }
 
@@ -244,16 +466,7 @@ async function validateTextDocument(doc: TextDocument) {
 
 	const diags: Diagnostic[] = [];
 
-	// Missing includes from preprocessor
-	for (const mi of pre.missingIncludes) {
-		diags.push({
-			range: { start: doc.positionAt(mi.start), end: doc.positionAt(mi.end) },
-			severity: DiagnosticSeverity.Warning,
-			message: `#include not found: ${mi.file}`,
-			source: 'lsl-lsp',
-			code: 'LSL-include'
-		});
-	}
+	// Missing includes are not tracked in the new pipeline; include targets are still linkable when resolved.
 
 	// Preprocessor diagnostics (malformed/stray/unmatched directives)
 	for (const pd of pre.preprocDiagnostics || []) {

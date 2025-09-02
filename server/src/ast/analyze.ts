@@ -1,7 +1,7 @@
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range } from 'vscode-languageserver/node';
 import type { Defs } from '../defs';
-import type { PreprocResult } from '../preproc';
+import type { PreprocResult } from '../core/preproc';
 import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, TYPES } from './index';
 import { validateOperatorsFromAst } from '../op_validate_ast';
 import type { SimpleType } from './infer';
@@ -872,7 +872,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					continue;
 				}
 				if (!functionReturnTypes.has(name)) functionReturnTypes.set(name, toSimpleType(fn.returns));
-				const params = (fn.params || []).map(p => toSimpleType(p.type || 'any'));
+				const params = (fn.params || []).map((p: { type?: string }) => toSimpleType(p.type || 'any'));
 				const prev = callSignatures.get(name) || []; prev.push(params); callSignatures.set(name, prev);
 			}
 			// Detect duplicate globals from includes conflicting with script globals or built-in constants/types

@@ -2,7 +2,7 @@ import { Hover, MarkupKind, Position } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs } from './defs';
 import { Analysis } from './analysisTypes';
-import { PreprocResult } from './preproc';
+import type { PreprocResult } from './core/preproc';
 import { isKeyword } from './ast/lexer';
 
 export function lslHover(doc: TextDocument, params: { position: Position }, defs: Defs, analysis?: Analysis, pre?: PreprocResult): Hover | null {
@@ -14,7 +14,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 	if (pre && pre.includeTargets && pre.includeTargets.length > 0) {
 		for (const it of pre.includeTargets) {
 			if (off >= it.start && off <= it.end) {
-				if (it.resolved && pre.includeSymbols.has(it.resolved)) {
+				if (it.resolved && pre.includeSymbols && pre.includeSymbols.has(it.resolved)) {
 					const info = pre.includeSymbols.get(it.resolved)!;
 					const counts = [
 						`${info.functions.size} function${info.functions.size === 1 ? '' : 's'}`,
@@ -139,7 +139,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		for (const info of pre.includeSymbols.values()) {
 			const f = info.functions.get(w);
 			if (f) {
-				const sig = `${f.returns} ${f.name}(${f.params.map(p=>`${p.type}${p.name ? ' ' + p.name : ''}`).join(', ')})`;
+				const sig = `${f.returns} ${f.name}(${f.params.map((p: { type: string; name?: string })=>`${p.type}${p.name ? ' ' + p.name : ''}`).join(', ')})`;
 				const parts = ['```lsl', sig, '```'];
 				if (f.doc && f.doc.trim()) parts.push('', f.doc);
 				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };

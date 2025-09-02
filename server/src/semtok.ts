@@ -2,7 +2,7 @@ import { SemanticTokens, SemanticTokensBuilder, SemanticTokensLegend } from 'vsc
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Token } from './lexer';
 import { Defs } from './defs';
-import { PreprocResult } from './preproc';
+import type { PreprocResult } from './core/preproc';
 import { Analysis } from './analysisTypes';
 import type { Decl } from './analysisTypes';
 import { isKeyword as isAstKeyword } from './ast/lexer';
@@ -28,6 +28,12 @@ export function buildSemanticTokens(
 ): SemanticTokens {
 	const b = new SemanticTokensBuilder();
 	const hasDeclAnalysis = !!analysis;
+
+	// Detect Git merge conflict blocks and their marker lines so we can:
+	// 1) highlight marker lines distinctly
+	// 2) skip semantic coloring for code within conflict blocks
+	const textAll = doc.getText();
+	const conflictBlocks = findMergeConflictBlocks(textAll);
 
 	function isWriteUse(tokens: Token[], i: number): boolean {
 		const t = tokens[i];
@@ -127,16 +133,52 @@ export function buildSemanticTokens(
 		b.push(start.line, start.character, len, type, mods);
 	}
 
-	// Pre-highlight include path targets as strings for distinct coloring
+	// Pre-highlight include path target as string, but only the quoted path within the directive
 	if (pre && pre.includeTargets && pre.includeTargets.length > 0) {
 		for (const it of pre.includeTargets) {
-			const tok: Token = { kind: 'str', value: '', start: it.start, end: it.end } as any;
-			push(tok, idx('string'));
+			// Extract the directive text and find the quoted path
+			const text = doc.getText().slice(it.start, it.end);
+			const qm1 = text.indexOf('"');
+			const qm2 = qm1 >= 0 ? text.indexOf('"', qm1 + 1) : -1;
+			if (qm1 >= 0 && qm2 > qm1) {
+				const s = it.start + qm1;
+				const e = it.start + qm2 + 1; // include closing quote
+				const tok: Token = { kind: 'str', value: '', start: s, end: e } as any;
+				push(tok, idx('string'));
+			} else {
+				// Fallback: highlight only after the keyword 'include' if present
+				const m = /\binclude\b\s+(.*)$/.exec(text);
+				if (m) {
+					const after = text.indexOf(m[1]);
+					if (after >= 0) {
+						const tok: Token = { kind: 'str', value: '', start: it.start + after, end: it.end } as any;
+						push(tok, idx('string'));
+					}
+				}
+			}
+		}
+	}
+
+	// Pre-highlight merge conflict marker lines distinctly
+	if (conflictBlocks.length > 0) {
+		for (const blk of conflictBlocks) {
+			for (const ln of blk.markerLines) {
+				const tok: Token = { kind: 'id', value: '<<<<<<<', start: ln.start, end: ln.end } as any;
+				push(tok, idx('regexp'));
+			}
 		}
 	}
 
 	for (let ti = 0; ti < toks.length; ti++) {
 		const t = toks[ti];
+		// Skip tokens that are fully inside a merge conflict block; we only color the markers themselves
+		if (conflictBlocks.length > 0) {
+			let inConflict = false;
+			for (const blk of conflictBlocks) {
+				if (t.start >= blk.start && t.end <= blk.end) { inConflict = true; break; }
+			}
+			if (inConflict) continue;
+		}
 		if (t.kind === 'comment') { push(t, idx('comment')); continue; }
 		if (t.kind === 'str') { push(t, idx('string')); continue; }
 		if (t.kind === 'num') { push(t, idx('number')); continue; }
@@ -172,6 +214,10 @@ export function buildSemanticTokens(
 		}
 
 		if (t.kind === 'id') {
+			// Types must not be colored as keywords; classify types first
+			if (defs.types.has(t.value)) { push(t, idx('type')); continue; }
+			// Keywords should win regardless of following tokens (e.g., 'if('), but exclude types
+			if (defs.keywords.has(t.value) || isAstKeyword(t.value)) { push(t, idx('keyword')); continue; }
 			// Declarations: classify only when the token is exactly the declaration identifier, not merely inside its range
 			if (analysis) {
 				const decl = analysis.symbolAt(t.start);
@@ -209,10 +255,7 @@ export function buildSemanticTokens(
 					push(t, idx('function')); continue;
 				}
 			}
-			if (defs.types.has(t.value)) { push(t, idx('type')); continue; }
-			// Recognize language keywords (control flow, state/default/event, etc.)
-			// Prefer types above; then handle keywords from defs or AST keyword set.
-			if (defs.keywords.has(t.value) || isAstKeyword(t.value)) { push(t, idx('keyword')); continue; }
+			// (types and keywords handled above)
 			if (defs.consts.has(t.value)) {
 				let mods = bit('defaultLibrary');
 				const c = defs.consts.get(t.value)! as any;
@@ -315,7 +358,7 @@ function computeWrites(toks: Token[], analysis?: Analysis): {
 			offsets.add(t.start);
 			continue;
 		}
-		// Direct combined compound assignment right after id: 
+		// Direct combined compound assignment right after id:
 		// id += expr, id -= expr, id *= expr, id /= expr, id %= expr
 		const t1 = toks[i + 1];
 		if (t1 && t1.kind === 'op' && (t1.value === '+=' || t1.value === '-=' || t1.value === '*=' || t1.value === '/=' || t1.value === '%=')) {
@@ -397,4 +440,37 @@ function computeWrites(toks: Token[], analysis?: Analysis): {
 
 function bump(map: Map<string, number>, key: string) {
 	map.set(key, (map.get(key) || 0) + 1);
+}
+
+// Detect Git merge conflict blocks in raw text. Returns block spans and marker line spans.
+function findMergeConflictBlocks(text: string): { start: number; end: number; markerLines: { start: number; end: number }[] }[] {
+	const blocks: { start: number; end: number; markerLines: { start: number; end: number }[] }[] = [];
+	const lines: { start: number; end: number; text: string }[] = [];
+	let idx = 0;
+	while (idx <= text.length) {
+		const nl = text.indexOf('\n', idx);
+		const end = nl === -1 ? text.length : nl + 1;
+		lines.push({ start: idx, end, text: text.slice(idx, end) });
+		if (nl === -1) break; idx = end;
+	}
+	let i = 0;
+	while (i < lines.length) {
+		const L = lines[i]!;
+		if (/^<<<<<<< .*/.test(L.text)) {
+			const markerLines: { start: number; end: number }[] = [{ start: L.start, end: L.end }];
+			let j = i + 1;
+			let sawSep = false;
+			// optional base marker exists in 3-way conflicts (|||||||). We record the line but don't use the index.
+			// Optional base marker for 3-way: ||||||| BASE
+			while (j < lines.length) {
+				const T = lines[j]!;
+				if (!sawSep && /^\|\|\|\|\|\|\|.*$/.test(T.text)) { markerLines.push({ start: T.start, end: T.end }); j++; continue; }
+				if (!sawSep && /^=======\s*$/.test(T.text)) { markerLines.push({ start: T.start, end: T.end }); sawSep = true; j++; continue; }
+				if (sawSep && /^>>>>>>> .*/.test(T.text)) { markerLines.push({ start: T.start, end: T.end }); const end = T.end; blocks.push({ start: L.start, end, markerLines }); i = j; break; }
+				j++;
+			}
+		}
+		i++;
+	}
+	return blocks;
 }

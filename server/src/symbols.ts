@@ -2,7 +2,7 @@ import { DocumentSymbol, Location, Position, Range, SymbolKind } from 'vscode-la
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Analysis } from './analysisTypes';
 import type { Defs } from './defs';
-import { PreprocResult } from './preproc';
+import type { PreprocResult } from './core/preproc';
 import { URI } from 'vscode-uri';
 
 export function documentSymbols(a: Analysis): DocumentSymbol[] {

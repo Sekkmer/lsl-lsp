@@ -2,6 +2,7 @@
 	LSL lexer with basic macro expansion and comment tracking for AST parser
 */
 import { type Span, TYPES } from './index';
+import { TokenStream } from '../core/tokens';
 import { builtinMacroForLexer } from '../builtins';
 
 export type TokKind =
@@ -26,6 +27,12 @@ export type MacroTables = {
 	fn: Record<string, string>; // "(params) body"
 };
 
+type LexerOptions = {
+	macros?: MacroTables;
+	disabled?: { start: number; end: number }[];
+	filename?: string;
+};
+
 export class Lexer {
 	private i = 0;
 	private readonly n: number;
@@ -34,33 +41,38 @@ export class Lexer {
 	private readonly macros?: MacroTables;
 	private readonly disabled?: { start: number; end: number }[];
 	private readonly filename: string;
-	private pending: Token[] = [];
+	private readonly ts: TokenStream;
 	private expansionDepth = 0;
 
-	constructor(text: string, opts?: { macros?: MacroTables; disabled?: { start: number; end: number }[]; filename?: string }) {
+	constructor(text: string, opts?: LexerOptions) {
 		this.text = text;
 		this.n = text.length;
 		this.lineOffsets = computeLineOffsets(text);
 		this.macros = opts?.macros;
 		this.disabled = opts?.disabled ?? [];
 		this.filename = opts?.filename ?? 'memory.lsl';
+		// Drive tokens via TokenStream so EOF handling is centralized and pushback is unified
+		this.ts = new TokenStream({ producer: () => this.produceOne() as any });
 	}
 
 	public next(): Token {
-		if (this.pending.length > 0) return this.pending.pop()!;
-		let t = this.scanOne();
-		// skip tokens that are in disabled ranges (preprocessor inactive sections)
-		while (this.isDisabled(t.span.start) && t.kind !== 'eof') t = this.scanOne();
-		return t;
+		return this.ts.next();
 	}
 
 	public peek(): Token {
-		const t = this.next();
-		this.pushBack(t);
-		return t;
+		return this.ts.peek();
 	}
 
-	public pushBack(t: Token) { this.pending.push(t); }
+	public pushBack(t: Token) {
+		this.ts.pushBack(t);
+	}
+
+	// Producer for TokenStream: emits next non-disabled token from source
+	private produceOne(): Token {
+		let t = this.scanOne();
+		while (this.isDisabled(t.span.start) && t.kind !== 'eof') t = this.scanOne();
+		return t;
+	}
 
 	private isDisabled(pos: number): boolean {
 		if (!this.disabled || this.disabled.length === 0) return false;
@@ -107,7 +119,7 @@ export class Lexer {
 				const start = this.i;
 				let j = this.i + 1;
 				// Consume until end of directive, respecting backslash-newline continuations
-				for (; j < this.n; ) {
+				for (; j < this.n;) {
 					if (this.text[j] === '\\') {
 						let k = j + 1;
 						while (k < this.n && (this.text[k] === ' ' || this.text[k] === '\t')) k++;
@@ -229,11 +241,16 @@ export class Lexer {
 				// built-in macros via centralized helper work on normalized word
 				const bi = builtinMacroForLexer(rawCore, { filename: this.filename, line: this.lineNumberFor(start) });
 				if (bi) return this.mk(bi.kind, bi.value, start, t);
-				// macro expansion
+				// Do NOT expand user macros over language keywords (e.g., if/else/for...).
+				// Classify keywords first and return them as-is to avoid runaway expansions
+				// when projects accidentally define macros with reserved names.
+				if (isKeyword(rawCore)) {
+					return this.mk('keyword', rawCore, start, t);
+				}
+				// macro expansion for non-keywords only
 				const expanded = this.tryExpandMacro(rawCore);
 				if (expanded) return expanded;
-				const kind: TokKind = isKeyword(rawCore) ? 'keyword' : 'id';
-				return this.mk(kind, rawCore, start, t);
+				return this.mk('id', rawCore, start, t);
 			}
 			// Not followed by a valid identifier start -> treat the single char as operator/punct as usual
 		}
@@ -274,7 +291,8 @@ export class Lexer {
 			// We need to parse an argument list next in the original text
 			// const save = this.i;
 			// skip whitespace
-			let k = this.i; while (k < this.n && /\s/.test(this.text[k]!)) k++;
+			let k = this.i;
+			while (k < this.n && /\s/.test(this.text[k]!)) k++;
 			if (this.text[k] !== '(') return null; // not a call -> treat as id
 			// parse args region to keep raw text
 			k++; let depth = 1;
@@ -282,10 +300,37 @@ export class Lexer {
 			let segStart = k;
 			while (k < this.n && depth > 0) {
 				const ch = this.text[k]!;
+				// Skip strings entirely
 				if (ch === '"' || ch === '\'') { k = this.skipStringFrom(k); continue; }
+				// Skip line comments //...
+				if (ch === '/' && this.text[k + 1] === '/') { k = this.findLineEnd(k + 2); continue; }
+				// Skip block comments /* ... */
+				if (ch === '/' && this.text[k + 1] === '*') {
+					k += 2;
+					while (k < this.n && !(this.text[k] === '*' && this.text[k + 1] === '/')) k++;
+					if (k < this.n) k += 2; // consume closing */
+					continue;
+				}
 				if (ch === '(') { depth++; k++; continue; }
 				if (ch === ')') { depth--; if (depth === 0) break; k++; continue; }
-				if (ch === ',' && depth === 1) { parts.push(this.text.slice(segStart, k)); k++; while (k < this.n && /\s/.test(this.text[k]!)) k++; segStart = k; continue; }
+				if (ch === ',' && depth === 1) {
+					parts.push(this.text.slice(segStart, k));
+					k++;
+					// Skip whitespace and any immediate comments between args
+					for (; ;) {
+						while (k < this.n && /\s/.test(this.text[k]!)) k++;
+						if (k < this.n && this.text[k] === '/' && this.text[k + 1] === '/') { k = this.findLineEnd(k + 2); continue; }
+						if (k + 1 < this.n && this.text[k] === '/' && this.text[k + 1] === '*') {
+							k += 2;
+							while (k < this.n && !(this.text[k] === '*' && this.text[k + 1] === '/')) k++;
+							if (k < this.n) k += 2;
+							continue;
+						}
+						break;
+					}
+					segStart = k;
+					continue;
+				}
 				k++;
 			}
 			if (depth === 0) { parts.push(this.text.slice(segStart, k)); }
@@ -325,21 +370,28 @@ export class Lexer {
 	private expandTextAsPending(body: string, start: number, end: number): Token {
 		if (this.expansionDepth > 20) return this.mk('id', '/*macro-depth*/', start, end);
 		this.expansionDepth++;
-		// Lex the body into tokens and push onto pending stack in reverse (so next pop yields first)
+		// Lex the body into tokens and push onto stream pushback in reverse (so next pop yields first)
 		const lx = new Lexer(body, { macros: this.macros });
 		const buf: Token[] = [];
 		for (; ;) {
 			const t = lx.scanOne();
 			if (t.kind === 'eof') break;
 			if (t.kind === 'comment-line' || t.kind === 'comment-block') continue;
-			// Remap token spans from the temporary macro body to the call site span in the original text.
-			// This keeps diagnostics anchored to the macro invocation rather than 0-based positions.
+			// Remap token spans to the call site span in the original text
 			buf.push({ ...t, span: { start, end } });
 		}
 		this.expansionDepth--;
-		for (let i = buf.length - 1; i >= 0; i--) this.pending.push(buf[i]!);
-		// return a phantom token that will be immediately replaced by pending content
-		return this.next();
+		// If the call site is disabled, drop the entire expansion.
+		// IMPORTANT: Do not call this.ts.next() from within the producer here,
+		// as that would recurse into the same TokenStream and can cause runaway loops.
+		// Instead, emit a harmless placeholder token at the same span; produceOne()
+		// will immediately filter it out via the disabled-range check and continue.
+		if (this.isDisabled(start)) {
+			return this.mk('comment-line', '/*disabled-macro*/', start, end);
+		}
+		for (let i = buf.length - 1; i >= 0; i--) this.ts.pushBack(buf[i]!);
+		// return first expanded token
+		return this.ts.next();
 	}
 
 	private skipStringFrom(pos: number): number {

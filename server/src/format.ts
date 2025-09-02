@@ -1,6 +1,6 @@
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { TextEdit, Range } from 'vscode-languageserver/node';
-import { PreprocResult } from './preproc';
+import type { PreprocResult } from './core/preproc';
 
 export interface FormatSettings {
 	enabled: boolean;
@@ -62,16 +62,35 @@ export function detectIndent(text: string): { useTabs: boolean; size: number; un
 	return { useTabs, size, unit };
 }
 
-function formatCore(text: string, disabledRanges: { start: number; end: number }[], settings: FormatSettings, indentInfo?: { useTabs: boolean; size: number; unit: string }) {
+type InitialFormatState = { braceDepth: number; parenDepth: number; forHeaderDepth: number | null; pendingIndent: boolean };
+
+function formatCore(text: string, disabledRanges: { start: number; end: number }[], settings: FormatSettings, indentInfo?: { useTabs: boolean; size: number; unit: string }, initialState?: InitialFormatState) {
 	const indent = indentInfo ?? detectIndent(text);
 	let out = '';
 	let i = 0;
 	let _lastNonWs = '';
-	let pendingIndent = true;
-	let braceDepth = 0;
-	let parenDepth = 0;
-	let forHeaderDepth: number | null = null;
+	let pendingIndent = initialState?.pendingIndent ?? true;
+	let braceDepth = initialState?.braceDepth ?? 0;
+	let parenDepth = initialState?.parenDepth ?? 0;
+	let forHeaderDepth: number | null = initialState?.forHeaderDepth ?? null;
 	while (i < text.length) {
+		// If we're at the beginning of a line, and the line (ignoring leading ws) starts with a '#',
+		// it's a preprocessor directive. Copy the whole line verbatim and do not format it.
+		if (pendingIndent) {
+			let j = i;
+			while (j < text.length && (text[j] === ' ' || text[j] === '\t')) j++;
+			if (j < text.length && text[j] === '#') {
+				// Copy up to and including newline if present
+				let k = j;
+				while (k < text.length && text[k] !== '\n') k++;
+				// Preserve the original leading whitespace too
+				out += text.slice(i, k);
+				i = k;
+				if (i < text.length && text[i] === '\n') { out += '\n'; i++; }
+				pendingIndent = true;
+				continue;
+			}
+		}
 		if (pendingIndent && !inDisabled(i, disabledRanges)) {
 			let j = i;
 			let spaces = 0, tabs = 0;
@@ -343,13 +362,49 @@ export function formatDocumentEdits(doc: TextDocument, pre: PreprocResult, setti
 	return [{ range: full, newText: out }];
 }
 
+function computeInitialStateBefore(text: string, disabled: { start: number; end: number }[], endOffset: number): InitialFormatState {
+	let i = 0;
+	let braceDepth = 0;
+	let parenDepth = 0;
+	const forHeaderDepth: number | null = null;
+	function inDis(pos: number) { return disabled.some(r => pos >= r.start && pos < r.end); }
+	while (i < endOffset) {
+		if (inDis(i)) { const r = disabled.find(r => i >= r.start && i < r.end)!; i = Math.min(endOffset, r.end); continue; }
+		// Skip directive lines starting at BOL
+		let bol = i;
+		while (bol > 0 && text[bol - 1] !== '\n') bol--;
+		let j = bol;
+		while (j < endOffset && (text[j] === ' ' || text[j] === '\t')) j++;
+		if (j < endOffset && text[j] === '#') { while (j < endOffset && text[j] !== '\n') j++; i = j; if (i < endOffset && text[i] === '\n') i++; continue; }
+		const ch = text[i]!;
+		// strings
+		if (ch === '"' || ch === '\'') { const q = ch; i++; while (i < endOffset) { const c = text[i++]; if (c === '\\') { if (i < endOffset) i++; continue; } if (c === q) break; } continue; }
+		// line comment
+		if (ch === '/' && i + 1 < endOffset && text[i+1] === '/') { while (i < endOffset && text[i] !== '\n') i++; continue; }
+		// block comment
+		if (ch === '/' && i + 1 < endOffset && text[i+1] === '*') { i += 2; while (i < endOffset && !(text[i-1] === '*' && text[i] === '/')) i++; if (i < endOffset) i++; continue; }
+		if (ch === '{') { braceDepth++; i++; continue; }
+		if (ch === '}') { braceDepth = Math.max(0, braceDepth - 1); i++; continue; }
+		if (ch === '(') { parenDepth++; i++; continue; }
+		if (ch === ')') { parenDepth = Math.max(0, parenDepth - 1); i++; continue; }
+		i++;
+	}
+	// pendingIndent is true if at BOL
+	let pendingIndent = false;
+	if (endOffset === 0) pendingIndent = true; else pendingIndent = text[endOffset - 1] === '\n' || text[endOffset - 1] === '\r';
+	return { braceDepth, parenDepth, forHeaderDepth, pendingIndent };
+}
+
 export function formatRangeEdits(doc: TextDocument, pre: PreprocResult, settings: FormatSettings, range: Range): TextEdit[] {
 	const text = doc.getText();
 	const start = doc.offsetAt(range.start);
 	const end = doc.offsetAt(range.end);
 	const target = text.slice(start, end);
-	// Format only the target slice with indent detection from the whole doc
-	const { out } = formatCore(target, pre.disabledRanges, settings, detectIndent(text));
+	// Compute initial state before the range using the whole doc, skipping disabled ranges
+	const init = computeInitialStateBefore(text, pre.disabledRanges, start);
+	// In a targeted range format, we intentionally allow formatting inside disabled ranges.
+	// So we pass an empty disabledRanges array for the slice, but still preserve directives.
+	const { out } = formatCore(target, [], settings, detectIndent(text), init);
 	if (out === target) return [];
 	return [{ range, newText: out }];
 }

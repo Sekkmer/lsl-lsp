@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { docFrom, runPipeline } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
-import { LSL_DIAGCODES } from '../src/parser';
+import { LSL_DIAGCODES } from '../src/analysisTypes';
 
 describe('return: bare return in void contexts', () => {
 	it('allows bare return in void function (no warning, no semicolon error)', async () => {

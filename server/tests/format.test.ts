@@ -1,14 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { PreprocResult } from '../src/preproc';
+import type { PreprocResult } from '../src/core/preproc';
 import { formatDocumentEdits, type FormatSettings } from '../src/format';
 
 function fmt(input: string, settings?: Partial<FormatSettings>, pre?: Partial<PreprocResult>) {
 	const doc = TextDocument.create('file:///t.lsl', 'lsl', 1, input);
 	const preFull: PreprocResult = {
 		disabledRanges: pre?.disabledRanges ?? [],
-		includeTargets: [], includeSymbols: new Map(), missingIncludes: [],
-	} as any;
+		macros: {},
+		funcMacros: {},
+		includes: [],
+		includeTargets: [],
+		includeSymbols: new Map(),
+	};
 	const fmtSettings: FormatSettings = {
 		enabled: true,
 		braceStyle: (settings?.braceStyle ?? 'same-line') as any,

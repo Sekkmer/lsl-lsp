@@ -30,6 +30,6 @@ describe('includes: duplicate built-in function declarations', () => {
 		const errs = analysis.diagnostics.filter(d => d.severity === 1);
 		expect(errs.some(d => /Duplicate declaration of function llSay/.test(d.message))).toBe(true);
 		// Include targets present
-		expect(pre.includeTargets.length).toBe(1);
+		expect(pre.includeTargets?.length).toBe(1);
 	});
 });
