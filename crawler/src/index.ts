@@ -133,6 +133,25 @@ async function fetchHtml(url: string): Promise<string> {
 
 function unique<T>(arr: T[]): T[] { return Array.from(new Set(arr)); }
 
+// Validate a wiki URL by ensuring it's reachable and has meaningful content
+async function isValidWikiContent(url: string): Promise<boolean> {
+	try {
+		const html = await fetchHtml(url);
+		const $ = cheerio.load(html);
+		const heading = $('#firstHeading').text().trim();
+		// Obvious invalids: search results or empty page placeholder
+		if (/^Search results/i.test(heading)) return false;
+		if ($('#mw-content-text .noarticletext').length > 0) return false;
+		// Consider pages with near-empty content and no code/tables as invalid
+		const content = $('#mw-content-text .mw-parser-output').text().replace(/\[[0-9]+\]/g, '').replace(/\s+/g, ' ').trim();
+		const codeLike = $('#mw-content-text pre, #mw-content-text code, #mw-content-text table.wikitable').length;
+		if ((content.length || 0) < 120 && codeLike === 0) return false;
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 export type LslDefs = {
 	version: string;
 	types: string[];
@@ -1354,6 +1373,323 @@ async function assembleDefs(): Promise<LslDefs> {
 	}
 }
 
+// --- Targeted scrapers for specific wiki tables (consts/help) ---
+type TableConstEntry = { name: string; value?: number; doc?: string; source?: string };
+
+function normalizeCellText(s: string): string {
+	return (s || '')
+		.replace(/\[[0-9]+\]/g, '') // footnote refs
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+function sanitizeDoc(s?: string): string | undefined {
+	if (!s) return undefined;
+	// Normalize whitespace and strip bullets and non-printable chars
+	let t = (s || '')
+		.replace(/[•\u2022]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+	// remove control chars U+0000..U+001F and U+007F via replacer
+	t = t.replace(/./g, ch => {
+		const code = ch.charCodeAt(0);
+		return (code <= 0x1F || code === 0x7F) ? '' : ch;
+	});
+	// Remove obvious wiki template artifacts and braces remnants
+	t = t.replace(/\{\{[^}]*\}\}/g, '').replace(/\[\[[^\]]*\]\]/g, '').trim();
+	// Collapse multiple periods
+	t = t.replace(/\.{3,}/g, '...');
+	// Limit length; try to cut on sentence boundary near 600 chars
+	const MAX = 600;
+	if (t.length > MAX) {
+		const cut = t.lastIndexOf('.', MAX);
+		t = (cut > 200 ? t.slice(0, cut + 1) : t.slice(0, MAX)).trim();
+	}
+	// Ensure contains at least some letters and a minimum length
+	if (!/[A-Za-z]/.test(t)) return undefined;
+	if (t.length < 10) return undefined;
+	return t || undefined;
+}
+
+function isParamSignatureDoc(d: string): boolean {
+	// Looks like parameter signature in brackets, e.g. "[ integer foo, vector bar ]"
+	return /\[[^\]]+,\s*[^\]]+\]/.test(d) || /^\[[^\]]+\]$/.test(d);
+}
+
+function isSentenceLike(d: string): boolean {
+	return /[.!?]$/.test(d) || /(gets|returns|render|use|determines|ignore|sets)\b/i.test(d);
+}
+
+function primDocPolicy(name: string, doc: string | undefined): string | undefined {
+	if (!doc) return undefined;
+	// Trim trailing wiki-ish labels like "Sculpted_Prims:_FAQ"
+	const t = doc.replace(/\s+[A-Za-z][A-Za-z_]*:[A-Za-z_]+\s*$/g, '').trim();
+	const enumPrefixes = ['PRIM_BUMP_', 'PRIM_MATERIAL_', 'PRIM_SHINY_', 'PRIM_SCULPT_TYPE_', 'PRIM_TEXGEN_', 'PRIM_PHYSICS_SHAPE_'];
+	const isEnum = enumPrefixes.some(p => name.startsWith(p));
+	if (isEnum) {
+		// Keep only meaningful descriptions; drop one-word or very short snippets
+		if (t.length < 20 || !/\s/.test(t)) return undefined;
+		return t;
+	}
+	// Non-enum PRIM_*: allow bracket parameter signatures or sentence-like descriptions
+	if (isParamSignatureDoc(t)) return t;
+	if (isSentenceLike(t)) return t;
+	return undefined;
+}
+
+function parseValueFromText(s: string): number | undefined {
+	const txt = normalizeCellText(s).toLowerCase();
+	// Numeric cell like "1", or within text
+	const m = /\b([0-9]{1,9})\b/.exec(txt);
+	if (m) return Number(m[1]);
+	return undefined;
+}
+
+function looksLikeConstName(s: string, prefixes: string[]): boolean {
+	const n = normalizeCellText(s);
+	return /^[A-Z_][A-Z0-9_]*$/.test(n) && (prefixes.length === 0 || prefixes.some(p => n.startsWith(p)));
+}
+
+export async function parseConstsFromWikiTables(url: string, prefixes: string[]): Promise<TableConstEntry[]> {
+	const html = await fetchHtml(url);
+	const $ = cheerio.load(html);
+	const out: TableConstEntry[] = [];
+	// Iterate wikitable(s) under content
+	$('#mw-content-text table.wikitable, #mw-content-text table').each((_: number, table) => {
+		const headers = $(table).find('> thead > tr > th, > tr:first-child > th');
+		const ths = headers.map((i, th) => normalizeCellText($(th).text() || $(th).attr('title') || '').toLowerCase()).get();
+		// Identify likely columns; if no headers, fall back to common layout (name, id, desc, ...)
+		let colConst = -1;
+		let colDesc = -1;
+		let colValue = -1;
+		if (ths.length > 0) {
+			colConst = ths.findIndex(h => /^(flags?|constant|name|parameter|key|flag)$/i.test(h) || /constant|name|parameter|key|flag/.test(h));
+			colDesc = ths.findIndex(h => /^(description|notes|help|summary|info)$/i.test(h));
+			colValue = ths.findIndex(h => /^(value|id|number|index)$/i.test(h));
+			if (colValue === -1) {
+				// Treat a column named '#' or lone integer column as value/index
+				colValue = ths.findIndex(h => h === '#' || h === 'no' || h === 'code');
+			}
+			// If we have no constant-ish column, skip
+			if (colConst === -1) return;
+		} else {
+			// No headers; infer a likely mapping used by LlGetObjectDetails: [NAME][#][Description]...
+			colConst = 0; colValue = 1; colDesc = 2;
+		}
+		$(table).find('> tbody > tr, > tr').each((ri: number, tr) => {
+			if (ri === 0 && $(tr).find('th').length) return; // header row
+			const cells = $(tr).children('th,td');
+			if (cells.length === 0) return;
+			// Name may be in td with link text
+			const nameCell = cells.eq(colConst >= 0 ? colConst : 0);
+			const nameText = nameCell.find('a').first().text() || nameCell.text();
+			const name = normalizeCellText(nameText).replace(/\s+/g, '_');
+			if (!looksLikeConstName(name, prefixes)) return;
+			let doc: string | undefined;
+			let value: number | undefined;
+			if (colDesc >= 0) doc = normalizeCellText(cells.eq(colDesc).text());
+			if (colValue >= 0) {
+				const text = normalizeCellText(cells.eq(colValue).text());
+				const num = parseValueFromText(text);
+				if (Number.isFinite(num)) value = num;
+			}
+			// If no value column, try to auto-detect a numeric-only cell
+			if (value === undefined && colValue === -1) {
+				for (let ci = 0; ci < cells.length; ci++) {
+					if (ci === colConst || ci === colDesc) continue;
+					const text = normalizeCellText(cells.eq(ci).text());
+					if (/^\d+$/.test(text)) { value = Number(text); break; }
+				}
+			}
+			// Fallback: parse a number from description if no explicit value column
+			if (value === undefined && colDesc >= 0) {
+				const num = parseValueFromText(cells.eq(colDesc).text());
+				if (Number.isFinite(num)) value = num;
+			}
+			const sdoc = sanitizeDoc(doc);
+			out.push({ name, ...(value !== undefined ? { value } : {}), ...(sdoc ? { doc: sdoc } : {}), source: url });
+		});
+	});
+	// Dedupe by name, prefer entries with value, then longer doc
+	const map = new Map<string, TableConstEntry>();
+	for (const e of out) {
+		const cur = map.get(e.name);
+		if (!cur) { map.set(e.name, e); continue; }
+		const curHas = cur.value !== undefined ? 2 : (cur.doc ? 1 : 0);
+		const nxtHas = e.value !== undefined ? 2 : (e.doc ? 1 : 0);
+		if (nxtHas > curHas) { map.set(e.name, e); continue; }
+		if (nxtHas === curHas) {
+			if ((e.doc?.length || 0) > (cur.doc?.length || 0)) map.set(e.name, e);
+		}
+	}
+	return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// --- PRIM_* complex table support: raw extraction for manual refinement ---
+type RawPrimRow = {
+	name: string;
+	value?: number;
+	wiki: string;
+	tableIndex: number;
+	rowIndex: number;
+	section?: string;
+	tableClass?: string;
+	tableCaption?: string;
+	headers: string[];
+	cellsText: string[];
+	cellsHtml: string[];
+	headerMap?: Record<string, string>;
+	doc?: string;
+	params?: string;
+	paramSig?: string;
+	bracketSigs?: string[];
+	links?: { text: string; href: string }[];
+	rowHtml?: string;
+	continuations?: Array<{ rowIndex: number; cellsText: string[]; cellsHtml: string[]; links?: { text: string; href: string }[] } >;
+	// Back-compat
+	cols?: string[];
+};
+
+async function parsePrimRows(url: string): Promise<RawPrimRow[]> {
+	const html = await fetchHtml(url);
+	const $ = cheerio.load(html);
+	const out: RawPrimRow[] = [];
+	$('#mw-content-text table').each((ti, table) => {
+		const headers = $(table).find('> thead > tr > th, > tr:first-child > th');
+		const ths = headers.map((_, th) => normalizeCellText($(th).text() || $(th).attr('title') || '')).get();
+		// Determine the nearest section heading above this table
+		const prevHeading = $(table).prevAll('h2, h3, h4').first();
+		const section = normalizeCellText(prevHeading.text());
+		const tableClass = ($(table).attr('class') || '').trim() || undefined;
+		const tableCaption = normalizeCellText($(table).find('> caption').first().text());
+		const colNameHint = ths.findIndex(h => /^(constant|flag|name)$/i.test(h));
+		const colHashHint = ths.findIndex(h => /^(#|id|number|value|code|index)$/i.test(h));
+		const colDescHint = ths.findIndex(h => /^(description|notes|help|summary|info|purpose)$/i.test(h));
+		const colParamHint = ths.findIndex(h => /^(parameter|parameters|args|arguments)$/i.test(h));
+		let lastRow: RawPrimRow | undefined = undefined;
+		$(table).find('> tbody > tr, > tr').each((ri, tr) => {
+			if (ri === 0 && $(tr).find('th').length) return; // header row
+			const cells = $(tr).children('th,td');
+			if (cells.length === 0) return;
+			const texts = cells.map((_, td) => normalizeCellText($(td).text())).get();
+			const htmls = cells.map((_, td) => (($(td).html() || '').trim())).get();
+			const rowHtml = ($(tr).html() || '').trim();
+			const joined = texts.join(' ');
+			const m = /(PRIM_[A-Z0-9_]+)/.exec(joined);
+			if (!m) {
+				// Continuation row: append extra detail to the previous PRIM row within this table
+				if (lastRow) {
+					const contLinks = $(tr).find('a').map((_, a) => {
+						const href = $(a).attr('href') || '';
+						const abs = href.startsWith('http') ? href : (href ? `${WIKI_BASE}${href}` : '');
+						return { text: normalizeCellText($(a).text()), href: abs };
+					}).get().filter((l: { text: string; href: string }) => l.text || l.href);
+					(lastRow.continuations ||= []).push({ rowIndex: ri, cellsText: texts, cellsHtml: htmls, ...(contLinks.length ? { links: contLinks } : {}) });
+				}
+				return;
+			}
+			const name = m[1];
+			let value: number | undefined = undefined;
+			if (colHashHint >= 0 && texts[colHashHint]) {
+				const v = parseValueFromText(texts[colHashHint]);
+				if (Number.isFinite(v)) value = v;
+			}
+			if (value === undefined) {
+				for (let i = 0; i < texts.length; i++) {
+					if (i === colNameHint || i === colDescHint || i === colParamHint) continue;
+					if (/^\d+$/.test(texts[i])) { value = Number(texts[i]); break; }
+				}
+			}
+			let doc: string | undefined = undefined;
+			if (colDescHint >= 0) doc = texts[colDescHint];
+			let params: string | undefined = undefined;
+			if (colParamHint >= 0) params = texts[colParamHint];
+			// Parameter signature detection in any cell like "[ integer ..., vector ... ]"
+			let paramSig: string | undefined = undefined;
+			for (const t of texts) {
+				const pm = /\[[^\]]+\]/.exec(t);
+				if (pm && /\b(integer|float|vector|string|rotation|key|list)\b/i.test(pm[0])) { paramSig = pm[0]; break; }
+			}
+			// Collect all bracket segments (for later merging)
+			const bracketSigs: string[] = [];
+			for (const t of texts) {
+				const matches = t.match(/\[[^\]]+\]/g) || [];
+				for (const seg of matches) if (!bracketSigs.includes(seg)) bracketSigs.push(seg);
+			}
+			// Fallback: if no desc column, choose the longest non-name/non-value cell as doc
+			if (!doc) {
+				// Prefer the last textual cell that is not the name, not a pure number, and not a bracket-only sig
+				for (let i = texts.length - 1; i >= 0; i--) {
+					if (i === colNameHint || i === colHashHint || i === colParamHint) continue;
+					const t = texts[i];
+					if (!t) continue;
+					if (/^\d+$/.test(t)) continue;
+					if (/^\s*\[[^\]]+\]\s*$/.test(t)) continue;
+					if (t === name) continue;
+					doc = t; break;
+				}
+				// If still empty, fall back to the longest
+				if (!doc) {
+					let best = '';
+					for (let i = 0; i < texts.length; i++) {
+						if (i === colNameHint || i === colHashHint || i === colParamHint) continue;
+						const t = texts[i];
+						if (t && t.length > best.length) best = t;
+					}
+					doc = best || undefined;
+				}
+			}
+			// Build header map if lengths match
+			let headerMap: Record<string, string> | undefined = undefined;
+			if (ths.length === texts.length && ths.length > 0) {
+				headerMap = {};
+				for (let i = 0; i < ths.length; i++) headerMap[ths[i]] = texts[i];
+			}
+			// Collect links in the row
+			const links = $(tr).find('a').map((_, a) => {
+				const href = $(a).attr('href') || '';
+				const abs = href.startsWith('http') ? href : (href ? `${WIKI_BASE}${href}` : '');
+				return { text: normalizeCellText($(a).text()), href: abs };
+			}).get().filter((l: { text: string; href: string }) => l.text || l.href);
+
+			const row: RawPrimRow = {
+				name,
+				value,
+				wiki: url,
+				tableIndex: ti,
+				rowIndex: ri,
+				section: section || undefined,
+				tableClass,
+				tableCaption: tableCaption || undefined,
+				headers: ths,
+				cellsText: texts,
+				cellsHtml: htmls,
+				headerMap,
+				...(doc ? { doc } : {}),
+				...(params ? { params } : {}),
+				...(paramSig ? { paramSig } : {}),
+				...(bracketSigs.length ? { bracketSigs } : {}),
+				...(links.length ? { links } : {}),
+				rowHtml,
+				// back-compat
+				cols: texts,
+			};
+			out.push(row);
+			lastRow = row;
+		});
+	});
+	// Dedupe by name, keep the first occurrence with a value or doc
+	const seen = new Map<string, RawPrimRow>();
+	for (const r of out) {
+		const cur = seen.get(r.name);
+		if (!cur) { seen.set(r.name, r); continue; }
+		const curScore = (cur.value ? 1 : 0) + (cur.doc ? 1 : 0);
+		const nxtScore = (r.value ? 1 : 0) + (r.doc ? 1 : 0);
+		if (nxtScore > curScore) seen.set(r.name, r);
+	}
+	return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
 async function main() {
 	const which = process.argv[2] ?? 'list';
 	if (which === 'list') {
@@ -1709,6 +2045,294 @@ async function main() {
 		const file = path.join(PKG_ROOT, 'out', 'lsl-defs.json');
 		await fs.writeFile(file, JSON.stringify(defs, null, 2), 'utf8');
 		console.log(`Wrote defs to ${file}`);
+	} else if (which.startsWith('details-debug')) {
+		// Usage: details-debug[:<slug or full URL>]
+		const slug = which.includes(':') ? which.split(':').slice(1).join(':') : 'LlGetObjectDetails';
+		const url = slug.startsWith('http') ? slug : `${WIKI_BASE}/wiki/${slug}`;
+		const html = await fetchHtml(url);
+		const $ = cheerio.load(html);
+		const tables: Array<{ index: number; headers: string[]; sampleRows: string[][] }> = [];
+		$('#mw-content-text table.wikitable, #mw-content-text table').each((ti: number, table) => {
+			const headers = $(table).find('> thead > tr > th, > tr:first-child > th');
+			const ths = headers.map((i, th) => normalizeCellText($(th).text() || $(th).attr('title') || '')).get();
+			const rows: string[][] = [];
+			$(table).find('> tbody > tr, > tr').slice(1, 6).each((ri: number, tr) => {
+				const cells = $(tr).children('th,td');
+				rows.push(cells.map((_, td) => normalizeCellText($(td).text())).get().slice(0, 6));
+			});
+			tables.push({ index: ti, headers: ths, sampleRows: rows });
+		});
+		console.log(JSON.stringify({ url, tableCount: tables.length, tables }, null, 2));
+	} else if (which === 'details-consts') {
+		// Fetch targeted pages and extract constants with consts/help
+		const urls = [
+			`${WIKI_BASE}/wiki/LlGetObjectDetails`,
+			`${WIKI_BASE}/wiki/Template:LSL_Constants/Parcel_Details`,
+			`${WIKI_BASE}/wiki/LlGetPrimitiveParams#llGetPrimitiveParams`,
+		];
+		const prefixes = [
+			['OBJECT_'], // commonly on object details page
+			['PARCEL_DETAILS_'],
+			['PRIM_'],
+		];
+		const results: TableConstEntry[] = [];
+		for (let i = 0; i < urls.length; i++) {
+			try {
+				const arr = await parseConstsFromWikiTables(urls[i], prefixes[i] || []);
+				results.push(...arr);
+			} catch (e) {
+				console.error(`[warn] consts parse failed ${urls[i]}:`, (e as Error).message);
+			}
+		}
+		// PRIM-specific doc cleanup: only for entries from LlGetPrimitiveParams
+		const PRIM_URL = `${WIKI_BASE}/wiki/LlGetPrimitiveParams#llGetPrimitiveParams`;
+		for (const e of results) {
+			if (e.source === PRIM_URL && /^PRIM_/.test(e.name)) {
+				e.doc = primDocPolicy(e.name, e.doc);
+			}
+		}
+		// Only output constants with a numeric value; include doc and wiki (source URL)
+		const filtered = results
+			.filter(e => e.value !== undefined)
+			.map(e => ({ name: e.name, value: e.value, ...(e.doc ? { doc: e.doc } : {}), ...(e.source ? { wiki: e.source } : {}) }))
+			.sort((a, b) => a.name.localeCompare(b.name));
+		const outObj = { version: new Date().toISOString().slice(0, 10), count: filtered.length, constants: filtered };
+		await fs.mkdir(path.resolve('out'), { recursive: true }).catch(() => void 0);
+		const file = path.join(PKG_ROOT, 'out', 'lsl-consts.json');
+		await fs.writeFile(file, JSON.stringify(outObj, null, 2), 'utf8');
+		console.log(`Wrote ${filtered.length} const entries to ${file}`);
+	} else if (which === 'consts-split') {
+		// Produce three separate files: OBJECT_, PARCEL_DETAILS_, PRIM_ (raw refined)
+		await fs.mkdir(path.resolve('out'), { recursive: true }).catch(() => void 0);
+		// OBJECT_
+		const objArr = await parseConstsFromWikiTables(`${WIKI_BASE}/wiki/LlGetObjectDetails`, ['OBJECT_']);
+		const objFiltered = objArr.filter(e => e.value !== undefined).map(e => ({ name: e.name, value: e.value, ...(e.doc ? { doc: sanitizeDoc(e.doc) } : {}), wiki: e.source || `${WIKI_BASE}/wiki/LlGetObjectDetails` }));
+		await fs.writeFile(path.resolve('out', 'lsl-consts.object.json'), JSON.stringify({ version: new Date().toISOString(), count: objFiltered.length, constants: objFiltered }, null, 2), 'utf8');
+		// PARCEL_DETAILS_
+		const parArr = await parseConstsFromWikiTables(`${WIKI_BASE}/wiki/Template:LSL_Constants/Parcel_Details`, ['PARCEL_DETAILS_']);
+		const parFiltered = parArr.filter(e => e.value !== undefined).map(e => ({ name: e.name, value: e.value, ...(e.doc ? { doc: sanitizeDoc(e.doc) } : {}), wiki: e.source || `${WIKI_BASE}/wiki/Template:LSL_Constants/Parcel_Details` }));
+		await fs.writeFile(path.resolve('out', 'lsl-consts.parcel.json'), JSON.stringify({ version: new Date().toISOString(), count: parFiltered.length, constants: parFiltered }, null, 2), 'utf8');
+		// PRIM_ (raw rows for manual editing)
+		const primRows = await parsePrimRows(`${WIKI_BASE}/wiki/LlGetPrimitiveParams#llGetPrimitiveParams`);
+		await fs.writeFile(path.resolve('out', 'lsl-prim-rows.raw.json'), JSON.stringify({ version: new Date().toISOString(), count: primRows.length, rows: primRows }, null, 2), 'utf8');
+		console.log('Wrote split outputs: out/lsl-consts.object.json, out/lsl-consts.parcel.json, out/lsl-prim-rows.raw.json');
+	} else if (which === 'prim-refine') {
+		// Usage: prim-refine [raw.json] [out.json]
+		const rawFile = process.argv[3] || path.resolve(PKG_ROOT, 'out', 'lsl-prim-rows.raw.json');
+		const outFile = process.argv[4] || path.resolve(PKG_ROOT, 'out', 'lsl-prim-rows.refined.json');
+		const raw = await fs.readFile(rawFile, 'utf8').then(s => JSON.parse(s)).catch(() => ({ rows: [] }));
+		const rows: RawPrimRow[] = raw.rows || [];
+		const refined: { name: string; value: number; doc?: string; wiki?: string }[] = [];
+		for (const r of rows) {
+			if (r.value === undefined) continue;
+			const functionPageWiki = r.wiki; // the llGetPrimitiveParams page (with anchor)
+			let wiki = functionPageWiki;
+			let candidate: string | null = null;
+			// Prefer a specific href to the generic page when available
+			if (r.links && r.links.length) {
+				const self = r.links.find(l => /\/PRIM_[A-Z0-9_]+$/.test(l.href || ''));
+				if (self && self.href) candidate = self.href;
+			}
+			// Or try the canonical constant page by name
+			if (!candidate && /^PRIM_/.test(r.name)) {
+				candidate = `${WIKI_BASE}/wiki/${r.name}`;
+			}
+			// Validate candidate: if invalid or empty, keep function page wiki
+			if (candidate) {
+				if (await isValidWikiContent(candidate)) wiki = candidate;
+			}
+			// Build a helpful doc: lead sentence + parameter/return signature
+			const bits: string[] = [];
+			// Try dedicated doc field or a description-like cell or continuation text
+			let lead = (r.doc || '').trim();
+			// Drop any leading bracketed signature (e.g. "[ integer x, string y ]") from the lead
+			if (lead) lead = lead.replace(/^\s*\[[^\]]+\]\s*/, '');
+			if (!lead) {
+				// Prefer last non-numeric, non-bracket-only cell as a lead
+				for (let i = (r.cellsText?.length || 0) - 1; i >= 0; i--) {
+					const t = (r.cellsText?.[i] || '').trim();
+					if (!t) continue;
+					if (/^\d+$/.test(t)) continue;
+					if (/^\s*\[[^\]]+\]\s*$/.test(t)) continue;
+					if (t === r.name) continue;
+					lead = t; break;
+				}
+			}
+			if (!lead && r.continuations && r.continuations.length) {
+				// Use first continuation text line as lead if meaningful
+				const c = r.continuations[0];
+				const cand = (c.cellsText?.join(' ') || '').trim();
+				if (cand && !/^\s*\[[^\]]+\]\s*$/.test(cand)) lead = cand;
+			}
+			// Drop again any leading bracket that may have come from fallback cells
+			if (lead) lead = lead.replace(/^\s*\[[^\]]+\]\s*/, '');
+			let leadSan = sanitizeDoc(lead) || '';
+			// Remove known wiki artifact tokens that are not meaningful descriptions
+			if (/^Sculpted_Prims:_FAQ$/i.test(leadSan)) leadSan = '';
+			// If lead looks like a wiki label (Word_Word:Word), drop it to avoid noise
+			if (leadSan && /^[A-Za-z][A-Za-z_]*:[A-Za-z_]+$/.test(leadSan)) leadSan = '';
+			if (leadSan) {
+				bits.push(leadSan);
+			} else if (r.name === 'PRIM_TYPE_SCULPT') {
+				bits.push('Sculpted prim: Map and type');
+			}
+			// Compute signature: prefer explicit paramSig; else a bracket with types or name; else synthesize
+			let sig = (r.paramSig || '').trim();
+			if (!sig && r.bracketSigs && r.bracketSigs.length) {
+				const withTypes = r.bracketSigs.find(s => /\b(integer|float|vector|string|rotation|key|list)\b/i.test(s));
+				sig = (withTypes || r.bracketSigs.find(s => s.includes(r.name)) || r.bracketSigs[0] || '').trim();
+			}
+			if (!sig) sig = `[ ${r.name} ]`;
+			// Format doc with signature on a new code-fenced line for readability in hover
+			const parts: string[] = [];
+			let finalLead = leadSan;
+			// If lead is useless (empty, bracket-only, or just the bracketed constant), synthesize a helpful one.
+			const justSelf = /^\s*\[\s*PRIM_[A-Z0-9_]+\s*\]\s*$/i;
+			const bracketOnly = /^\s*\[[^\]]+\]\s*$/;
+			if (!finalLead || justSelf.test(finalLead) || bracketOnly.test(finalLead)) {
+				// Make a friendlier name: PRIM_SCRIPTED_SIT_ONLY -> "Scripted sit only"
+				let friendly = r.name.replace(/^PRIM_/, '')
+					.toLowerCase()
+					.split('_')
+					.map(w => w ? w[0].toUpperCase() + w.slice(1) : '')
+					.join(' ')
+					.replace(/\bGltf\b/g, 'GLTF');
+				// Special-case shape types to read nicer
+				if (/^PRIM_TYPE_/.test(r.name)) {
+					const suffix = r.name.replace(/^PRIM_TYPE_/, '')
+						.toLowerCase()
+						.split('_').map(w => w ? w[0].toUpperCase() + w.slice(1) : '').join(' ');
+					friendly = suffix || 'Type';
+				}
+				// Try to infer type and write a generic description
+				let hint: string | undefined;
+				const typeSig = (r.paramSig || r.bracketSigs?.join(' ') || '').toLowerCase();
+				if (/\binteger\s+boolean\b/.test(typeSig)) hint = 'Boolean flag';
+				else if (/\bvector\s+/.test(typeSig) && /\bcolor\b/.test(typeSig)) hint = 'Color/vector parameter';
+				else if (/\bvector\b/.test(typeSig)) hint = 'Vector parameter';
+				else if (/\bstring\b/.test(typeSig)) hint = 'String parameter';
+				else if (/\bfloat\b/.test(typeSig)) hint = 'Float parameter';
+				// A couple of known cases
+				if (r.name === 'PRIM_SCRIPTED_SIT_ONLY') hint = 'Only allow scripted sits on this sit target';
+				if (r.name === 'PRIM_CAST_SHADOWS') hint = 'DEPRECATED: Shadow casting for the prim';
+				if (/^PRIM_TYPE_/.test(r.name)) hint = 'Shape parameters';
+				if (r.name === 'PRIM_TYPE') hint = 'Prim shape parameters';
+				finalLead = hint ? `${friendly}: ${hint}` : friendly;
+			}
+			if (finalLead) parts.push(finalLead);
+			parts.push(''); // blank line
+			parts.push('```lsl');
+			parts.push(sig);
+			parts.push('```');
+			const doc = parts.join('\n');
+			refined.push({ name: r.name, value: r.value!, ...(doc ? { doc } : {}), wiki });
+		}
+		refined.sort((a, b) => a.name.localeCompare(b.name));
+		await fs.writeFile(outFile, JSON.stringify({ version: new Date().toISOString(), count: refined.length, constants: refined }, null, 2), 'utf8');
+		console.log(`Wrote ${refined.length} refined PRIM entries to ${outFile}`);
+	} else if (which.startsWith('consts-join')) {
+		// Usage: consts-join [object.json] [parcel.json] [prim.refined.json] [out.json]
+		const objFile = process.argv[3] || path.resolve(PKG_ROOT, 'out', 'lsl-consts.object.json');
+		const parFile = process.argv[4] || path.resolve(PKG_ROOT, 'out', 'lsl-consts.parcel.json');
+		const primFile = process.argv[5] || path.resolve(PKG_ROOT, 'out', 'lsl-prim-rows.refined.json');
+		const outFile = process.argv[6] || path.resolve(PKG_ROOT, 'out', 'lsl-consts.json');
+		const obj = await fs.readFile(objFile, 'utf8').then(s => JSON.parse(s)).catch(() => ({ constants: [] }));
+		const par = await fs.readFile(parFile, 'utf8').then(s => JSON.parse(s)).catch(() => ({ constants: [] }));
+		const prim = await fs.readFile(primFile, 'utf8').then(s => JSON.parse(s)).catch(() => ({ constants: [], rows: [] }));
+		// prim refined format expected: { rows: RawPrimRow[] } or { constants: {name,value,doc,wiki}[] }
+		let primConsts: { name: string; value: number; doc?: string; wiki?: string }[] = [];
+		if (Array.isArray(prim.constants)) primConsts = prim.constants;
+		else if (Array.isArray(prim.rows)) {
+			primConsts = prim.rows.filter((r: RawPrimRow) => r.value !== undefined).map((r: RawPrimRow) => ({ name: r.name, value: r.value as number, ...(r.doc ? { doc: sanitizeDoc(r.doc) } : {}), wiki: r.wiki }));
+		}
+		type ConstItem = { name: string; value: number; doc?: string; wiki?: string };
+		const combined: ConstItem[] = ([] as ConstItem[])
+			.concat((obj.constants || []) as ConstItem[])
+			.concat((par.constants || []) as ConstItem[])
+			.concat(primConsts as ConstItem[])
+			.sort((a, b) => a.name.localeCompare(b.name));
+		const outObj = { version: new Date().toISOString().slice(0,10), count: combined.length, constants: combined };
+		await fs.writeFile(outFile, JSON.stringify(outObj, null, 2), 'utf8');
+		console.log(`Joined ${combined.length} constants into ${outFile}`);
+	} else if (which === 'merge-consts') {
+		// Usage: merge-consts [consts.json] [defs-in.json] [defs-out.json]
+		const constsFile = process.argv[3] || path.resolve(PKG_ROOT, 'out', 'lsl-consts.json');
+		const defsInFile = process.argv[4] || path.resolve(PKG_ROOT, '..', 'common', 'lsl-defs.json');
+		const defsOutFile = process.argv[5] || path.resolve(PKG_ROOT, 'out', 'lsl-defs.merged.json');
+		const constsRaw = JSON.parse(await fs.readFile(constsFile, 'utf8')) as { constants: { name: string; value?: number; doc?: string; wiki?: string }[] };
+		const defsRaw = JSON.parse(await fs.readFile(defsInFile, 'utf8')) as LslDefs;
+		// Build a quick lookup for values/docs
+		const constMap = new Map<string, { value?: number; doc?: string; wiki?: string }>();
+		for (const c of constsRaw.constants || []) constMap.set(c.name, { value: c.value, doc: c.doc, wiki: c.wiki });
+		// Merge into constants preserving order and object key layout
+		const mergedConstants = defsRaw.constants.map((c): LslDefs['constants'][number] => {
+			const upd = constMap.get(c.name);
+			if (!upd) return c;
+			const { value, doc, wiki } = upd;
+			const out: LslDefs['constants'][number] = { ...c };
+			// Always override value when provided in consts
+			if (value !== undefined) out.value = value;
+			if (doc && !out.doc) out.doc = doc;
+			if (wiki && !out.wiki) out.wiki = wiki;
+			return out;
+		});
+		const merged: LslDefs = {
+			version: defsRaw.version,
+			types: defsRaw.types,
+			keywords: defsRaw.keywords,
+			constants: mergedConstants,
+			events: defsRaw.events,
+			functions: defsRaw.functions,
+		};
+		await fs.mkdir(path.resolve(PKG_ROOT, 'out'), { recursive: true }).catch(() => void 0);
+		await fs.writeFile(defsOutFile, JSON.stringify(merged, null, 2), 'utf8');
+		console.log(`Merged consts into defs: ${defsInFile} -> ${defsOutFile}`);
+	} else if (which.startsWith('merge-consts-verify')) {
+		// Usage: merge-consts-verify [consts.json] [defs.json]
+		const constsFile = process.argv[3] || path.resolve(PKG_ROOT, 'out', 'lsl-consts.json');
+		const defsFile = process.argv[4] || path.resolve(PKG_ROOT, '..', 'common', 'lsl-defs.json');
+		const constsRaw = JSON.parse(await fs.readFile(constsFile, 'utf8')) as { constants: { name: string; value?: number }[] };
+		const defsRaw = JSON.parse(await fs.readFile(defsFile, 'utf8')) as LslDefs;
+		const mapIn = new Map<string, number>();
+		for (const c of (constsRaw.constants || [])) {
+			if (typeof c.value === 'number') mapIn.set(c.name, c.value);
+		}
+		const mismatches: { name: string; expected?: number; actual?: number }[] = [];
+		for (const d of (defsRaw.constants || [])) {
+			if (!mapIn.has(d.name)) continue;
+			const vNew = mapIn.get(d.name)!;
+			const vOld = d.value;
+			if (typeof vOld === 'number' && vOld !== vNew) {
+				mismatches.push({ name: d.name, expected: vOld, actual: vNew });
+			}
+		}
+		if (mismatches.length > 0) {
+			console.error(JSON.stringify({ mismatches: mismatches.length, items: mismatches.slice(0, 50) }, null, 2));
+			process.exitCode = 1;
+		} else {
+			console.log('merge-consts-verify: OK (no value mismatches)');
+		}
+	} else if (which.startsWith('validate-consts')) {
+		// Usage: validate-consts [consts.json]
+		const constsFile = process.argv[3] || path.resolve(PKG_ROOT, 'out', 'lsl-consts.json');
+		const raw = JSON.parse(await fs.readFile(constsFile, 'utf8')) as { constants: { name: string; value?: number; doc?: string; wiki?: string }[] };
+		const issues: { name: string; problem: string }[] = [];
+		for (const c of raw.constants || []) {
+			if (!/^([A-Z_][A-Z0-9_]*)$/.test(c.name)) issues.push({ name: c.name, problem: 'name format' });
+			if (typeof c.value !== 'number' || !Number.isInteger(c.value)) issues.push({ name: c.name, problem: 'value not integer' });
+			const d = c.doc || '';
+			// Missing/short docs are permissible; focus on unsafe content only
+			if (d) {
+				if (/[<>]/.test(d)) issues.push({ name: c.name, problem: 'doc contains tags' });
+				if (/https?:\/\//i.test(d)) issues.push({ name: c.name, problem: 'doc contains url' });
+				const letters = (d.match(/[A-Za-z]/g) || []).length;
+				const punct = (d.match(/[^A-Za-z0-9\s]/g) || []).length;
+				if (letters > 0 && punct / (letters + 1) > 0.6) issues.push({ name: c.name, problem: 'doc punctuation heavy' });
+			}
+		}
+		const summary = { total: (raw.constants || []).length, issues: issues.length, sample: issues.slice(0, 20) };
+		console.log(JSON.stringify(summary, null, 2));
+		if (issues.length > 0) process.exitCode = 1;
 	} else {
 		console.error('Usage:\n	lsl-crawler list\n	lsl-crawler get:llFunctionName\n	lsl-crawler funcjson:llFunctionName\n	lsl-crawler functions[:N]\n	lsl-crawler functions-all\n	lsl-crawler constjson:CONST\n	lsl-crawler constants[:N]\n	lsl-crawler constants-all\n	lsl-crawler eventjson:EVENT\n	lsl-crawler events[:N]\n	lsl-crawler events-all\n	lsl-crawler defs-all');
 		process.exitCode = 2;

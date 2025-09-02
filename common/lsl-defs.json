@@ -24,21 +24,6 @@
   ],
   "constants": [
     {
-      "name": "_X",
-      "type": "float",
-      "wiki": "https://wiki.secondlife.com/wiki/_X"
-    },
-    {
-      "name": "_Y",
-      "type": "float",
-      "wiki": "https://wiki.secondlife.com/wiki/_Y"
-    },
-    {
-      "name": "_Z",
-      "type": "float",
-      "wiki": "https://wiki.secondlife.com/wiki/_Z"
-    },
-    {
       "name": "ACTIVE",
       "type": "integer",
       "value": 2,
@@ -2216,7 +2201,8 @@
       "name": "OBJECT_ATTACHED_SLOTS_AVAILABLE",
       "type": "integer",
       "value": 35,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_ATTACHED_SLOTS_AVAILABLE"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_ATTACHED_SLOTS_AVAILABLE",
+      "doc": "Gets the avatar's available attachment slot count.If id is not an avatar, 0 is returned."
     },
     {
       "name": "OBJECT_BODY_SHAPE_TYPE",
@@ -2250,13 +2236,15 @@
       "name": "OBJECT_DAMAGE",
       "type": "integer",
       "value": 51,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_DAMAGE"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_DAMAGE",
+      "doc": "Retrieves the amount of damage a prim inflicts on collision."
     },
     {
       "name": "OBJECT_DAMAGE_TYPE",
       "type": "integer",
       "value": 52,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_DAMAGE_TYPE"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_DAMAGE_TYPE",
+      "doc": "Retrieves the type of damage a prim inflicts on collision. It returns an integer that can match one of the DAMAGE_TYPE_* constants, be a custom damage type or be repurposed by a combat system."
     },
     {
       "name": "OBJECT_DESC",
@@ -2276,13 +2264,15 @@
       "name": "OBJECT_GROUP_TAG",
       "type": "integer",
       "value": 33,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_GROUP_TAG"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_GROUP_TAG",
+      "doc": "Gets the avatar's group tag text.If id is not an avatar, an empty string is returned."
     },
     {
       "name": "OBJECT_HEALTH",
       "type": "integer",
       "value": 50,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_HEALTH"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_HEALTH",
+      "doc": "Retrieves the health of an avatar or prim."
     },
     {
       "name": "OBJECT_HOVER_HEIGHT",
@@ -2344,7 +2334,8 @@
       "name": "OBJECT_PHYSICS_COST",
       "type": "integer",
       "value": 16,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_PHYSICS_COST"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_PHYSICS_COST",
+      "doc": "Gets the physics cost of the object."
     },
     {
       "name": "OBJECT_POS",
@@ -2364,7 +2355,8 @@
       "name": "OBJECT_PRIM_EQUIVALENCE",
       "type": "integer",
       "value": 13,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_PRIM_EQUIVALENCE"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_PRIM_EQUIVALENCE",
+      "doc": "Gets the prim equivalence of the object."
     },
     {
       "name": "OBJECT_RENDER_WEIGHT",
@@ -2395,7 +2387,8 @@
       "name": "OBJECT_REZZER_KEY",
       "type": "integer",
       "value": 32,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_REZZER_KEY"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_REZZER_KEY",
+      "doc": "Gets the key of the object that rezzed this object be it an object or an avatar."
     },
     {
       "name": "OBJECT_ROOT",
@@ -2415,37 +2408,43 @@
       "name": "OBJECT_RUNNING_SCRIPT_COUNT",
       "type": "integer",
       "value": 9,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_RUNNING_SCRIPT_COUNT"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_RUNNING_SCRIPT_COUNT",
+      "doc": "Gets the number of running scripts attached to the object or agent."
     },
     {
       "name": "OBJECT_SCRIPT_MEMORY",
       "type": "integer",
       "value": 11,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_SCRIPT_MEMORY"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_SCRIPT_MEMORY",
+      "doc": "Gets the total amount of script memory allocated to the object or agent, in bytes. See page for more info."
     },
     {
       "name": "OBJECT_SCRIPT_TIME",
       "type": "integer",
       "value": 12,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_SCRIPT_TIME"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_SCRIPT_TIME",
+      "doc": "Gets the total amount of average script CPU time used by the object or agent, in seconds. See page for more info."
     },
     {
       "name": "OBJECT_SELECT_COUNT",
       "type": "integer",
       "value": 37,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_SELECT_COUNT"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_SELECT_COUNT",
+      "doc": "Gets the total number of agents selecting any links in the object.If id is an avatar, 0 is returned."
     },
     {
       "name": "OBJECT_SERVER_COST",
       "type": "integer",
       "value": 14,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_SERVER_COST"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_SERVER_COST",
+      "doc": "Gets the server cost of the object."
     },
     {
       "name": "OBJECT_STREAMING_COST",
       "type": "integer",
       "value": 15,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_STREAMING_COST"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_STREAMING_COST",
+      "doc": "Gets the streaming (download) cost of the object."
     },
     {
       "name": "OBJECT_TEMP_ON_REZ",
@@ -2453,6 +2452,13 @@
       "value": 23,
       "wiki": "https://wiki.secondlife.com/wiki/OBJECT_TEMP_ON_REZ",
       "doc": "Returns boolean, detailing if temporary is enabled or disabled on the object."
+    },
+    {
+      "name": "OBJECT_TEMP_ATTACHED",
+      "type": "integer",
+      "value": 23,
+      "wiki": "https://wiki.secondlife.com/wiki/LlGetObjectDetails",
+      "doc": "Gets the integer boolean detailing if the object is temporarily attached."
     },
     {
       "name": "OBJECT_TOTAL_INVENTORY_COUNT",
@@ -2465,7 +2471,8 @@
       "name": "OBJECT_TOTAL_SCRIPT_COUNT",
       "type": "integer",
       "value": 10,
-      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_TOTAL_SCRIPT_COUNT"
+      "wiki": "https://wiki.secondlife.com/wiki/OBJECT_TOTAL_SCRIPT_COUNT",
+      "doc": "Gets the number of scripts, both running and stopped, attached to the object or agent."
     },
     {
       "name": "OBJECT_UNKNOWN_DETAIL",
@@ -2608,7 +2615,8 @@
       "name": "PARCEL_DETAILS_FLAGS",
       "type": "integer",
       "value": 12,
-      "wiki": "https://wiki.secondlife.com/wiki/PARCEL_DETAILS_FLAGS"
+      "wiki": "https://wiki.secondlife.com/wiki/PARCEL_DETAILS_FLAGS",
+      "doc": "Parcel flags set for this parcel. See llGetParcelFlags for a listing of the flags and their meaning."
     },
     {
       "name": "PARCEL_DETAILS_GROUP",
@@ -2644,6 +2652,41 @@
       "value": 6,
       "wiki": "https://wiki.secondlife.com/wiki/PARCEL_DETAILS_SEE_AVATARS",
       "doc": "The parcel's avatar visibility setting. (1 char.)."
+    },
+    {
+      "name": "PARCEL_DETAILS_TP_ROUTING",
+      "type": "integer",
+      "value": 11,
+      "wiki": "https://wiki.secondlife.com/wiki/Template:LSL_Constants/Parcel_Details",
+      "doc": "Teleport routing for this parcel. \\n\\t0 = TP_ROUTING_BLOCKED\\n\\t1 = TP_ROUTING_LANDINGP\\n\\t2 = TP_ROUTING_FREE\\nNote that routing rules are only enforced if the landing point is set."
+    },
+    {
+      "name": "PARCEL_DETAILS_PRIM_USED",
+      "type": "integer",
+      "value": 8,
+      "wiki": "https://wiki.secondlife.com/wiki/Template:LSL_Constants/Parcel_Details",
+      "doc": "The prim usage on this parcel."
+    },
+    {
+      "name": "PARCEL_DETAILS_LANDING_POINT",
+      "type": "integer",
+      "value": 11,
+      "wiki": "https://wiki.secondlife.com/wiki/Template:LSL_Constants/Parcel_Details",
+      "doc": "Landing point set for this parcel, if any."
+    },
+    {
+      "name": "PARCEL_DETAILS_LANDING_LOOKAT",
+      "type": "integer",
+      "value": 10,
+      "wiki": "https://wiki.secondlife.com/wiki/Template:LSL_Constants/Parcel_Details",
+      "doc": "Look at vector set for the landing point on this parcel, if any."
+    },
+    {
+      "name": "PARCEL_DETAILS_SCRIPT_DANGER",
+      "type": "integer",
+      "value": 13,
+      "wiki": "https://wiki.secondlife.com/wiki/Template:LSL_Constants/Parcel_Details",
+      "doc": "Is the script in danger in the indicated parcel. See llScriptDanger for a discussion of script danger."
     },
     {
       "name": "PARCEL_FLAG_ALLOW_ALL_OBJECT_ENTRY",
@@ -3049,7 +3092,8 @@
       "name": "PRIM_ALLOW_UNSIT",
       "type": "integer",
       "value": 39,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_ALLOW_UNSIT"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_ALLOW_UNSIT",
+      "doc": "Allow Unsit: Boolean flag\n\n```lsl\n[ integer boolean ]\n```"
     },
     {
       "name": "PRIM_ALPHA_MODE",
@@ -3090,158 +3134,184 @@
       "name": "PRIM_BUMP_BARK",
       "type": "integer",
       "value": 4,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_BARK"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_BARK",
+      "doc": "Bump Bark\n\n```lsl\n[ PRIM_BUMP_BARK ]\n```"
     },
     {
       "name": "PRIM_BUMP_BLOBS",
       "type": "integer",
       "value": 12,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_BLOBS"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_BLOBS",
+      "doc": "petridish: blobby amoeba like shapes\n\n```lsl\n[ PRIM_BUMP_BLOBS ]\n```"
     },
     {
       "name": "PRIM_BUMP_BRICKS",
       "type": "integer",
       "value": 5,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_BRICKS"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_BRICKS",
+      "doc": "Bump Bricks\n\n```lsl\n[ PRIM_BUMP_BRICKS ]\n```"
     },
     {
       "name": "PRIM_BUMP_BRIGHT",
       "type": "integer",
       "value": 1,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_BRIGHT"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_BRIGHT",
+      "doc": "brightness: generate from highlights\n\n```lsl\n[ PRIM_BUMP_BRIGHT ]\n```"
     },
     {
       "name": "PRIM_BUMP_CHECKER",
       "type": "integer",
       "value": 6,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_CHECKER"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_CHECKER",
+      "doc": "Bump Checker\n\n```lsl\n[ PRIM_BUMP_CHECKER ]\n```"
     },
     {
       "name": "PRIM_BUMP_CONCRETE",
       "type": "integer",
       "value": 7,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_CONCRETE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_CONCRETE",
+      "doc": "Bump Concrete\n\n```lsl\n[ PRIM_BUMP_CONCRETE ]\n```"
     },
     {
       "name": "PRIM_BUMP_DARK",
       "type": "integer",
       "value": 2,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_DARK"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_DARK",
+      "doc": "darkness: generate from lowlights\n\n```lsl\n[ PRIM_BUMP_DARK ]\n```"
     },
     {
       "name": "PRIM_BUMP_DISKS",
       "type": "integer",
       "value": 10,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_DISKS"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_DISKS",
+      "doc": "discs: packed circles\n\n```lsl\n[ PRIM_BUMP_DISKS ]\n```"
     },
     {
       "name": "PRIM_BUMP_GRAVEL",
       "type": "integer",
       "value": 11,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_GRAVEL"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_GRAVEL",
+      "doc": "Bump Gravel\n\n```lsl\n[ PRIM_BUMP_GRAVEL ]\n```"
     },
     {
       "name": "PRIM_BUMP_LARGETILE",
       "type": "integer",
       "value": 14,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_LARGETILE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_LARGETILE",
+      "doc": "Bump Largetile\n\n```lsl\n[ PRIM_BUMP_LARGETILE ]\n```"
     },
     {
       "name": "PRIM_BUMP_NONE",
       "type": "integer",
       "value": 0,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_NONE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_NONE",
+      "doc": "none: no bump map\n\n```lsl\n[ PRIM_BUMP_NONE ]\n```"
     },
     {
       "name": "PRIM_BUMP_SHINY",
       "type": "integer",
       "value": 19,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_SHINY"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_SHINY",
+      "doc": "shiny & bump Flags Description\n\n```lsl\n[ PRIM_BUMP_SHINY, integer face ]\n```"
     },
     {
       "name": "PRIM_BUMP_SIDING",
       "type": "integer",
       "value": 13,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_SIDING"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_SIDING",
+      "doc": "Bump Siding\n\n```lsl\n[ PRIM_BUMP_SIDING ]\n```"
     },
     {
       "name": "PRIM_BUMP_STONE",
       "type": "integer",
       "value": 9,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_STONE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_STONE",
+      "doc": "cutstone: blocks\n\n```lsl\n[ PRIM_BUMP_STONE ]\n```"
     },
     {
       "name": "PRIM_BUMP_STUCCO",
       "type": "integer",
       "value": 15,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_STUCCO"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_STUCCO",
+      "doc": "Bump Stucco\n\n```lsl\n[ PRIM_BUMP_STUCCO ]\n```"
     },
     {
       "name": "PRIM_BUMP_SUCTION",
       "type": "integer",
       "value": 16,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_SUCTION"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_SUCTION",
+      "doc": "suction: rings\n\n```lsl\n[ PRIM_BUMP_SUCTION ]\n```"
     },
     {
       "name": "PRIM_BUMP_TILE",
       "type": "integer",
       "value": 8,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_TILE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_TILE",
+      "doc": "crustytile\n\n```lsl\n[ PRIM_BUMP_TILE ]\n```"
     },
     {
       "name": "PRIM_BUMP_WEAVE",
       "type": "integer",
       "value": 17,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_WEAVE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_WEAVE",
+      "doc": "Bump Weave\n\n```lsl\n[ PRIM_BUMP_WEAVE ]\n```"
     },
     {
       "name": "PRIM_BUMP_WOOD",
       "type": "integer",
       "value": 3,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_WOOD"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_BUMP_WOOD",
+      "doc": "Bump Wood\n\n```lsl\n[ PRIM_BUMP_WOOD ]\n```"
     },
     {
       "name": "PRIM_CAST_SHADOWS",
       "type": "integer",
       "value": 24,
       "deprecated": true,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_CAST_SHADOWS"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_CAST_SHADOWS",
+      "doc": "DEPRECATED: Shadow casting for the primitive\n\n```lsl\n[ integer boolean ]\n```"
     },
     {
       "name": "PRIM_CLICK_ACTION",
       "type": "integer",
       "value": 43,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_CLICK_ACTION"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_CLICK_ACTION",
+      "doc": "sets the default action to take when a user clicks on this prim. Flag Description Cursor CLICK_ACTION_NONE 0 Performs the default action: when the prim is touched, touch events are triggered CLICK_ACTION_TOUCH 0 When the prim is touched, touch events are triggered CLICK_ACTION_SIT 1 When the prim is touched, the avatar sits upon it CLICK_ACTION_BUY 2 When the prim is touched, the buy dialog is opened CLICK_ACTION_PAY 3 When the prim is touched, the pay dialog is opened CLICK_ACTION_OPEN 4 When the prim is touched, the object inventory dialog is opened CLICK_ACTION_PLAY 5 Play or pause parcel m\n\n```lsl\n[ integer action ]\n```"
     },
     {
       "name": "PRIM_COLOR",
       "type": "integer",
       "value": 18,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_COLOR"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_COLOR",
+      "doc": "Alpha: llGetAlpha Color: llGetColor\n\n```lsl\n[ PRIM_COLOR, integer face ]\n```"
     },
     {
       "name": "PRIM_DAMAGE",
       "type": "integer",
       "value": 51,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_DAMAGE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_DAMAGE",
+      "doc": "Gets the damage and damage type delivered by a prim on collision.\n\n```lsl\n[ float damage, integer damage_type ]\n```"
     },
     {
       "name": "PRIM_DESC",
       "type": "integer",
       "value": 28,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_DESC"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_DESC",
+      "doc": "Description: llGetObjectDesc\n\n```lsl\n[ string description ]\n```"
     },
     {
       "name": "PRIM_FLEXIBLE",
       "type": "integer",
       "value": 21,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_FLEXIBLE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_FLEXIBLE",
+      "doc": "Flexible: Boolean flag\n\n```lsl\n[ integer boolean, integer softness, float gravity, float friction, float wind, float tension, vector force ]\n```"
     },
     {
       "name": "PRIM_FULLBRIGHT",
       "type": "integer",
       "value": 20,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_FULLBRIGHT"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_FULLBRIGHT",
+      "doc": "Fullbright\n\n```lsl\n[ PRIM_FULLBRIGHT, integer face ]\n```"
     },
     {
       "name": "PRIM_GLOW",
@@ -3254,49 +3324,57 @@
       "name": "PRIM_GLTF_ALPHA_MODE_BLEND",
       "type": "integer",
       "value": 1,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_ALPHA_MODE_BLEND"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_ALPHA_MODE_BLEND",
+      "doc": "Render the material with transparency determined by the alpha value. Blending is done in linear color space. As is the case for Blinn-Phong as well, this mode suffers from depth sorting and performance issues. Use alpha mask instead when possible.\n\n```lsl\n[ PRIM_GLTF_ALPHA_MODE_BLEND ]\n```"
     },
     {
       "name": "PRIM_GLTF_ALPHA_MODE_MASK",
       "type": "integer",
       "value": 2,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_ALPHA_MODE_MASK"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_ALPHA_MODE_MASK",
+      "doc": "Render the material as fully opaque where the alpha value is greater than the alpha cutoff, and otherwise render the material as fully transparent.\n\n```lsl\n[ PRIM_GLTF_ALPHA_MODE_MASK ]\n```"
     },
     {
       "name": "PRIM_GLTF_ALPHA_MODE_OPAQUE",
       "type": "integer",
       "value": 0,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_ALPHA_MODE_OPAQUE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_ALPHA_MODE_OPAQUE",
+      "doc": "Ignore the alpha value and render the material as opaque.\n\n```lsl\n[ PRIM_GLTF_ALPHA_MODE_OPAQUE ]\n```"
     },
     {
       "name": "PRIM_GLTF_BASE_COLOR",
       "type": "integer",
       "value": 48,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_BASE_COLOR"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_BASE_COLOR",
+      "doc": "linear_color param accepts color in Linear space - use llsRGB2Linear to convert regular LSL color into Linear space. This parameter's arguments are GLTF overrides. Warning: Setting an argument to the empty string (\"\") will clear the respective override. GLTF texture transforms are always overrides, so setting them to the empty string (\"\") will clear them. See this example for a workaround. The SL team is open to feedback on LSL improvements for GLTF. gltf_alpha_mode Flags V Description PRIM_GLTF_ALPHA_MODE_OPAQUE 0 Ignore the alpha value and render the material as opaque.\n\n```lsl\n[ PRIM_GLTF_BASE_COLOR, integer face ]\n```"
     },
     {
       "name": "PRIM_GLTF_EMISSIVE",
       "type": "integer",
       "value": 46,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_EMISSIVE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_EMISSIVE",
+      "doc": "emissive_tint param accepts color in Linear space - use llsRGB2Linear to convert regular LSL color into Linear space. This parameter's arguments are GLTF overrides. Warning: Setting an argument to the empty string (\"\") will clear the respective override. GLTF texture transforms are always overrides, so setting them to the empty string (\"\") will clear them. See this example for a workaround. The SL team is open to feedback on LSL improvements for GLTF.\n\n```lsl\n[ PRIM_GLTF_EMISSIVE, integer face ]\n```"
     },
     {
       "name": "PRIM_GLTF_METALLIC_ROUGHNESS",
       "type": "integer",
       "value": 47,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_METALLIC_ROUGHNESS"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_METALLIC_ROUGHNESS",
+      "doc": "This parameter's arguments are GLTF overrides. Warning: Setting an argument to the empty string (\"\") will clear the respective override. GLTF texture transforms are always overrides, so setting them to the empty string (\"\") will clear them. See this example for a workaround. The SL team is open to feedback on LSL improvements for GLTF.\n\n```lsl\n[ PRIM_GLTF_METALLIC_ROUGHNESS, integer face ]\n```"
     },
     {
       "name": "PRIM_GLTF_NORMAL",
       "type": "integer",
       "value": 45,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_NORMAL"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_GLTF_NORMAL",
+      "doc": "This parameter's arguments are GLTF overrides. Warning: Setting an argument to the empty string (\"\") will clear the respective override. GLTF texture transforms are always overrides, so setting them to the empty string (\"\") will clear them. See this example for a workaround. The SL team is open to feedback on LSL improvements for GLTF.\n\n```lsl\n[ PRIM_GLTF_NORMAL, integer face ]\n```"
     },
     {
       "name": "PRIM_HEALTH",
       "type": "integer",
       "value": 52,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_HEALTH"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_HEALTH",
+      "doc": "Gets the health of a prim\n\n```lsl\n[ float health ]\n```"
     },
     {
       "name": "PRIM_HOLE_CIRCLE",
@@ -3326,61 +3404,71 @@
       "name": "PRIM_LINK_TARGET",
       "type": "integer",
       "value": 34,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_LINK_TARGET"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_LINK_TARGET",
+      "doc": "Multiple llGetLinkPrimitiveParams calls.\n\n```lsl\n[ PRIM_LINK_TARGET, integer link_target ]\n```"
     },
     {
       "name": "PRIM_MATERIAL",
       "type": "integer",
       "value": 2,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL",
+      "doc": "Gets the prim's material. The material determines the default collision sound, sprite, friction coefficient and restitution coefficient.\n\n```lsl\n[ integer material ]\n```"
     },
     {
       "name": "PRIM_MATERIAL_FLESH",
       "type": "integer",
       "value": 4,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_FLESH"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_FLESH",
+      "doc": "Material Flesh\n\n```lsl\n[ PRIM_MATERIAL_FLESH ]\n```"
     },
     {
       "name": "PRIM_MATERIAL_GLASS",
       "type": "integer",
       "value": 2,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_GLASS"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_GLASS",
+      "doc": "Material Glass\n\n```lsl\n[ PRIM_MATERIAL_GLASS ]\n```"
     },
     {
       "name": "PRIM_MATERIAL_LIGHT",
       "type": "integer",
       "value": 7,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_LIGHT"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_LIGHT",
+      "doc": "Material Light\n\n```lsl\n[ PRIM_FULLBRIGHT, ALL_SIDES, TRUE ]\n```"
     },
     {
       "name": "PRIM_MATERIAL_METAL",
       "type": "integer",
       "value": 1,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_METAL"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_METAL",
+      "doc": "Material Metal\n\n```lsl\n[ PRIM_MATERIAL_METAL ]\n```"
     },
     {
       "name": "PRIM_MATERIAL_PLASTIC",
       "type": "integer",
       "value": 5,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_PLASTIC"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_PLASTIC",
+      "doc": "Material Plastic\n\n```lsl\n[ PRIM_MATERIAL_PLASTIC ]\n```"
     },
     {
       "name": "PRIM_MATERIAL_RUBBER",
       "type": "integer",
       "value": 6,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_RUBBER"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_RUBBER",
+      "doc": "Material Rubber\n\n```lsl\n[ PRIM_MATERIAL_RUBBER ]\n```"
     },
     {
       "name": "PRIM_MATERIAL_STONE",
       "type": "integer",
       "value": 0,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_STONE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_STONE",
+      "doc": "Material Stone\n\n```lsl\n[ PRIM_MATERIAL_STONE ]\n```"
     },
     {
       "name": "PRIM_MATERIAL_WOOD",
       "type": "integer",
       "value": 3,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_WOOD"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_MATERIAL_WOOD",
+      "doc": "Material Wood\n\n```lsl\n[ PRIM_MATERIAL_WOOD ]\n```"
     },
     {
       "name": "PRIM_MEDIA_ALT_IMAGE_ENABLE",
@@ -3565,7 +3653,8 @@
       "name": "PRIM_NAME",
       "type": "integer",
       "value": 27,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_NAME"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_NAME",
+      "doc": "Name: llGetObjectName\n\n```lsl\n[ string name ]\n```"
     },
     {
       "name": "PRIM_NORMAL",
@@ -3578,19 +3667,22 @@
       "name": "PRIM_OMEGA",
       "type": "integer",
       "value": 32,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_OMEGA"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_OMEGA",
+      "doc": "llTargetOmega\n\n```lsl\n[ vector axis, float spinrate, float gain ]\n```"
     },
     {
       "name": "PRIM_PHANTOM",
       "type": "integer",
       "value": 5,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_PHANTOM"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_PHANTOM",
+      "doc": "Phantom status llGetStatus\n\n```lsl\n[ integer boolean ]\n```"
     },
     {
       "name": "PRIM_PHYSICS",
       "type": "integer",
       "value": 3,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_PHYSICS"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_PHYSICS",
+      "doc": "Physics status llGetStatus\n\n```lsl\n[ integer boolean ]\n```"
     },
     {
       "name": "PRIM_PHYSICS_SHAPE_CONVEX",
@@ -3624,73 +3716,85 @@
       "name": "PRIM_POINT_LIGHT",
       "type": "integer",
       "value": 23,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_POINT_LIGHT"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_POINT_LIGHT",
+      "doc": "linear_color param accepts color in Linear space - use llsRGB2Linear to convert regular LSL color into Linear space.\n\n```lsl\n[ integer boolean, vector linear_color, float intensity, float radius, float falloff ]\n```"
     },
     {
       "name": "PRIM_POS_LOCAL",
       "type": "integer",
       "value": 33,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_POS_LOCAL"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_POS_LOCAL",
+      "doc": "Local position, llGetLocalPos\n\n```lsl\n[ vector position ]\n```"
     },
     {
       "name": "PRIM_POSITION",
       "type": "integer",
       "value": 6,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_POSITION"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_POSITION",
+      "doc": "Position, llGetPos\n\n```lsl\n[ vector position ]\n```"
     },
     {
       "name": "PRIM_PROJECTOR",
       "type": "integer",
       "value": 42,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_PROJECTOR"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_PROJECTOR",
+      "doc": "Light projector settings, the texture may be NULL_KEY. (Write only, for now. See here)\n\n```lsl\n[ string texture, float fov, float focus, float ambiance ]\n```"
     },
     {
       "name": "PRIM_REFLECTION_PROBE",
       "type": "integer",
       "value": 44,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_REFLECTION_PROBE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_REFLECTION_PROBE",
+      "doc": "Gets the prim's reflection probe parameters.\n\n```lsl\n[ integer boolean, float ambiance, float clip_distance, integer flags ]\n```"
     },
     {
       "name": "PRIM_REFLECTION_PROBE_BOX",
       "type": "integer",
       "value": 1,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_REFLECTION_PROBE_BOX"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_REFLECTION_PROBE_BOX",
+      "doc": "Unset by default (probe is a sphere)\n\n```lsl\n[ PRIM_REFLECTION_PROBE_BOX ]\n```"
     },
     {
       "name": "PRIM_REFLECTION_PROBE_DYNAMIC",
       "type": "integer",
       "value": 2,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_REFLECTION_PROBE_DYNAMIC"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_REFLECTION_PROBE_DYNAMIC",
+      "doc": "Unset by default (probe does not image avatars). Imaging avatars in probes has a performance cost.\n\n```lsl\n[ PRIM_REFLECTION_PROBE_DYNAMIC ]\n```"
     },
     {
       "name": "PRIM_REFLECTION_PROBE_MIRROR",
       "type": "integer",
       "value": 4,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_REFLECTION_PROBE_MIRROR"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_REFLECTION_PROBE_MIRROR",
+      "doc": "Unset by default (probe does not act as a mirror). Rendering mirrors has a performance cost.\n\n```lsl\n[ PRIM_REFLECTION_PROBE_MIRROR ]\n```"
     },
     {
       "name": "PRIM_RENDER_MATERIAL",
       "type": "integer",
       "value": 49,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_RENDER_MATERIAL"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_RENDER_MATERIAL",
+      "doc": "Material: llGetRenderMaterial\n\n```lsl\n[ PRIM_RENDER_MATERIAL, integer face ]\n```"
     },
     {
       "name": "PRIM_ROT_LOCAL",
       "type": "integer",
       "value": 29,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_ROT_LOCAL"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_ROT_LOCAL",
+      "doc": "Local rotation, llGetLocalRot\n\n```lsl\n[ rotation rot ]\n```"
     },
     {
       "name": "PRIM_ROTATION",
       "type": "integer",
       "value": 8,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_ROTATION"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_ROTATION",
+      "doc": "Global rotation, llGetRot\n\n```lsl\n[ rotation rot ]\n```"
     },
     {
       "name": "PRIM_SCRIPTED_SIT_ONLY",
       "type": "integer",
       "value": 40,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCRIPTED_SIT_ONLY"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCRIPTED_SIT_ONLY",
+      "doc": "Scripted Sit Only: Only allow scripted sits on this sit target\n\n```lsl\n[ integer boolean ]\n```"
     },
     {
       "name": "PRIM_SCULPT_FLAG_ANIMESH",
@@ -3716,7 +3820,8 @@
       "name": "PRIM_SCULPT_TYPE_CYLINDER",
       "type": "integer",
       "value": 4,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCULPT_TYPE_CYLINDER"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCULPT_TYPE_CYLINDER",
+      "doc": "Stitch left side to right.\n\n```lsl\n[ PRIM_SCULPT_TYPE_CYLINDER ]\n```"
     },
     {
       "name": "PRIM_SCULPT_TYPE_MASK",
@@ -3728,67 +3833,78 @@
       "name": "PRIM_SCULPT_TYPE_MESH",
       "type": "integer",
       "value": 5,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCULPT_TYPE_MESH"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCULPT_TYPE_MESH",
+      "doc": "Sculpt Type Mesh\n\n```lsl\n[ PRIM_SCULPT_TYPE_MESH ]\n```"
     },
     {
       "name": "PRIM_SCULPT_TYPE_PLANE",
       "type": "integer",
       "value": 3,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCULPT_TYPE_PLANE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCULPT_TYPE_PLANE",
+      "doc": "No stitching or converging\n\n```lsl\n[ PRIM_SCULPT_TYPE_PLANE ]\n```"
     },
     {
       "name": "PRIM_SCULPT_TYPE_SPHERE",
       "type": "integer",
       "value": 1,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCULPT_TYPE_SPHERE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCULPT_TYPE_SPHERE",
+      "doc": "Converge top & bottom, stitch left side to right\n\n```lsl\n[ PRIM_SCULPT_TYPE_SPHERE ]\n```"
     },
     {
       "name": "PRIM_SCULPT_TYPE_TORUS",
       "type": "integer",
       "value": 2,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCULPT_TYPE_TORUS"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SCULPT_TYPE_TORUS",
+      "doc": "Stitch top to bottom, stitch left side to right\n\n```lsl\n[ PRIM_SCULPT_TYPE_TORUS ]\n```"
     },
     {
       "name": "PRIM_SHINY_HIGH",
       "type": "integer",
       "value": 3,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SHINY_HIGH"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SHINY_HIGH",
+      "doc": "Shiny High\n\n```lsl\n[ PRIM_SHINY_HIGH ]\n```"
     },
     {
       "name": "PRIM_SHINY_LOW",
       "type": "integer",
       "value": 1,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SHINY_LOW"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SHINY_LOW",
+      "doc": "Shiny Low\n\n```lsl\n[ PRIM_SHINY_LOW ]\n```"
     },
     {
       "name": "PRIM_SHINY_MEDIUM",
       "type": "integer",
       "value": 2,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SHINY_MEDIUM"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SHINY_MEDIUM",
+      "doc": "Shiny Medium\n\n```lsl\n[ PRIM_SHINY_MEDIUM ]\n```"
     },
     {
       "name": "PRIM_SHINY_NONE",
       "type": "integer",
       "value": 0,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SHINY_NONE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SHINY_NONE",
+      "doc": "Shiny None\n\n```lsl\n[ PRIM_SHINY_NONE ]\n```"
     },
     {
       "name": "PRIM_SIT_TARGET",
       "type": "integer",
       "value": 41,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SIT_TARGET"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SIT_TARGET",
+      "doc": "Sit target, llSitTarget. The position can be ZERO_VECTOR.\n\n```lsl\n[ integer boolean , vector offset, rotation rot ]\n```"
     },
     {
       "name": "PRIM_SIZE",
       "type": "integer",
       "value": 7,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SIZE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SIZE",
+      "doc": "Size, llGetScale\n\n```lsl\n[ vector size ]\n```"
     },
     {
       "name": "PRIM_SLICE",
       "type": "integer",
       "value": 35,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SLICE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_SLICE",
+      "doc": "Gets the prim's slice (a shape attribute).\n\n```lsl\n[ vector slice ]\n```"
     },
     {
       "name": "PRIM_SPECULAR",
@@ -3801,43 +3917,50 @@
       "name": "PRIM_TEMP_ON_REZ",
       "type": "integer",
       "value": 4,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEMP_ON_REZ"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEMP_ON_REZ",
+      "doc": "Temporary attribute\n\n```lsl\n[ integer boolean ]\n```"
     },
     {
       "name": "PRIM_TEXGEN",
       "type": "integer",
       "value": 22,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEXGEN"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEXGEN",
+      "doc": "mode Constants Description\n\n```lsl\n[ PRIM_TEXGEN, integer face ]\n```"
     },
     {
       "name": "PRIM_TEXGEN_DEFAULT",
       "type": "integer",
       "value": 0,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEXGEN_DEFAULT"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEXGEN_DEFAULT",
+      "doc": "The texture repeats units are in texture repeats per face.\n\n```lsl\n[ PRIM_TEXGEN_DEFAULT ]\n```"
     },
     {
       "name": "PRIM_TEXGEN_PLANAR",
       "type": "integer",
       "value": 1,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEXGEN_PLANAR"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEXGEN_PLANAR",
+      "doc": "The texture repeats units are in texture repeats per half meter. This is in contrast to the in-world editing tool, in which the planar texture scaling units are repeats per meter.\n\n```lsl\n[ PRIM_TEXGEN_PLANAR ]\n```"
     },
     {
       "name": "PRIM_TEXT",
       "type": "integer",
       "value": 26,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEXT"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEXT",
+      "doc": "Floating Text: NA\n\n```lsl\n[ string text, vector color, float alpha ]\n```"
     },
     {
       "name": "PRIM_TEXTURE",
       "type": "integer",
       "value": 17,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEXTURE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TEXTURE",
+      "doc": "Texture: llGetTexture Repeats: llGetTextureScale Offset: llGetTextureOffset Rotation: llGetTextureRot\n\n```lsl\n[ PRIM_TEXTURE, integer face ]\n```"
     },
     {
       "name": "PRIM_TYPE",
       "type": "integer",
       "value": 9,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE",
+      "doc": "Gets the prim shape. [Would you like to know more?][Hide]\n\n```lsl\n[ integer flag ]\n```"
     },
     {
       "name": "PRIM_TYPE_BOX",
@@ -3849,43 +3972,50 @@
       "name": "PRIM_TYPE_CYLINDER",
       "type": "integer",
       "value": 1,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_CYLINDER"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_CYLINDER",
+      "doc": "Cylinder: Shape parameters\n\n```lsl\n[ integer hole_shape, vector cut, float hollow, vector twist, vector top_size, vector top_shear ]\n```"
     },
     {
       "name": "PRIM_TYPE_PRISM",
       "type": "integer",
       "value": 2,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_PRISM"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_PRISM",
+      "doc": "Prism: Shape parameters\n\n```lsl\n[ integer hole_shape, vector cut, float hollow, vector twist, vector top_size, vector top_shear ]\n```"
     },
     {
       "name": "PRIM_TYPE_RING",
       "type": "integer",
       "value": 6,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_RING"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_RING",
+      "doc": "Ring: Shape parameters\n\n```lsl\n[ integer hole_shape, vector cut, float hollow, vector twist, vector hole_size, vector top_shear, vector advanced_cut, vector taper, float revolutions, float radius_offset, float skew ]\n```"
     },
     {
       "name": "PRIM_TYPE_SCULPT",
       "type": "integer",
       "value": 7,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_SCULPT"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_SCULPT",
+      "doc": "Sculpt: Shape parameters\n\n```lsl\n[ string map, integer type ]\n```"
     },
     {
       "name": "PRIM_TYPE_SPHERE",
       "type": "integer",
       "value": 3,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_SPHERE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_SPHERE",
+      "doc": "Sphere: Shape parameters\n\n```lsl\n[ integer hole_shape, vector cut, float hollow, vector twist, vector dimple]\n```"
     },
     {
       "name": "PRIM_TYPE_TORUS",
       "type": "integer",
       "value": 4,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_TORUS"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_TORUS",
+      "doc": "Torus: Shape parameters\n\n```lsl\n[ integer hole_shape, vector cut, float hollow, vector twist, vector hole_size, vector top_shear, vector advanced_cut, vector taper, float revolutions, float radius_offset, float skew ]\n```"
     },
     {
       "name": "PRIM_TYPE_TUBE",
       "type": "integer",
       "value": 5,
-      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_TUBE"
+      "wiki": "https://wiki.secondlife.com/wiki/PRIM_TYPE_TUBE",
+      "doc": "Tube: Shape parameters\n\n```lsl\n[ integer hole_shape, vector cut, float hollow, vector twist, vector hole_size, vector top_shear, vector advanced_cut, vector taper, float revolutions, float radius_offset, float skew ]\n```"
     },
     {
       "name": "PROFILE_NONE",
@@ -5447,11 +5577,6 @@
       "wiki": "https://wiki.secondlife.com/wiki/WHITE"
     },
     {
-      "name": "X",
-      "type": "float",
-      "wiki": "https://wiki.secondlife.com/wiki/X"
-    },
-    {
       "name": "XP_ERROR_EXPERIENCE_DISABLED",
       "type": "integer",
       "value": 8,
@@ -5578,20 +5703,10 @@
       "wiki": "https://wiki.secondlife.com/wiki/XP_ERROR_UNKNOWN_ERROR"
     },
     {
-      "name": "Y",
-      "type": "float",
-      "wiki": "https://wiki.secondlife.com/wiki/Y"
-    },
-    {
       "name": "YELLOW",
       "type": "vector",
       "value": "<1    , 0.863, 0    >",
       "wiki": "https://wiki.secondlife.com/wiki/YELLOW"
-    },
-    {
-      "name": "Z",
-      "type": "float",
-      "wiki": "https://wiki.secondlife.com/wiki/Z"
     },
     {
       "name": "ZERO_ROTATION",
