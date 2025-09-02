@@ -140,9 +140,16 @@ export function validateOperatorsFromAst(
 					}
 					case '*':
 					case '*=': {
-						if (lt === 'vector' && rt === 'vector' && op !== '*=') {
-							// ok dot
-						} else if (num(lt) && num(rt)) {
+						// Allowed combinations in LSL:
+						// - vector * vector (dot product) [not for *=]
+						// - number * number (integer/float)
+						// - vector * number, number * vector (scaling)
+						// - vector * rotation (rotate vector)
+						const isVectorDot = (lt === 'vector' && rt === 'vector' && op !== '*=');
+						const isNumericBoth = num(lt) && num(rt);
+						const isVectorScale = (lt === 'vector' && num(rt)) || (num(lt) && rt === 'vector');
+						const isVectorRotate = (lt === 'vector' && rt === 'rotation');
+						if (isVectorDot || isNumericBoth || isVectorScale || isVectorRotate) {
 							// ok
 						} else if (lt !== 'any' && rt !== 'any') {
 							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator * type mismatch: ${lt} * ${rt}`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Information });

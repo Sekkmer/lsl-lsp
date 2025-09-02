@@ -139,4 +139,24 @@ default {
 		const msgs = analysis.diagnostics.map(d => d.message);
 		expect(msgs.some(m => m.includes('Operator + type mismatch'))).toBe(false);
 	});
+
+	it('vector * float yields vector; vector * rotation yields vector', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+	state_entry() {
+		vector v = <1,2,3>;
+		float s = 2.0;
+		rotation r = <0,0,0,1>;
+		vector a = v * s; // scale: ok
+		vector b = s * v; // commutative scale: ok
+		vector c = v * r; // rotate: ok
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///ops_vec_mul.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.some(m => m.includes('Operator * type mismatch'))).toBe(false);
+	});
 });
