@@ -11,7 +11,7 @@ describe('AST parser recovery: missing tokens', () => {
 		expect(Array.from(s.globals.keys())).toContain('b');
 		const msgs = (s.diagnostics||[]).map(d => d.message);
 		// accept either phrasing
-		expect(msgs.some(m => m.includes("';'") || m.includes('missing ;'))).toBe(true);
+		expect(msgs.some(m => m.includes('\';\'') || m.includes('missing ;'))).toBe(true);
 	});
 
 	it('recovers from missing } before next state and continues', () => {

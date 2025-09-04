@@ -21,7 +21,7 @@ function tmpFile(rel: string, contents: string) {
 
 describe('include symbols/macros', () => {
 	it('colors and recognizes macros from included header', async () => {
-		const header = tmpFile('mydefs.lslh', `#define FOO 123\n#define BAR(x) (x+1)\n`);
+		const header = tmpFile('mydefs.lslh', '#define FOO 123\n#define BAR(x) (x+1)\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\ninteger a = FOO;\ninteger b = BAR(2);\n`;
 		const doc = docFrom(code, 'file:///proj/main.lsl');
@@ -38,7 +38,7 @@ describe('include symbols/macros', () => {
 	});
 
 	it('classifies functions from included headers as function tokens', async () => {
-		const header = tmpFile('api.lslh', `integer myFunc(integer x);\n`);
+		const header = tmpFile('api.lslh', 'integer myFunc(integer x);\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\ninteger z = myFunc(1);\n`;
 		const doc = docFrom(code, 'file:///proj/usesFunc.lsl');
@@ -50,7 +50,7 @@ describe('include symbols/macros', () => {
 	});
 
 	it('reports missing include as diagnostic', async () => {
-		const code = `#include "missing_header.lslh"\ninteger z;\n`;
+		const code = '#include "missing_header.lslh"\ninteger z;\n';
 		const doc = docFrom(code, 'file:///proj/missing.lsl');
 		const defs = await loadDefs(defsPath);
 		const { pre } = runPipeline(doc, defs, { includePaths: [] });
@@ -58,7 +58,7 @@ describe('include symbols/macros', () => {
 	});
 
 	it('recognizes globals from included headers', async () => {
-		const header = tmpFile('globals.lslh', `integer GLOB_A;\nfloat GLOB_F = 1.0;\n`);
+		const header = tmpFile('globals.lslh', 'integer GLOB_A;\nfloat GLOB_F = 1.0;\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\ninteger z = GLOB_A;\n`;
 		const doc = docFrom(code, 'file:///proj/usesGlobal.lsl');
@@ -70,7 +70,7 @@ describe('include symbols/macros', () => {
 	});
 
 	it('recognizes const-qualified globals from includes', async () => {
-		const header = tmpFile('const_globals.lslh', `const integer PERMISSION_TAKE = 1;\nconst integer BUTTON_OK = 1;\n`);
+		const header = tmpFile('const_globals.lslh', 'const integer PERMISSION_TAKE = 1;\nconst integer BUTTON_OK = 1;\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\ninteger x = PERMISSION_TAKE + BUTTON_OK;\n`;
 		const doc = docFrom(code, 'file:///proj/usesConstGlobals.lsl');
@@ -82,7 +82,7 @@ describe('include symbols/macros', () => {
 	});
 
 	it('recognizes functions when brace is on the next line', async () => {
-		const header = tmpFile('brace_next_line.lslh', `integer Sign(integer x)\n{\n    return x;\n}\n`);
+		const header = tmpFile('brace_next_line.lslh', 'integer Sign(integer x)\n{\n    return x;\n}\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\ninteger z = Sign(1);\n`;
 		const doc = docFrom(code, 'file:///proj/usesBraceNextLine.lsl');
@@ -98,11 +98,11 @@ describe('include symbols/macros', () => {
 
 	it('resolves symbols through transitive includes', async () => {
 		// a.lslh includes b.lslh which defines function Foo and macro BAR
-		const b = tmpFile('b.lslh', `#define BAR 7\ninteger Foo(integer x);\n`);
-		const a = tmpFile('a.lslh', `#include "b.lslh"\n`);
+		const b = tmpFile('b.lslh', '#define BAR 7\ninteger Foo(integer x);\n');
+		const a = tmpFile('a.lslh', '#include "b.lslh"\n');
 		const includeDir = path.dirname(await b.write());
 		await a.write();
-		const code = `#include "a.lslh"\ninteger x = Foo(BAR);\n`;
+		const code = '#include "a.lslh"\ninteger x = Foo(BAR);\n';
 		const doc = docFrom(code, 'file:///proj/transitive.lsl');
 		const defs = await loadDefs(defsPath);
 		const { analysis, pre, sem } = runPipeline(doc, defs, { includePaths: [includeDir] });

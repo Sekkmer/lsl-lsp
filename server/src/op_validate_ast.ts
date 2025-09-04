@@ -172,7 +172,7 @@ export function validateOperatorsFromAst(
 						break;
 					}
 					default:
-						AssertNever(op, "<unknown operator>");
+						AssertNever(op, '<unknown operator>');
 						break;
 				}
 				// recurse

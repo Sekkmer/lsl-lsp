@@ -254,9 +254,9 @@ class Parser {
 		let guard = 0;
 		while (!this.maybe('punct', ')')) {
 			// EOF/stuck protection
-			if (this.peek().kind === 'eof') { this.report(this.peek(), "missing ) to close parameter list", 'LSL000'); break; }
+			if (this.peek().kind === 'eof') { this.report(this.peek(), 'missing ) to close parameter list', 'LSL000'); break; }
 			// If we encounter a block start before closing ')', assume missing ')' and recover
-			if (this.peek().kind === 'punct' && this.peek().value === '{') { this.report(this.peek(), "missing ) to close parameter list", 'LSL000'); break; }
+			if (this.peek().kind === 'punct' && this.peek().value === '{') { this.report(this.peek(), 'missing ) to close parameter list', 'LSL000'); break; }
 			if (++guard > 10000) { this.report(this.peek(), 'parser recovery limit in parameter list', 'LSL000'); break; }
 			const tType = this.next();
 			if (!(tType.kind === 'keyword' && isType(tType.value))) throw this.err(tType, 'expected param type');
@@ -458,7 +458,7 @@ class Parser {
 					}
 				}
 				// No matching if (or no preceding '}'): report and consume the stray else to avoid stalling
-				this.report(look, "unexpected 'else' without matching 'if'", 'LSL000');
+				this.report(look, 'unexpected \'else\' without matching \'if\'', 'LSL000');
 				this.next();
 				try { this.parseStmtInner(inFunctionOrEvent); } catch { /* ignore; already reported */ }
 				continue;

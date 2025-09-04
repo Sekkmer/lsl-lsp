@@ -14,7 +14,7 @@ function diagMsgs(analysis: Analysis) {
 describe('postfix ++/-- parsing and validation', () => {
 	it('parses for-update with i++ without parse errors', async () => {
 		const defs = await loadDefs(defsPath);
-		const code = `default { state_entry() { integer i = 0; for (i = 0; i < 3; i++) { } } }`;
+		const code = 'default { state_entry() { integer i = 0; for (i = 0; i < 3; i++) { } } }';
 		const doc = docFrom(code, 'file:///postfix_for.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		const parseErrors = analysis.diagnostics.filter((d) => d.code === 'LSL000');
@@ -23,7 +23,7 @@ describe('postfix ++/-- parsing and validation', () => {
 
 	it('parses standalone i++ and validates assignability/integer type', async () => {
 		const defs = await loadDefs(defsPath);
-		const code = `default { state_entry() { integer i = 0; i++; --i; } }`;
+		const code = 'default { state_entry() { integer i = 0; i++; --i; } }';
 		const doc = docFrom(code, 'file:///postfix_standalone.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		// Should not produce INVALID_ASSIGN_LHS or WRONG_TYPE when i is integer variable
@@ -33,7 +33,7 @@ describe('postfix ++/-- parsing and validation', () => {
 
 	it('flags invalid postfix on non-assignable (1++)', async () => {
 		const defs = await loadDefs(defsPath);
-		const code = `default { state_entry() { 1++; } }`;
+		const code = 'default { state_entry() { 1++; } }';
 		const doc = docFrom(code, 'file:///postfix_invalid.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		const msgs = diagMsgs(analysis);

@@ -19,7 +19,7 @@ function tmpFile(rel: string, contents: string) {
 describe('includes: duplicate state names', () => {
 	it('emits duplicate state diagnostic at include site', async () => {
 		const defs = await loadTestDefs();
-		const header = tmpFile('states_api.lslh', `state Foo {\n\tstate_entry() { }\n}\n`);
+		const header = tmpFile('states_api.lslh', 'state Foo {\n\tstate_entry() { }\n}\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\nstate Foo {\n\tstate_entry(){ }\n}`;
 		const doc = docFrom(code, 'file:///proj/dup_state.lsl');

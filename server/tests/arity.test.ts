@@ -5,7 +5,7 @@ import { loadTestDefs } from './loadDefs.testutil';
 describe('arity counting', () => {
 	it('counts nested call expression as one arg', async () => {
 		const defs = await loadTestDefs();
-		const code = `default { state_entry() { if (llAbs(llList2Integer(parts, -2) - llGetUnixTime()) > 30) { llOwnerSay("x"); } } }`;
+		const code = 'default { state_entry() { if (llAbs(llList2Integer(parts, -2) - llGetUnixTime()) > 30) { llOwnerSay("x"); } } }';
 		const doc = docFrom(code);
 		const { analysis } = runPipeline(doc, defs);
 		// ensure we saw llAbs call with one arg
@@ -20,7 +20,7 @@ describe('arity counting', () => {
 		const defs = await loadTestDefs();
 		// Use a builtin present in fixtures: llStringTrim(string src, integer opts)
 		// Pass a string for the integer parameter to force WRONG_TYPE
-		const code = `default { state_entry() { string s = "abc"; llStringTrim(s, "x"); } }`;
+		const code = 'default { state_entry() { string s = "abc"; llStringTrim(s, "x"); } }';
 		const doc = docFrom(code);
 		const { analysis } = runPipeline(doc, defs);
 		const wrong = analysis.diagnostics.find(d => d.code === 'LSL011');
@@ -29,7 +29,7 @@ describe('arity counting', () => {
 
 	it('reports WRONG_TYPE for user-defined mismatch', async () => {
 		const defs = await loadTestDefs();
-		const code = `integer foo(vector v){ return 0; } default { state_entry() { foo(123); } }`;
+		const code = 'integer foo(vector v){ return 0; } default { state_entry() { foo(123); } }';
 		const doc = docFrom(code);
 		const { analysis } = runPipeline(doc, defs);
 		const wrong = analysis.diagnostics.find(d => d.code === 'LSL011');

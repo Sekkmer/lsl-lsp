@@ -28,7 +28,7 @@ describe('events: strict validation and hovers', () => {
 		expect(err).toBeTruthy();
 	});
 
-	it("doesn't enforce parameter names (only types)", async () => {
+	it('doesn\'t enforce parameter names (only types)', async () => {
 		const defs = await loadTestDefs();
 		// Use a different parameter name than the defs provide; type is still integer
 		const doc = docFrom('default { touch_start(integer foo) { } }');

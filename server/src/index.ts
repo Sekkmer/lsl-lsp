@@ -24,7 +24,7 @@ import {
 } from 'vscode-languageserver/node';
 // Enable proper TS stack traces with source maps in Node
 import 'source-map-support/register.js';
-import { TextDocument } from "vscode-languageserver-textdocument";
+import { TextDocument } from 'vscode-languageserver-textdocument';
 import { loadDefs, Defs } from './defs';
 import type { PreprocResult } from './core/preproc';
 import { preprocessForAst } from './core/pipeline';

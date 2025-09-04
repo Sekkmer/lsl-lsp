@@ -20,7 +20,7 @@ describe('preprocessor: duplicate macros from includes', () => {
 	it('ignores duplicate macros from include and emits preproc diagnostic', async () => {
 		const defs = await loadTestDefs();
 		// Local defines duplicate of header macro names
-		const header = tmpFile('dup_macros.lslh', `#define FOO 1\n#define BAR(x) (x)\n`);
+		const header = tmpFile('dup_macros.lslh', '#define FOO 1\n#define BAR(x) (x)\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#define FOO 42\n#define BAR(x) ((x)+1)\n#include "${path.basename(header.path)}"\ninteger main(){ return FOO; }`;
 		const doc = docFrom(code, 'file:///proj/dup_macros_test.lsl');

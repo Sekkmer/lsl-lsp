@@ -7,7 +7,7 @@ import { gotoDefinition } from '../src/symbols';
 
 describe('goto definition for macros', () => {
 	it('jumps to local #define for object-like macro', async () => {
-		const code = `#define FOO 123\ninteger x = FOO;\n`;
+		const code = '#define FOO 123\ninteger x = FOO;\n';
 		const doc = TextDocument.create('file:///local.lsl', 'lsl', 1, code);
 		const defs = await loadTestDefs();
 		const { analysis, pre } = runPipeline(doc, defs);
@@ -19,7 +19,7 @@ describe('goto definition for macros', () => {
 	});
 
 	it('jumps to local #define for function-like macro', async () => {
-		const code = `#define ADD(a,b) ((a)+(b))\ninteger x = ADD(1,2);\n`;
+		const code = '#define ADD(a,b) ((a)+(b))\ninteger x = ADD(1,2);\n';
 		const doc = TextDocument.create('file:///local2.lsl', 'lsl', 1, code);
 		const defs = await loadTestDefs();
 		const { analysis, pre } = runPipeline(doc, defs);
@@ -31,7 +31,7 @@ describe('goto definition for macros', () => {
 
 	it('jumps to #define inside included file when available', async () => {
 		const includesDir = path.join(__dirname, 'fixtures', 'includes');
-		const code = `#include "macros.lslh"\ninteger x = MY_CONST;\n`;
+		const code = '#include "macros.lslh"\ninteger x = MY_CONST;\n';
 		const doc = TextDocument.create('file:///withinclude.lsl', 'lsl', 1, code);
 		const defs = await loadTestDefs();
 		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [includesDir] });
@@ -49,9 +49,9 @@ describe('goto definition for macros', () => {
 		await fs.mkdir(base, { recursive: true });
 		const b = path.join(base, 'b.lslh');
 		const a = path.join(base, 'a.lslh');
-		await fs.writeFile(b, `#define MC 42\ninteger Foo(integer x);\n`, 'utf8');
-		await fs.writeFile(a, `#include "b.lslh"\n`, 'utf8');
-		const code = `#include "a.lslh"\ninteger y = MC;\ninteger z = Foo(1);\n`;
+		await fs.writeFile(b, '#define MC 42\ninteger Foo(integer x);\n', 'utf8');
+		await fs.writeFile(a, '#include "b.lslh"\n', 'utf8');
+		const code = '#include "a.lslh"\ninteger y = MC;\ninteger z = Foo(1);\n';
 		const doc = docFrom(code, 'file:///proj/goto_transitive.lsl');
 		const defs = await loadTestDefs();
 		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [base] });

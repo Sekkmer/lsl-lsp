@@ -3,7 +3,7 @@ import { parseScriptFromText } from '../../src/ast/parser';
 
 describe('AST parser: comments and macros', () => {
 	it('attaches preceding comments to functions and globals', () => {
-		const src = `// line doc\n/* multi\nline */\ninteger foo() { return 1; }\n\n// gv doc\nfloat PI = 3.14;`;
+		const src = '// line doc\n/* multi\nline */\ninteger foo() { return 1; }\n\n// gv doc\nfloat PI = 3.14;';
 		const script = parseScriptFromText(src);
 		const fn = script.functions.get('foo');
 		expect(fn).toBeTruthy();
@@ -15,7 +15,7 @@ describe('AST parser: comments and macros', () => {
 	});
 
 	it('expands object-like macros', () => {
-		const src = `#define TEN 10\ninteger x = TEN + 5;`;
+		const src = '#define TEN 10\ninteger x = TEN + 5;';
 		const script = parseScriptFromText(src);
 		const gv = script.globals.get('x');
 		expect(gv).toBeTruthy();
@@ -28,7 +28,7 @@ describe('AST parser: comments and macros', () => {
 	});
 
 	it('expands simple function-like macros', () => {
-		const src = `#define ADD(a,b) ((a)+(b))\ninteger x = ADD(2,3);`;
+		const src = '#define ADD(a,b) ((a)+(b))\ninteger x = ADD(2,3);';
 		const script = parseScriptFromText(src);
 		const gv = script.globals.get('x');
 		const init = gv!.initializer!;

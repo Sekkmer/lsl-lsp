@@ -20,7 +20,7 @@ function tmpFile(rel: string, contents: string) {
 
 describe('includes: function decl without explicit return type', () => {
 	it('recognizes and allows call without unknown function diagnostic', async () => {
-		const header = tmpFile('api_voiddecl.lslh', `myHelper(integer x);\n`);
+		const header = tmpFile('api_voiddecl.lslh', 'myHelper(integer x);\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\ninteger z;\ninteger main() { myHelper(1); return 0; }\n`;
 		const doc = docFrom(code, 'file:///proj/usesVoidDecl.lsl');

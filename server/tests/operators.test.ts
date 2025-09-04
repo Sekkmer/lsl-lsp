@@ -122,7 +122,7 @@ default {
 		expect(msgs.some(m => m.includes('Operator + type mismatch'))).toBe(false);
 	});
 
-	it("doesn't flag call-result + string concat", async () => {
+	it('doesn\'t flag call-result + string concat', async () => {
 		const defs = await loadDefs(defsPath);
 		const code = `
 string PrintPermission(integer perm) { return ""; }

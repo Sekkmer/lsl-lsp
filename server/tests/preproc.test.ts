@@ -28,7 +28,7 @@ default
 
 	it('#include search path works', async () => {
 		const defs = await loadTestDefs();
-		const doc = docFrom(`#include "inc.lsl"\nllSay(0,"hi");`, 'file:///proj/main.lsl');
+		const doc = docFrom('#include "inc.lsl"\nllSay(0,"hi");', 'file:///proj/main.lsl');
 		const { pre } = runPipeline(doc, defs, { includePaths: [__dirname + '/fixtures/includes'] });
 		expect(pre.includes[0].endsWith('inc.lsl')).toBe(true);
 	});

@@ -28,14 +28,14 @@ key f() {
 
 	it('reports event outside state', async () => {
 		const defs = await loadTestDefs();
-		const doc = docFrom(`touch_start(integer n) { }`);
+		const doc = docFrom('touch_start(integer n) { }');
 		const { analysis } = runPipeline(doc, defs);
 		expect(analysis.diagnostics.some(d => d.code === LSL_DIAGCODES.EVENT_OUTSIDE_STATE)).toBe(true);
 	});
 
 	it('reports wrong arity', async () => {
 		const defs = await loadTestDefs();
-		const doc = docFrom(`default{state_entry(){ llSay(0); }}`);
+		const doc = docFrom('default{state_entry(){ llSay(0); }}');
 		const { analysis } = runPipeline(doc, defs);
 		const wrong = analysis.diagnostics.find(d => d.code === LSL_DIAGCODES.WRONG_ARITY);
 		expect(wrong).toBeTruthy();
@@ -43,14 +43,14 @@ key f() {
 
 	it('reports unknown identifier', async () => {
 		const defs = await loadTestDefs();
-		const doc = docFrom(`default{state_entry(){ fooBar(1,2,3); }} `);
+		const doc = docFrom('default{state_entry(){ fooBar(1,2,3); }} ');
 		const { analysis } = runPipeline(doc, defs);
 		expect(analysis.diagnostics.some(d => d.code === LSL_DIAGCODES.UNKNOWN_IDENTIFIER)).toBe(true);
 	});
 
 	it('marks unused globals', async () => {
 		const defs = await loadTestDefs();
-		const doc = docFrom(`integer X; default{state_entry(){}}`);
+		const doc = docFrom('integer X; default{state_entry(){}}');
 		const { analysis } = runPipeline(doc, defs);
 		expect(analysis.diagnostics.some(d => d.code === LSL_DIAGCODES.UNUSED_VAR)).toBe(true);
 	});

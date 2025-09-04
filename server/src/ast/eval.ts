@@ -603,7 +603,7 @@ export function evalStmt(stmt: Stmt, env: Env = new Env()): Value | null {
 		}
 	}
 
-	AssertNever(stmt, "Unreachable statement");
+	AssertNever(stmt, 'Unreachable statement');
 	return null;
 }
 
