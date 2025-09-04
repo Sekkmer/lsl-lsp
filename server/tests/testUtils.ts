@@ -13,7 +13,7 @@ import { parseScriptFromText } from '../src/ast/parser';
 import { analyzeAst } from '../src/ast/analyze';
 import { URI } from 'vscode-uri';
 import { basenameFromUri } from '../src/builtins';
-import { parseIncludeSymbols } from '../src/includeSymbols';
+import { parseIncludeSymbols, clearIncludeSymbolsCache } from '../src/includeSymbols';
 import fsSync from 'node:fs';
 
 export function docFrom(code: string, uri = 'file:///test.lsl') {
@@ -29,6 +29,8 @@ export type RunPipelineOptions = { macros?: Record<string, string | number | boo
 
 export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOptions) {
 	// Use new tokenizer+macro pipeline for disabled ranges/macros/includes, mirroring server integration
+	// Reset include symbols cache to avoid stale results if files are rewritten rapidly in tests
+	try { clearIncludeSymbolsCache(); } catch { /* ignore */ }
 	const fromPath = URI.parse(doc.uri).fsPath;
 	const full = preprocessForAst(doc.getText(), { includePaths: opts?.includePaths ?? [], fromPath, defines: opts?.macros ?? {} });
 	const pre: PreprocResult = {

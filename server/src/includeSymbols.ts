@@ -11,8 +11,13 @@ export type IncludeInfo = {
   states: Set<string>;
 };
 
-type IncludeCacheEntry = { mtimeMs: number; info: IncludeInfo };
+type IncludeCacheEntry = { mtimeMs: number; size: number; info: IncludeInfo };
 const includeSymbolsCache = new Map<string, IncludeCacheEntry>();
+
+// Allow tests or callers to force-clear cache to avoid stale entries across rapid file rewrites
+export function clearIncludeSymbolsCache() {
+	includeSymbolsCache.clear();
+}
 
 function cleanBlockDoc(raw: string): string {
 	const lines = raw.split(/\r?\n/);
@@ -27,8 +32,10 @@ export function parseIncludeSymbols(file: string): IncludeInfo | null {
 		const fs = require('node:fs') as typeof import('node:fs');
 		const stat = fs.statSync(file);
 		const mtimeMs = Number(stat?.mtimeMs ?? 0) || 0;
+		const size = Number(stat?.size ?? 0) || 0;
 		const cached = includeSymbolsCache.get(file);
-		if (cached && cached.mtimeMs === mtimeMs) return cached.info;
+		// Use both mtime and size to detect changes; mtime alone can be too coarse across rapid rewrites
+		if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.info;
 		const text = fs.readFileSync(file, 'utf8');
 		const lines = text.split(/\r?\n/);
 		const info: IncludeInfo = {
@@ -97,7 +104,7 @@ export function parseIncludeSymbols(file: string): IncludeInfo | null {
 			}
 			for (let k = 0; k < noLineComments.length; k++) { const ch = noLineComments[k]!; if (ch === '{') braceDepth++; else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1); }
 		}
-		includeSymbolsCache.set(file, { mtimeMs, info });
+		includeSymbolsCache.set(file, { mtimeMs, size, info });
 		return info;
 	} catch { return null; }
 }

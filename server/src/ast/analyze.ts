@@ -26,6 +26,30 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const functions = new Map<string, Analysis['decls'][number]>();
 	const globalDecls: Decl[] = [];
 
+	// Collect names of parameters used by function-like macros so we can avoid
+	// flagging them as unknown identifiers if any leak into the token stream.
+	// This is a pragmatic safeguard for SDKs that use leading-underscore macro
+	// parameters (e.g. _section) and for imperfect tooling paths.
+	const macroParamNames = new Set<string>();
+	try {
+		const src = pre.funcMacros || {} as Record<string, string>;
+		for (const body of Object.values(src)) {
+			if (typeof body !== 'string') continue;
+			const open = body.indexOf('(');
+			const close = body.indexOf(')');
+			if (open >= 0 && close > open) {
+				const paramsRaw = body.slice(open + 1, close);
+				for (const p of paramsRaw.split(',')) {
+					const name = p.trim();
+					// Ignore varargs tokens and empty entries
+					if (!name || name === '...' || name === '__VA_ARGS__') continue;
+					// Keep only identifier-like names
+					if (/^[A-Za-z_]\w*$/.test(name)) macroParamNames.add(name);
+				}
+			}
+		}
+	} catch { /* ignore */ }
+
 	// Track label declarations within the current function/event body (for validating jump targets)
 	let currentLabels: Set<string> | null = null;
 	function collectLabels(stmt: Stmt | null): Set<string> {
@@ -55,25 +79,53 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const fallbackMacros = new Set<string>();
 	try {
 		const fs = require('node:fs') as typeof import('node:fs');
+		// Optional debug logger for fallback include scan: enabled when LSL_FALLBACK_DEBUG=1
+		const dbg = (msg: string) => { try { if (process && process.env && process.env.LSL_FALLBACK_DEBUG === '1') console.error(`[analyze:fallback] ${msg}`); } catch { /* ignore */ } };
 		const knownTypes = new Set<string>([...TYPES, 'quaternion'].map(t => String(t)));
 		const toSimple = (t: string): SimpleType => {
 			const nt = normalizeType(t);
 			return (knownTypes.has(nt) ? (nt as SimpleType) : 'any') as SimpleType;
 		};
-		for (const it of pre.includeTargets || []) {
-			if (!it.resolved) continue;
-			const already = pre.includeSymbols?.get(it.resolved);
-			const needsFallback = !already || (already.functions.size === 0 && already.globals.size === 0 && already.macroObjs.size === 0 && already.macroFuncs.size === 0);
+		// Collect resolved include file paths from includeSymbols map keys and includeTargets entries
+		const resolvedIncludeFiles = new Set<string>();
+		try {
+			if (pre.includeSymbols) {
+				for (const k of pre.includeSymbols.keys()) resolvedIncludeFiles.add(k);
+			}
+			for (const it of pre.includeTargets || []) {
+				const fp = (it && typeof (it as unknown) === 'object' && (it as { resolved?: unknown }).resolved);
+				if (typeof fp === 'string' && fp) resolvedIncludeFiles.add(fp);
+			}
+		} catch { /* ignore */ }
+		for (const filePath of resolvedIncludeFiles) {
+			const already = pre.includeSymbols?.get(filePath);
+			// If the lightweight includeSymbols scanner didn't detect any function prototypes
+			// for this include, run the fallback textual scan to recover typed function headers
+			// (even if macros/globals were found). This helps headers that define full functions
+			// instead of prototypes (e.g., ARES/api/auth.h.lsl: integer sec_check(...){ ... }).
+			const needsFallback = !already || (already.functions.size === 0);
 			if (!needsFallback) continue;
 			try {
-				const text = fs.readFileSync(it.resolved, 'utf8');
+				const text = fs.readFileSync(filePath, 'utf8');
 				const lines = text.split(/\r?\n/);
 				const out: FallbackSymbols = { functions: new Map(), globals: new Set(), macros: new Set() };
 				let braceDepth = 0;
+				let inBlockComment = false;
 				for (let i = 0; i < lines.length; i++) {
-					let L = lines[i];
-					// strip line comments to stabilize matching
-					L = L.replace(/\/\/.*$/, '');
+					const raw = lines[i];
+					// Remove block comments while preserving order; track inBlockComment across lines
+					let code = '';
+					for (let p = 0; p < raw.length;) {
+						if (!inBlockComment && p + 1 < raw.length && raw[p] === '/' && raw[p + 1] === '*') { inBlockComment = true; p += 2; continue; }
+						if (inBlockComment) {
+							if (p + 1 < raw.length && raw[p] === '*' && raw[p + 1] === '/') { inBlockComment = false; p += 2; continue; }
+							p++;
+							continue;
+						}
+						code += raw[p++];
+					}
+					// Strip line comments from remaining code
+					const L = code.replace(/\/\/.*$/, '');
 					// macros: object-like only
 					{
 						const m = /^\s*#\s*define\s+([A-Za-z_]\w*)(?!\s*\()\b/.exec(L);
@@ -105,10 +157,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 							}
 						}
 					}
-					// update brace depth
+					// update brace depth using comment-free code only
 					for (let k = 0; k < L.length; k++) { const ch = L[k]; if (ch === '{') braceDepth++; else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1); }
 				}
-				fallbackByFile.set(it.resolved, out);
+				fallbackByFile.set(filePath, out);
+				dbg(`scanned ${filePath}: funcs=[${Array.from(out.functions.keys()).join(', ')}], globals=${out.globals.size}, macros=${out.macros.size}`);
 				for (const n of out.functions.keys()) fallbackFuncs.add(n);
 				for (const n of out.globals.values()) fallbackGlobals.add(n);
 				for (const n of out.macros.values()) fallbackMacros.add(n);
@@ -342,9 +395,15 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					|| (pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s =>
 						s.functions.has(e.name) || s.globals.has(e.name) || s.macroObjs.has(e.name) || s.macroFuncs.has(e.name)
 					))
+					|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, e.name))
+					|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, e.name))
 					|| fallbackFuncs.has(e.name)
 					|| fallbackGlobals.has(e.name)
-					|| fallbackMacros.has(e.name);
+					|| fallbackMacros.has(e.name)
+					// Accept lowercase booleans as known identifiers (treated as constants) to reduce noise
+					|| e.name === 'true' || e.name === 'false'
+					// Suppress diagnostics for identifiers that match macro parameter names
+					|| macroParamNames.has(e.name);
 				if (!known) {
 					diagnostics.push({
 						code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER,
@@ -369,6 +428,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					const known = resolveInScope(calleeName, scope)
 						|| defs.funcs.has(calleeName)
 						|| (pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s => s.functions.has(calleeName) || s.macroFuncs.has(calleeName) || s.macroObjs.has(calleeName)))
+						|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, calleeName))
+						|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, calleeName))
 						|| fallbackFuncs.has(calleeName)
 						|| defs.consts.has(calleeName) // tolerate accidental const call as known id for better downstream type error
 						|| defs.types.has(calleeName)	 // likewise for types

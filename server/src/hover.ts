@@ -43,6 +43,20 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 	if (pre && pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, w)) {
 		const val = pre.macros[w as keyof typeof pre.macros];
 		const from = macroSourceFile(doc, pre, w);
+		// If macro is an alias to a known function name, show target function signature(s)
+		if (typeof val === 'string') {
+			const alias = String(val).trim();
+			if (/^[A-Za-z_]\w*$/.test(alias) && defs.funcs.has(alias)) {
+				const fs = defs.funcs.get(alias)!;
+				const sigLines = fs.map(fn => `${fn.returns} ${fn.name}(${fn.params.map(p=>`${p.type} ${p.name}`).join(', ')})`);
+				const code = ['```lsl', ...sigLines, '```'].join('\n');
+				const withWiki = fs.find(f => !!f.wiki);
+				const wiki = withWiki?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
+				const parts = [code, '', `Alias: #define ${w} ${alias}`, '', `[Wiki](${wiki})`];
+				if (from) parts.push('', `From: ${from}`);
+				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
+			}
+		}
 		// If the macro is a simple literal (number/string/bool), show just the computed value
 		if (typeof val === 'number') {
 			const parts = ['```lsl', String(val), '```'];
@@ -50,9 +64,21 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 			return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 		}
 		if (typeof val === 'string') {
-			const parts = ['```lsl', JSON.stringify(val), '```'];
-			if (from) parts.push('', `From: ${from}`);
-			return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
+			const sVal = String(val);
+			const t = sVal.trim();
+			const isPureQuoted = (/^"([^"\\]|\\.)*"$/).test(t) || (/^'([^'\\]|\\.)*'$/).test(t);
+			// Pure quoted literal: render literal as-is (avoid JSON.stringify double-quoting)
+			if (isPureQuoted) {
+				const parts = ['```lsl', sVal, '```'];
+				if (from) parts.push('', `From: ${from}`);
+				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
+			}
+			// Otherwise: show define form so expressions (including quoted pieces) are clear
+			{
+				const parts = ['```lsl', `#define ${w}${sVal ? ' ' + sVal : ''}`, '```'];
+				if (from) parts.push('', `From: ${from}`);
+				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
+			}
 		}
 		if (typeof val === 'boolean') {
 			const parts = ['```lsl', val ? '1' : '0', '```'];
@@ -79,22 +105,34 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		return { contents: { kind: MarkupKind.Markdown, value: ['```lsl', String(line), '```'].join('\n') } };
 	}
 
-	// If cursor is inside a builtin function call, show the active parameter's doc
+	// If cursor is inside a function call, show the active parameter's doc (resolve through alias macro if needed)
 	const callCtx = findEnclosingCall(text, off);
-	if (callCtx && defs.funcs.has(callCtx.name)) {
-		const fs = defs.funcs.get(callCtx.name)!;
-		const sigLines = fs.map(fn => `${fn.returns} ${fn.name}(${fn.params.map(p=>`${p.type} ${p.name}`).join(', ')})`);
-		const code = ['```lsl', ...sigLines, '```'].join('\n');
-		const withWiki = fs.find(f => !!f.wiki);
-		const wiki = withWiki?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
-		const parts = [code, '', `[Wiki](${wiki})`];
-		// Show the current parameter doc if available
-		const best = fs.find(f => (f.params?.length || 0) > callCtx.index) || fs[0];
-		const p = best.params?.[callCtx.index];
-		if (p && p.doc) {
-			parts.push('', `Parameter: ${p.name}`, fmtDoc(p.doc) as string);
+	if (callCtx) {
+		let lookupName: string | null = null;
+		if (defs.funcs.has(callCtx.name)) lookupName = callCtx.name;
+		else if (pre && pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, callCtx.name)) {
+			const v = pre.macros[callCtx.name as keyof typeof pre.macros];
+			if (typeof v === 'string') {
+				const cand = v.trim();
+				if (/^[A-Za-z_]\w*$/.test(cand) && defs.funcs.has(cand)) lookupName = cand;
+			}
 		}
-		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
+		if (lookupName) {
+			const fs = defs.funcs.get(lookupName)!;
+			const sigLines = fs.map(fn => `${fn.returns} ${fn.name}(${fn.params.map(p=>`${p.type} ${p.name}`).join(', ')})`);
+			const code = ['```lsl', ...sigLines, '```'].join('\n');
+			const withWiki = fs.find(f => !!f.wiki);
+			const wiki = withWiki?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
+			const parts = [code, '', `[Wiki](${wiki})`];
+			if (lookupName !== callCtx.name) parts.push('', `Alias: ${callCtx.name} → ${lookupName}`);
+			// Show the current parameter doc if available
+			const best = fs.find(f => (f.params?.length || 0) > callCtx.index) || fs[0];
+			const p = best.params?.[callCtx.index];
+			if (p && p.doc) {
+				parts.push('', `Parameter: ${p.name}`, fmtDoc(p.doc) as string);
+			}
+			return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
+		}
 	}
 
 	if (defs.consts.has(w)) {

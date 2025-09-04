@@ -46,7 +46,7 @@ import { analyzeAst } from './ast/analyze';
 import { isType } from './ast';
 import { preprocessMacros } from './core/pipeline';
 import fs from 'node:fs';
-import { parseIncludeSymbols } from './includeSymbols';
+import { parseIncludeSymbols, clearIncludeSymbolsCache } from './includeSymbols';
 
 const connection: Connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -222,7 +222,22 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 
 // (no standalone helpers; we reuse preprocessMacros for traversal inside getPipeline)
 
+// Revalidate all open documents after cache-clearing or configuration changes
+async function revalidateAllOpenDocs() {
+	try {
+		const docs = documents.all();
+		for (const d of docs) {
+			pipelineCache.delete(d.uri);
+			await validateTextDocument(d);
+		}
+	} catch {
+		// non-fatal
+	}
+}
+
 connection.onInitialize(async (params: InitializeParams): Promise<InitializeResult> => {
+	// Ensure include symbols cache starts clean to avoid rare staleness on rapid restarts
+	try { clearIncludeSymbolsCache(); } catch { /* ignore */ }
 	// Read initializationOptions
 	const initOpts = (params.initializationOptions || {});
 	settings.definitionsPath = initOpts.definitionsPath || '';
@@ -307,11 +322,39 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 
 connection.onInitialized(() => {
 	connection.client.register(DidChangeConfigurationNotification.type, undefined);
+	// Clear caches on workspace folder changes (e.g., reload) and revalidate
+	try {
+		connection.workspace.onDidChangeWorkspaceFolders(async () => {
+			try { clearIncludeSymbolsCache(); } catch { /* ignore */ }
+			pipelineCache.clear();
+			includeToDocs.clear();
+			// Refresh workspace roots and merge into includePaths
+			try {
+				const wfs = await connection.workspace.getWorkspaceFolders?.();
+				workspaceRootPaths = [];
+				for (const wf of wfs || []) {
+					const u = URI.parse(wf.uri);
+					if (u.scheme === 'file') {
+						const p = u.fsPath; if (p && !workspaceRootPaths.includes(p)) workspaceRootPaths.push(p);
+					}
+				}
+				if (workspaceRootPaths.length > 0) {
+					const merged = [...settings.includePaths, ...workspaceRootPaths];
+					const seen = new Set<string>();
+					settings.includePaths = merged.filter(p => (p && !seen.has(p) && (seen.add(p), true)));
+				}
+			} catch { /* ignore */ }
+			await revalidateAllOpenDocs();
+		});
+	} catch {
+		// older clients may not support this capability
+	}
 });
 
 connection.onDidChangeConfiguration(async change => {
 	// Allow live reconfig
 	const newSettings = change.settings?.lsl || {};
+	const prevIncludePaths = settings.includePaths?.slice() ?? [];
 	if (newSettings.definitionsPath && newSettings.definitionsPath !== settings.definitionsPath) {
 		settings.definitionsPath = newSettings.definitionsPath;
 		defs = await loadDefs(settings.definitionsPath);
@@ -330,6 +373,19 @@ connection.onDidChangeConfiguration(async change => {
 		settings.format.braceStyle = newSettings.format.braceStyle ?? settings.format.braceStyle;
 	}
 	if (typeof newSettings.debugLogging === 'boolean') settings.debug = newSettings.debugLogging;
+	// If include paths changed, clear include symbols cache and revalidate docs
+	const changed = (() => {
+		const a = prevIncludePaths, b = settings.includePaths || [];
+		if (a.length !== b.length) return true;
+		for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
+		return false;
+	})();
+	if (changed) {
+		try { clearIncludeSymbolsCache(); } catch { /* ignore */ }
+		pipelineCache.clear();
+		includeToDocs.clear();
+		await revalidateAllOpenDocs();
+	}
 });
 
 documents.onDidChangeContent(async change => {
@@ -463,8 +519,7 @@ connection.onDefinition((params, token): Definition | LocationLink[] | null => {
 	if (!doc || !defs) return null;
 
 	const entry = getPipeline(doc); if (!entry) return null;
-	const defLoc = gotoDefinition(doc, params.position, entry.analysis, entry.pre, defs!);
-	return (defLoc as Definition | null);
+	return gotoDefinition(doc, params.position, entry.analysis, entry.pre, defs);
 });
 
 // Provide clickable links for include paths
@@ -581,6 +636,7 @@ connection.onShutdown(async () => {
 		// Clear caches and detach include index to allow event loop to drain
 		pipelineCache.clear();
 		includeToDocs.clear();
+		try { clearIncludeSymbolsCache(); } catch { /* ignore */ }
 	} catch {
 		// ignore
 	}

@@ -44,7 +44,8 @@ describe('goto definition for macros', () => {
 
 	it('jumps to symbols via transitive includes (macro and function)', async () => {
 		const fs = await import('node:fs/promises');
-		const base = path.join(__dirname, 'tmp_includes');
+		// Use a unique subdirectory to avoid concurrent test interference
+		const base = path.join(__dirname, 'tmp_includes', 'definition_macros');
 		await fs.mkdir(base, { recursive: true });
 		const b = path.join(base, 'b.lslh');
 		const a = path.join(base, 'a.lslh');

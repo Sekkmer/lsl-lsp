@@ -243,6 +243,13 @@ export class Lexer {
 				if (isKeyword(rawCore)) {
 					return this.mk('keyword', rawCore, start, t);
 				}
+				// Safety: never surface bare __VA_ARGS__ as an identifier.
+				// If it leaked here (e.g., from an empty vararg site we didn't normalize),
+				// drop it silently to avoid spurious Unknown identifier diagnostics.
+				if (rawCore === '__VA_ARGS__') {
+					// Continue scanning from current position without emitting a token.
+					return this.scanOne();
+				}
 				// macro expansion for non-keywords only
 				const expanded = this.tryExpandMacro(rawCore);
 				if (expanded) return expanded;
@@ -354,7 +361,35 @@ export class Lexer {
 				expanded = expanded.replace(re, arg);
 			}
 			// Step 4: Substitute __VA_ARGS__ with joined list
+			// Allow empty varargs: if none were provided, we must also remove any adjacent cast wrappers
+			// like (list)(__VA_ARGS__) and dangling commas around the now-empty slot.
+			// Do these cleanups BEFORE replacing __VA_ARGS__ itself so we can match the symbol.
+			if (hasVarArg && !varArgsProvided) {
+				// 4a) Remove a preceding comma and optional single cast like (list) before __VA_ARGS__
+				//    Examples handled:
+				//      fn(a, __VA_ARGS__)            -> fn(a)
+				//      fn(a, (list)(__VA_ARGS__))    -> fn(a)
+				//      fn((list)__VA_ARGS__)         -> fn()
+				expanded = expanded.replace(/,\s*(?:\([A-Za-z_][A-Za-z0-9_]*\)\s*)?__VA_ARGS__/g, '');
+				// 4b) Also handle a raw cast directly attached without a preceding comma (sole argument)
+				expanded = expanded.replace(/\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*__VA_ARGS__/g, '');
+				// 4b.1) Handle explicit parenthesized varargs wrappers: (__VA_ARGS__) or ((__VA_ARGS__))
+				expanded = expanded.replace(/\(\s*__VA_ARGS__\s*\)/g, '');
+				expanded = expanded.replace(/\(\s*\(\s*__VA_ARGS__\s*\)\s*\)/g, '');
+				// 4c) Remove a comma after __VA_ARGS__ if it was the first element (rare)
+				expanded = expanded.replace(/__VA_ARGS__\s*,/g, '');
+			}
+			// Perform the replacement (joins the provided varargs when present, or empties it)
 			expanded = expanded.replace(/\b__VA_ARGS__\b/g, varArgsJoined);
+			// 4d) Final cleanup when varargs are empty: collapse ", )" -> ")" and "( , )" -> "()"
+			if (hasVarArg && !varArgsProvided) {
+				// dangling comma at end of an argument list
+				expanded = expanded.replace(/,\s*\)/g, ')');
+				// completely empty arg between parens possibly with spaces or stray comma
+				expanded = expanded.replace(/\(\s*\)/g, '()');
+				// collapse nested empty parens e.g., (()) -> ()
+				expanded = expanded.replace(/\(\s*\(\s*\)\s*\)/g, '()');
+			}
 			// Step 5: Apply token pasting last so CAT(a,b) -> a##b becomes n##1 -> n1
 			expanded = applyTokenPaste(expanded);
 			return this.expandTextAsPending(expanded, start, callEnd);

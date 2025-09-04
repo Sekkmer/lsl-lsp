@@ -11,10 +11,10 @@ describe('signature help', async () => {
 		// Inner call: llGetSubString("abc", 0, 1) inside llOwnerSay(...)
 		const code = 'default { state_entry() { llOwnerSay(llGetSubString("abc", 0, 1)); } }';
 		const doc = docFrom(code);
-		const { analysis } = runPipeline(doc, defs);
+		const { analysis, pre } = runPipeline(doc, defs);
 		// Place cursor on the 0 (second parameter index 1)
 		const pos = doc.positionAt(code.indexOf('0'));
-		const sh = lslSignatureHelp(doc, { textDocument: { uri: doc.uri }, position: pos }, defs, analysis);
+		const sh = lslSignatureHelp(doc, { textDocument: { uri: doc.uri }, position: pos }, defs, analysis, pre);
 		expect(sh).toBeTruthy();
 		// Should target the inner function
 		const sig = sh!.signatures[sh!.activeSignature!].label;
@@ -48,9 +48,9 @@ describe('signature help', async () => {
 
 		const code = 'default { state_entry() { integer x = testOver(1, "x"); } }';
 		const doc = docFrom(code);
-		const { analysis } = runPipeline(doc, defs2);
+		const { analysis, pre } = runPipeline(doc, defs2);
 		const pos = doc.positionAt(code.indexOf('"x"') + 1);
-		const sh = lslSignatureHelp(doc, { textDocument: { uri: doc.uri }, position: pos }, defs2, analysis);
+		const sh = lslSignatureHelp(doc, { textDocument: { uri: doc.uri }, position: pos }, defs2, analysis, pre);
 		expect(sh).toBeTruthy();
 		const sig = sh!.signatures[sh!.activeSignature!].label;
 		expect(sig).toMatch(/testOver\s*\(integer a, string b\)/);
@@ -61,9 +61,9 @@ describe('signature help', async () => {
 		const defs3 = await loadTestDefs();
 		const code = 'default { state_entry() { llSay(0, 123); } }';
 		const doc = docFrom(code);
-		const { analysis } = runPipeline(doc, defs3);
+		const { analysis, pre } = runPipeline(doc, defs3);
 		const pos = doc.positionAt(code.indexOf('123') + 1);
-		const sh = lslSignatureHelp(doc, { textDocument: { uri: doc.uri }, position: pos }, defs3, analysis);
+		const sh = lslSignatureHelp(doc, { textDocument: { uri: doc.uri }, position: pos }, defs3, analysis, pre);
 		expect(sh).toBeTruthy();
 		const active = sh!.signatures[sh!.activeSignature!];
 		expect(active.label).toMatch(/llSay\s*\(/);
@@ -71,5 +71,19 @@ describe('signature help', async () => {
 		const paramDoc = active.parameters![sh!.activeParameter!].documentation;
 		const docText = typeof paramDoc === 'string' ? paramDoc : (paramDoc?.value ?? '');
 		expect(docText).toMatch(/Expected\s+string,\s+got\s+integer/);
+	});
+
+	it('macro alias: #define echo llOwnerSay resolves to llOwnerSay signature', async () => {
+		const defs4 = await loadTestDefs();
+		const code = '#define echo llOwnerSay\ndefault { state_entry() { echo(0, "hi"); } }';
+		const doc = docFrom(code);
+		const { analysis, pre } = runPipeline(doc, defs4);
+		const pos = doc.positionAt(code.indexOf('"hi"') + 2);
+		const sh = lslSignatureHelp(doc, { textDocument: { uri: doc.uri }, position: pos }, defs4, analysis, pre);
+		expect(sh).toBeTruthy();
+		const sig = sh!.signatures[sh!.activeSignature!].label;
+		expect(sig).toMatch(/llOwnerSay\s*\(/);
+		// llOwnerSay has a single parameter; activeParameter is clamped to 0 even when cursor is on 2nd arg
+		expect(sh!.activeParameter).toBe(0);
 	});
 });

@@ -87,10 +87,15 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	const mcp = new MacroConditionalProcessor(toks, { resolveInclude, fromId: opts.fromPath, includeStack: opts.fromPath ? [opts.fromPath] : [] });
 	const { macros: finalMacros, includes } = mcp.processToMacros(opts.defines || {});
 	// Split function-like macros from object-like
+	// Note: Some object-like macros legitimately start with a parenthesized expression, e.g.:
+	//   #define CHECK (foo(bar) || baz)
+	// Those must NOT be treated as function-like. Only treat as function-like when the
+	// string starts with a valid parameter list: (), (x), (x,y), or (...).
 	const macros: MacroDefines = {};
 	const funcMacros: Record<string, string> = {};
+	const fnHeadRe = /^\(\s*(?:[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*|\.\.\.)?\s*\)\s/;
 	for (const [k, v] of Object.entries(finalMacros)) {
-		if (typeof v === 'string' && /^\([^)]*\)\s/.test(v)) funcMacros[k] = v;
+		if (typeof v === 'string' && fnHeadRe.test(v)) funcMacros[k] = v;
 		else macros[k] = v;
 	}
 	// Compute disabled ranges and collect includeTargets/missingIncludes/diagnostics/diagDirectives on the root file by scanning directive/comment tokens.
@@ -233,7 +238,11 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 		// Only apply defines/undefs/includes in active regions
 		if (!isActive()) continue;
 		if (head === 'define') {
-			const mm = /^([A-Za-z_]\w*)(\s*\(([^)]*)\))?(?:\s+([\s\S]*))?$/.exec(rest);
+			// Function-like macro only when '(' is immediately after the name (no whitespace)
+			// Examples:
+			//   #define F(x,y) (x + y)   -> function-like
+			//   #define F (1 + 1)       -> object-like with body "(1 + 1)"
+			const mm = /^([A-Za-z_]\w*)(\(([^)]*)\))?(?:\s+([\s\S]*))?$/.exec(rest);
 			if (mm) {
 				const name = mm[1]!;
 				const hasParams = !!mm[2];
@@ -267,7 +276,8 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 						continue;
 					}
 					const v = r.macros[k];
-					const isFunc = (typeof v === 'string' && /^\([^)]*\)\s/.test(v));
+					// Use the same strict function-like detection used elsewhere
+					const isFunc = (typeof v === 'string' && fnHeadRe.test(v));
 					const hasLocalObj = Object.prototype.hasOwnProperty.call(localMacros, k);
 					const hasLocalFn = Object.prototype.hasOwnProperty.call(funcMacros, k);
 					if (hadBefore && (hasLocalObj || hasLocalFn)) {
