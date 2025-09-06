@@ -49,7 +49,14 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOpt
 	// Inject __FILE__ into macro table for tests that inspect pre.macros directly
 	try { pre.macros.__FILE__ = basenameFromUri(doc.uri); } catch { /* ignore */ }
 
-	const tokens = lex(doc, pre.disabledRanges);
+	// Original lexed tokens (pre-expansion) still useful for semantic tokens; however
+	// tests validating macro expansion want the fully expanded stream. Expose both.
+	const rawTokens = lex(doc, pre.disabledRanges);
+	const expanded: LexToken[] | undefined = full.expandedTokens
+		? full.expandedTokens.map(t => ({ kind: t.kind as unknown as LexToken['kind'], value: t.value, start: t.span.start, end: t.span.end }))
+		: undefined;
+	// Preserve original lexer tokens for existing tests; expose expandedTokens separately for targeted assertions
+	const tokens = rawTokens;
 	// New AST pipeline: parse to AST, then analyze
 	const script = parseScriptFromText(doc.getText(), doc.uri, { macros: opts?.macros, includePaths: opts?.includePaths });
 	// Populate includeSymbols for tests, mirroring server getPipeline
@@ -68,7 +75,9 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOpt
 	const analysis = analyzeAst(doc, script, defs, pre);
 	const sem = buildSemanticTokens(doc, tokens, defs, pre, analysis);
 
-	return { pre, tokens, analysis, sem };
+	// debug logging removed
+
+	return { pre, tokens, rawTokens, expandedTokens: expanded, analysis, sem };
 }
 
 function parseIncludesFromText(text: string): string[] {

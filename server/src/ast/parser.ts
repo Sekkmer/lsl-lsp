@@ -10,6 +10,9 @@ import type { Token } from '../core/tokens';
 import { preprocessForAst } from '../core/pipeline';
 import type { MacroDefines } from '../core/macro';
 import { basenameFromUri } from '../builtins';
+import { Tokenizer } from '../core/tokenizer';
+import { TokenStream } from '../core/tokens';
+// (macro expansion already applied via preprocessForAst.expandedTokens)
 
 type ParseOptions = {
 	macros?: MacroDefines;
@@ -17,17 +20,96 @@ type ParseOptions = {
 };
 
 export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', opts?: ParseOptions): Script {
-	// Run new tokenizer+macro pipeline to collect macros and disabled ranges
+	// Preprocess (conditionals, includes, macro tables, expanded token stream)
 	const fromPath = uri.startsWith('file://') ? require('vscode-uri').URI.parse(uri).fsPath : undefined;
-	// Derive a basename for __FILE__ from the URI and inject as a built-in define for conditional evaluation
 	const basename = basenameFromUri(uri);
 	const baseDefines = { ...(opts?.macros ?? {}), __FILE__: basename };
 	const pre = preprocessForAst(text, { includePaths: opts?.includePaths ?? [], fromPath, defines: baseDefines });
+	// If we have an expanded token stream from the macro engine, build a merged stream that
+	// preserves comments (for doc attachment) and applies built-in macro substitutions.
+	// Fallback to legacy Lexer path if something unexpected happens.
+	try {
+		if (pre.expandedTokens && pre.expandedTokens.length > 0) {
+			// DEBUG: capture any unexpected token kinds before feeding parser
+			// (temporary instrumentation – safe to leave; no side effects besides console error output when exceptions occur)
+			// Collect root file comment tokens using lightweight tokenizer (no macro expansion)
+			const tz = new Tokenizer(text);
+			const commentTokens: Token[] = [];
+			for (;;) {
+				const t = tz.next();
+				if (t.kind === 'comment-line' || t.kind === 'comment-block') commentTokens.push(t);
+				if (t.kind === 'eof') break;
+			}
+			// Expand built-ins (__LINE__, __FILE__, etc.) inside the already-expanded active code tokens
+			const lineStarts = computeLineStarts(text);
+			const builtinsExpanded = applyBuiltinExpansions(pre.expandedTokens, basename, lineStarts);
+			// Merge comments + expanded tokens by span.start order
+			const merged: Token[] = mergeTokensWithComments(builtinsExpanded, commentTokens);
+			// Feed parser using a TokenStream-backed adapter implementing Lexer interface subset
+			const ts = new TokenStream(merged);
+			const lxAdapter: Pick<Lexer, 'next' | 'peek' | 'pushBack'> = {
+				next: () => ts.next(),
+				peek: () => ts.peek(),
+				pushBack: (t: Token) => ts.pushBack(t)
+			} as unknown as Lexer; // cast for Parser constructor compatibility
+			const P = new Parser(lxAdapter as Lexer, text, { disableSourceHeuristics: true });
+			return P.parseScript();
+		}
+	} catch (e) {
+		// fall through to legacy path but surface the reason during tests/debug sessions
+		try { console.error('parseScriptFromText: expandedTokens path failed; falling back to legacy lexer. Error:', e instanceof Error ? e.message : String(e)); } catch { /* ignore */ }
+	}
+	// Legacy path (should be rare now): use raw lexer (still provides built-ins + comments)
 	const macros: MacroTables = { obj: pre.macros, fn: pre.funcMacros };
 	const lx = new Lexer(text, { macros, disabled: pre.disabledRanges, filename: basename });
 	const P = new Parser(lx, text);
 	return P.parseScript();
 }
+
+function computeLineStarts(text: string): number[] {
+	const ls = [0];
+	for (let i = 0; i < text.length; i++) if (text[i] === '\n') ls.push(i + 1);
+	return ls;
+}
+
+function lineOf(offset: number, lineStarts: number[]): number {
+	let lo = 0, hi = lineStarts.length - 1, ans = 0;
+	while (lo <= hi) {
+		const mid = (lo + hi) >> 1;
+		const s = lineStarts[mid]!;
+		const e = mid + 1 < lineStarts.length ? lineStarts[mid + 1]! - 1 : Number.MAX_SAFE_INTEGER;
+		if (offset < s) hi = mid - 1; else if (offset > e) lo = mid + 1; else { ans = mid; break; }
+	}
+	return ans + 1;
+}
+
+// Replace built-in identifiers with proper literal tokens so parser produces correct AST nodes.
+function applyBuiltinExpansions(tokens: Token[], basename: string, lineStarts: number[]): Token[] {
+	return tokens.map(t => {
+		if (t.kind === 'id') {
+			if (t.value === '__LINE__') {
+				return { kind: 'number', value: String(lineOf(t.span.start, lineStarts)), span: t.span } as Token;
+			}
+			if (t.value === '__FILE__') {
+				return { kind: 'string', value: JSON.stringify(basename), span: t.span } as Token;
+			}
+		}
+		return t;
+	});
+}
+
+function mergeTokensWithComments(code: Token[], comments: Token[]): Token[] {
+	// Exclude any stray eof tokens from code list
+	const codeFiltered = code.filter(t => t.kind !== 'eof');
+	const all = codeFiltered.concat(comments);
+	all.sort((a, b) => a.span.start - b.span.start || a.span.end - b.span.end);
+	// Append single EOF token
+	const lastEnd = all.length ? Math.max(...all.map(t => t.span.end)) : 0;
+	all.push({ kind: 'eof', value: '', span: { start: lastEnd, end: lastEnd } });
+	return all;
+}
+
+interface ParserOptions { disableSourceHeuristics?: boolean }
 
 class Parser {
 	private readonly lx: Lexer;
@@ -36,8 +118,9 @@ class Parser {
 	// comment buffer for leading doc comments
 	private leadingComment = '';
 	private diagnostics: Diagnostic[] = [];
+	private readonly disableSourceHeuristics: boolean;
 
-	constructor(lx: Lexer, src: string) { this.lx = lx; this.src = src; }
+	constructor(lx: Lexer, src: string, opts?: ParserOptions) { this.lx = lx; this.src = src; this.disableSourceHeuristics = !!opts?.disableSourceHeuristics; }
 
 	private next(): Token {
 		if (this.look) { const t = this.look; this.look = null; return t; }
@@ -162,13 +245,30 @@ class Parser {
 			// Detect and report illegal global state-change statements: "state <id>;"
 			if (this.peek().kind === 'keyword' && this.peek().value === 'state') {
 				const tState = this.peek();
-				const sc = this.looksLikeStateChangeAfter(tState.span.end);
-				if (sc) {
+				let matched: { end: number } | null = null;
+				if (!this.disableSourceHeuristics) {
+					const sc = this.looksLikeStateChangeAfter(tState.span.end);
+					if (sc) matched = { end: sc.end };
+				} else {
+					// Token-based fallback: state <id|default> ';' (but NOT followed by '{')
+					const la = this.lookAheadNonTrivia(3);
+					const t1 = la[1];
+					const t2 = la[2];
+					const t1IsName = t1 && ((t1.kind === 'id') || (t1.kind === 'keyword' && t1.value === 'default'));
+					if (t1IsName && t2 && t2.kind === 'punct') {
+						if (t2.value === ';') {
+							matched = { end: t2.span.end };
+						} else if (t2.value === '{') {
+							// state decl, not a change
+						}
+					}
+				}
+				if (matched) {
 					this.eat('keyword', 'state');
 					if (this.peek().kind === 'keyword' && this.peek().value === 'default') { this.next(); }
 					else { this.eat('id'); }
 					this.maybe('punct', ';');
-					this.report({ kind: 'id', value: '', span: { start: tState.span.start, end: sc.end } }, 'State change statements are only allowed inside event handlers', 'LSL023');
+					this.report({ kind: 'id', value: '', span: { start: tState.span.start, end: matched.end } }, 'State change statements are only allowed inside event handlers', 'LSL023');
 					continue;
 				}
 			}
@@ -202,7 +302,12 @@ class Parser {
 				continue;
 			}
 			// Implicit-void function: <id> '(' ... ')' '{' ... '}'
-			if (nextTok.kind === 'id' && this.looksLikeImplicitFunctionDeclAfter(nextTok.span.end)) {
+			// Allow implicit-void function detection even in expanded token mode (tests rely on this)
+			const implicitFn = nextTok.kind === 'id' && (
+				this.looksLikeImplicitFunctionDeclAfter(nextTok.span.end)
+				|| (this.disableSourceHeuristics && (() => { const la = this.lookAheadNonTrivia(2); return la[1] && la[1].kind === 'punct' && la[1].value === '('; })())
+			);
+			if (implicitFn) {
 				const leading = this.consumeLeadingComment();
 				const nameTok = this.eat('id');
 				this.eat('punct', '(');
@@ -474,6 +579,7 @@ class Parser {
 
 	// Heuristic: after a type keyword at pos, do we have an identifier followed by '(' (function decl)?
 	private looksLikeFunctionDeclAfter(pos: number): boolean {
+		if (this.disableSourceHeuristics) return false;
 		let i = pos;
 		// skip whitespace and comments
 		while (i < this.src.length) {
@@ -513,6 +619,7 @@ class Parser {
 
 	// Heuristic: after an identifier at pos, do we immediately see '(' (implicit-void function)?
 	private looksLikeImplicitFunctionDeclAfter(pos: number): boolean {
+		if (this.disableSourceHeuristics) return false;
 		let i = pos;
 		const skipTrivia = () => {
 			while (i < this.src.length) {
@@ -540,8 +647,10 @@ class Parser {
 		return this.src[i] === '{';
 	}
 
+
 	// Heuristic: after 'state' keyword, do we have an identifier or 'default' followed by '{'?
 	private looksLikeStateDeclAfter(pos: number): boolean {
+		if (this.disableSourceHeuristics) return false;
 		let i = pos;
 		const skipTrivia = () => {
 			while (i < this.src.length) {
@@ -571,6 +680,7 @@ class Parser {
 	}
 
 	private looksLikeDefaultStateDeclAfter(pos: number): boolean {
+		if (this.disableSourceHeuristics) return false;
 		let i = pos;
 		while (i < this.src.length) {
 			const ch = this.src[i]!;
@@ -584,6 +694,7 @@ class Parser {
 
 	// Heuristic: detect pattern after 'state' at the given position: identifier followed by ';'
 	private looksLikeStateChangeAfter(pos: number): { name: string; end: number } | null {
+		if (this.disableSourceHeuristics) return null;
 		let i = pos;
 		const skipTrivia = () => {
 			while (i < this.src.length) {

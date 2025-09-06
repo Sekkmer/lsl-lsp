@@ -4,6 +4,7 @@ import {
 } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs, normalizeType } from './defs';
+import { computeMacroAliases } from './core/macro';
 import type { Analysis, Decl } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import path from 'node:path';
@@ -240,7 +241,7 @@ export function resolveCompletion(item: CompletionItem): CompletionItem {
 	return item;
 }
 
-export function lslSignatureHelp(doc: TextDocument, params: { textDocument: { uri: string }, position: Position }, defs: Defs, analysis: Analysis): SignatureHelp | null {
+export function lslSignatureHelp(doc: TextDocument, params: { textDocument: { uri: string }, position: Position }, defs: Defs, analysis: Analysis, pre?: { macros?: Record<string, string | number | boolean> }): SignatureHelp | null {
 	// Try AST-based context first; if null, attempt a small text fallback to catch edge cursors
 	let ctx = findCallContextFromAnalysis(analysis, params.position);
 	if (!ctx) {
@@ -291,7 +292,14 @@ export function lslSignatureHelp(doc: TextDocument, params: { textDocument: { ur
 		}
 	}
 	if (!ctx) return null;
-	const overloads = defs.funcs.get(ctx.name);
+	let name = ctx.name;
+	if (pre && pre.macros) {
+		try {
+			const aliases = computeMacroAliases(pre.macros as Record<string, string | number | boolean>);
+			if (aliases[name]) name = aliases[name];
+		} catch { /* ignore */ }
+	}
+	const overloads = defs.funcs.get(name);
 	if (!overloads || overloads.length === 0) return null;
 
 	const candidates = overloads.filter(fn => ctx.argIndex < fn.params.length);
@@ -312,6 +320,7 @@ export function lslSignatureHelp(doc: TextDocument, params: { textDocument: { ur
 	return { signatures: sigs, activeSignature: activeSigIndex, activeParameter: Math.max(0, Math.min(ctx.argIndex, (chosen.params.length - 1))) };
 }
 
+// macro alias resolution handled inline in lslSignatureHelp
 
 // token-less call context is derived from Analysis.calls in findCallContextFromAnalysis
 

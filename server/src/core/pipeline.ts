@@ -2,7 +2,7 @@ import path from 'node:path';
 // fs will be provided via opts.fs or required dynamically to allow testing
 import type { Token } from './tokens';
 import { Tokenizer } from './tokenizer';
-import { MacroConditionalProcessor, type MacroDefines, type IncludeResolver } from './macro';
+import { MacroConditionalProcessor, type MacroDefines, type IncludeResolver, expandActiveTokens } from './macro';
 import type { ConditionalGroup } from './preproc';
 
 export type IncludeResolverOptions = {
@@ -78,6 +78,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	preprocDiagnostics?: { start: number; end: number; message: string; code?: string }[];
 	diagDirectives?: import('./preproc').DiagDirectives;
 	conditionalGroups?: ConditionalGroup[];
+	expandedTokens: Token[];
 } {
 	const tz = new Tokenizer(text);
 	const toks: Token[] = [];
@@ -341,7 +342,56 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 
 	// diagDirectives.blocks already computed precisely above
 
-	return { macros: localMacros, funcMacros, includes, disabledRanges, includeTargets, missingIncludes, preprocDiagnostics, diagDirectives, conditionalGroups };
+	// Build fully expanded token stream from active code tokens after macro resolution
+	let activeTokens: Token[] = [];
+	try {
+		const mcpActive = new MacroConditionalProcessor(toks, { resolveInclude, fromId: opts.fromPath, includeStack: opts.fromPath ? [opts.fromPath] : [], emitIncludeTokens: false });
+		// Seed macro table for active token collection. We want macros from includes (so expansion works)
+		// but must NOT pre-seed simple self include-guard macros (#ifndef X ... #define X) or the guarded
+		// body will be erroneously skipped when parsing the root file itself. Detect the common guard pattern
+		// in this translation unit and remove those macros from the initial seed so they are only defined
+		// when their #define is encountered during the walk.
+		const seedMacros: MacroDefines = { ...finalMacros };
+		(function stripSelfGuards() {
+			for (let i = 0; i < toks.length - 1; i++) {
+				const t1 = toks[i]!;
+				if (t1.kind !== 'directive') continue;
+				const m1 = /^#\s*ifndef\s+([A-Za-z_]\w*)/.exec(t1.value);
+				if (!m1) continue;
+				// skip intervening blank/comment/directive lines (but bail if we hit non-directive tokens)
+				let j = i + 1;
+				while (j < toks.length) {
+					const tj = toks[j]!;
+					if (tj.kind !== 'directive' && tj.kind !== 'comment-line' && tj.kind !== 'comment-block') break;
+					if (tj.kind === 'directive') {
+						const m2 = /^#\s*define\s+([A-Za-z_]\w*)/.exec(tj.value);
+						if (m2 && m2[1] === m1[1]) { delete seedMacros[m1[1]!]; break; }
+						// Any other directive encountered before #define ends the guard pattern search
+						if (!m2) break;
+					}
+					j++;
+				}
+			}
+		})();
+		const active = mcpActive.processToTokens(seedMacros);
+		activeTokens = active.tokens.filter(t=> t.kind !== 'directive' && t.kind !== 'comment-line' && t.kind !== 'comment-block');
+	} catch { activeTokens = []; }
+	let expandedTokens = expandActiveTokens(activeTokens, { ...localMacros, ...funcMacros });
+	// Post-process: collapse duplicate semicolons that arise when a macro body ends with ';'
+	// and the call site also supplies a trailing ';'. Keep the first and drop immediate duplicates.
+	if (expandedTokens.length) {
+		const filtered: typeof expandedTokens = [];
+		for (let i=0;i<expandedTokens.length;i++) {
+			const t = expandedTokens[i]!;
+			if (t.kind==='punct' && t.value===';' && filtered.length>0) {
+				const prev = filtered[filtered.length-1]!;
+				if (prev.kind==='punct' && prev.value===';') continue; // skip duplicate
+			}
+			filtered.push(t);
+		}
+		expandedTokens = filtered;
+	}
+	return { macros: localMacros, funcMacros, includes, disabledRanges, includeTargets, missingIncludes, preprocDiagnostics, diagDirectives, conditionalGroups, expandedTokens };
 }
 
 // Local helpers mirroring macroConditional behavior

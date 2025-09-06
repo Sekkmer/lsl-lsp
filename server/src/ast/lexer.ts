@@ -34,17 +34,15 @@ export class Lexer {
 	private readonly n: number;
 	private readonly text: string;
 	private readonly lineOffsets: number[];
-	private readonly macros?: MacroTables;
 	private readonly disabled?: { start: number; end: number }[];
 	private readonly filename: string;
 	private readonly ts: TokenStream;
-	private expansionDepth = 0;
+	// Macro data removed; lexer now only tokenizes raw (already preprocessed) source.
 
 	constructor(text: string, opts?: LexerOptions) {
 		this.text = text;
 		this.n = text.length;
 		this.lineOffsets = computeLineOffsets(text);
-		this.macros = opts?.macros;
 		this.disabled = opts?.disabled ?? [];
 		this.filename = opts?.filename ?? 'memory.lsl';
 		// Drive tokens via TokenStream so EOF handling is centralized and pushback is unified
@@ -250,9 +248,7 @@ export class Lexer {
 					// Continue scanning from current position without emitting a token.
 					return this.scanOne();
 				}
-				// macro expansion for non-keywords only
-				const expanded = this.tryExpandMacro(rawCore);
-				if (expanded) return expanded;
+				// Macro expansion removed from lexer; preprocessing handled earlier.
 				return this.mk('id', rawCore, start, t);
 			}
 			// Not followed by a valid identifier start -> treat the single char as operator/punct as usual
@@ -276,154 +272,6 @@ export class Lexer {
 		const s = this.mk('punct', single, this.i, this.i + 1); this.i++; return s;
 	}
 
-	// Attempt macro expansion at current scan position when an identifier was read
-	private tryExpandMacro(word: string): Token | null {
-		if (!this.macros) return null;
-		const obj = this.macros.obj[word];
-		const fn = this.macros.fn[word];
-		const start = this.i - word.length;
-		if (obj !== undefined) {
-			// expand object-like: get textual form
-			let body: string;
-			if (typeof obj === 'number' || typeof obj === 'boolean') body = String(obj);
-			else body = String(obj);
-			return this.expandTextAsPending(body, start, start + word.length);
-		}
-		if (fn !== undefined) {
-			// fn string like "(a,b) body"
-			// We need to parse an argument list next in the original text
-			// const save = this.i;
-			// skip whitespace
-			let k = this.i;
-			while (k < this.n && /\s/.test(this.text[k]!)) k++;
-			if (this.text[k] !== '(') return null; // not a call -> treat as id
-			// parse args region to keep raw text
-			k++; let depth = 1;
-			const parts: string[] = [];
-			let segStart = k;
-			while (k < this.n && depth > 0) {
-				const ch = this.text[k]!;
-				// Skip strings entirely
-				if (ch === '"' || ch === '\'') { k = this.skipStringFrom(k); continue; }
-				// Skip line comments //...
-				if (ch === '/' && this.text[k + 1] === '/') { k = this.findLineEnd(k + 2); continue; }
-				// Skip block comments /* ... */
-				if (ch === '/' && this.text[k + 1] === '*') {
-					k += 2;
-					while (k < this.n && !(this.text[k] === '*' && this.text[k + 1] === '/')) k++;
-					if (k < this.n) k += 2; // consume closing */
-					continue;
-				}
-				if (ch === '(') { depth++; k++; continue; }
-				if (ch === ')') { depth--; if (depth === 0) break; k++; continue; }
-				if (ch === ',' && depth === 1) {
-					parts.push(this.text.slice(segStart, k));
-					k++;
-					// Skip whitespace and any immediate comments between args
-					for (; ;) {
-						while (k < this.n && /\s/.test(this.text[k]!)) k++;
-						if (k < this.n && this.text[k] === '/' && this.text[k + 1] === '/') { k = this.findLineEnd(k + 2); continue; }
-						if (k + 1 < this.n && this.text[k] === '/' && this.text[k + 1] === '*') {
-							k += 2;
-							while (k < this.n && !(this.text[k] === '*' && this.text[k + 1] === '/')) k++;
-							if (k < this.n) k += 2;
-							continue;
-						}
-						break;
-					}
-					segStart = k;
-					continue;
-				}
-				k++;
-			}
-			if (depth === 0) { parts.push(this.text.slice(segStart, k)); }
-			const callEnd = (depth === 0) ? k + 1 : k;
-			this.i = callEnd; // consume call
-
-			const m = /^\(([^)]*)\)\s*([\s\S]*)$/.exec(fn);
-			const rawParams = (m?.[1] ?? '').trim();
-			const bodyRaw = (m?.[2] ?? '').trim();
-			const params = rawParams.length ? rawParams.split(',').map(s => s.trim()).filter(Boolean) : [];
-			const hasVarArg = params[params.length - 1] === '...';
-			const fixedCount = hasVarArg ? params.length - 1 : params.length;
-			const argMap = new Map<string, string>();
-			for (let idx = 0; idx < fixedCount; idx++) argMap.set(params[idx]!, (parts[idx] ?? '').trim());
-			const varArgsProvided = hasVarArg ? (parts.length > fixedCount) : false;
-			const varArgsList = hasVarArg ? parts.slice(fixedCount).map(s => s.trim()).filter(s => s.length > 0) : [];
-			const varArgsJoined = varArgsList.join(', ');
-			// Step 1: Expand __VA_OPT__ depending on varargs presence
-			const bodyAfterVaOpt = expandVaOpt(bodyRaw, varArgsProvided);
-			// Step 2: Handle stringification (#param) using ORIGINAL raw arg text
-			let expanded = applyStringify(bodyAfterVaOpt, params.slice(0, fixedCount), parts.slice(0, fixedCount));
-			// Step 3: Substitute fixed params by name (before token pasting)
-			for (const [name, arg] of argMap) {
-				const re = new RegExp(`\\b${escapeRegExp(name)}\\b`, 'g');
-				expanded = expanded.replace(re, arg);
-			}
-			// Step 4: Substitute __VA_ARGS__ with joined list
-			// Allow empty varargs: if none were provided, we must also remove any adjacent cast wrappers
-			// like (list)(__VA_ARGS__) and dangling commas around the now-empty slot.
-			// Do these cleanups BEFORE replacing __VA_ARGS__ itself so we can match the symbol.
-			if (hasVarArg && !varArgsProvided) {
-				// 4a) Remove a preceding comma and optional single cast like (list) before __VA_ARGS__
-				//    Examples handled:
-				//      fn(a, __VA_ARGS__)            -> fn(a)
-				//      fn(a, (list)(__VA_ARGS__))    -> fn(a)
-				//      fn((list)__VA_ARGS__)         -> fn()
-				expanded = expanded.replace(/,\s*(?:\([A-Za-z_][A-Za-z0-9_]*\)\s*)?__VA_ARGS__/g, '');
-				// 4b) Also handle a raw cast directly attached without a preceding comma (sole argument)
-				expanded = expanded.replace(/\(\s*[A-Za-z_][A-Za-z0-9_]*\s*\)\s*__VA_ARGS__/g, '');
-				// 4b.1) Handle explicit parenthesized varargs wrappers: (__VA_ARGS__) or ((__VA_ARGS__))
-				expanded = expanded.replace(/\(\s*__VA_ARGS__\s*\)/g, '');
-				expanded = expanded.replace(/\(\s*\(\s*__VA_ARGS__\s*\)\s*\)/g, '');
-				// 4c) Remove a comma after __VA_ARGS__ if it was the first element (rare)
-				expanded = expanded.replace(/__VA_ARGS__\s*,/g, '');
-			}
-			// Perform the replacement (joins the provided varargs when present, or empties it)
-			expanded = expanded.replace(/\b__VA_ARGS__\b/g, varArgsJoined);
-			// 4d) Final cleanup when varargs are empty: collapse ", )" -> ")" and "( , )" -> "()"
-			if (hasVarArg && !varArgsProvided) {
-				// dangling comma at end of an argument list
-				expanded = expanded.replace(/,\s*\)/g, ')');
-				// completely empty arg between parens possibly with spaces or stray comma
-				expanded = expanded.replace(/\(\s*\)/g, '()');
-				// collapse nested empty parens e.g., (()) -> ()
-				expanded = expanded.replace(/\(\s*\(\s*\)\s*\)/g, '()');
-			}
-			// Step 5: Apply token pasting last so CAT(a,b) -> a##b becomes n##1 -> n1
-			expanded = applyTokenPaste(expanded);
-			return this.expandTextAsPending(expanded, start, callEnd);
-		}
-		return null;
-	}
-
-
-	private expandTextAsPending(body: string, start: number, end: number): Token {
-		if (this.expansionDepth > 20) return this.mk('id', '/*macro-depth*/', start, end);
-		this.expansionDepth++;
-		// Lex the body into tokens and push onto stream pushback in reverse (so next pop yields first)
-		const lx = new Lexer(body, { macros: this.macros });
-		const buf: Token[] = [];
-		for (; ;) {
-			const t = lx.scanOne();
-			if (t.kind === 'eof') break;
-			if (t.kind === 'comment-line' || t.kind === 'comment-block') continue;
-			// Remap token spans to the call site span in the original text
-			buf.push({ ...t, span: { start, end } });
-		}
-		this.expansionDepth--;
-		// If the call site is disabled, drop the entire expansion.
-		// IMPORTANT: Do not call this.ts.next() from within the producer here,
-		// as that would recurse into the same TokenStream and can cause runaway loops.
-		// Instead, emit a harmless placeholder token at the same span; produceOne()
-		// will immediately filter it out via the disabled-range check and continue.
-		if (this.isDisabled(start)) {
-			return this.mk('comment-line', '/*disabled-macro*/', start, end);
-		}
-		for (let i = buf.length - 1; i >= 0; i--) this.ts.pushBack(buf[i]!);
-		// return first expanded token
-		return this.ts.next();
-	}
 
 	private skipStringFrom(pos: number): number {
 		const quote = this.text[pos]!; let j = pos + 1;
@@ -455,111 +303,5 @@ export class Lexer {
 export function computeLineOffsets(text: string): number[] {
 	const out = [0];
 	for (let i = 0; i < text.length; i++) { if (text[i] === '\n') out.push(i + 1); }
-	return out;
-}
-
-function escapeRegExp(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-
-// Expand occurrences of __VA_OPT__(content): include content only when varargs are provided
-function expandVaOpt(body: string, hasVarArgs: boolean): string {
-	let out = '';
-	let i = 0;
-	while (i < body.length) {
-		const idx = body.indexOf('__VA_OPT__', i);
-		if (idx < 0) { out += body.slice(i); break; }
-		out += body.slice(i, idx);
-		let j = idx + '__VA_OPT__'.length;
-		while (j < body.length && /\s/.test(body[j]!)) j++;
-		if (j >= body.length || body[j] !== '(') {
-			// keep literal text if not followed by '('
-			out += '__VA_OPT__';
-			i = j;
-			continue;
-		}
-		// find matching ')'
-		let k = j + 1; let depth = 1;
-		while (k < body.length && depth > 0) {
-			const ch = body[k]!;
-			if (ch === '"' || ch === '\'') {
-				// skip string literal
-				const q = ch; k++;
-				while (k < body.length) { const c = body[k]!; if (c === '\\') { k += 2; continue; } if (c === q) { k++; break; } k++; }
-				continue;
-			}
-			if (ch === '(') depth++;
-			else if (ch === ')') depth--;
-			k++;
-		}
-		const content = body.slice(j + 1, Math.max(j + 1, k - 1));
-		if (hasVarArgs) out += content;
-		i = k;
-	}
-	return out;
-}
-
-// Replace #param with a quoted form of the original argument text (stringification)
-// We stringify only fixed parameters by name; __VA_ARGS__ stringification is not standard and ignored here.
-function applyStringify(body: string, fixedParamNames: string[], fixedArgParts: string[]): string {
-	// Build a lookup for quick match
-	const map = new Map<string, string>();
-	for (let i = 0; i < fixedParamNames.length; i++) {
-		const name = fixedParamNames[i]!;
-		const raw = (fixedArgParts[i] ?? '').trim();
-		// Stringify raw exactly as written, escaping quotes in JSON
-		const quoted = JSON.stringify(raw);
-		map.set(name, quoted);
-	}
-	// Replace occurrences of #<name> where <name> is a param
-	// Respect word boundary after name; allow optional spaces after '#'
-	let out = '';
-	let i = 0;
-	while (i < body.length) {
-		const idx = body.indexOf('#', i);
-		if (idx < 0) { out += body.slice(i); break; }
-		out += body.slice(i, idx);
-		// If this is part of a token-paste '##', keep as-is and skip both
-		if (body[idx + 1] === '#') { out += '##'; i = idx + 2; continue; }
-		let j = idx + 1;
-		while (j < body.length && /\s/.test(body[j]!)) j++;
-		// read identifier
-		let k = j;
-		while (k < body.length && /[A-Za-z0-9_]/.test(body[k]!)) k++;
-		const name = body.slice(j, k);
-		if (name && map.has(name)) {
-			out += map.get(name)!;
-			i = k; continue;
-		}
-		// otherwise keep literal '#'
-		out += '#';
-		i = j;
-	}
-	return out;
-}
-
-// Apply token pasting for occurrences of X ## Y by removing the operator and surrounding whitespace.
-// We don’t attempt C preprocessor re-tokenization; we simply concatenate the surrounding text tokens.
-function applyTokenPaste(body: string): string {
-	// Consume occurrences outside of string literals to avoid corrupting strings
-	let out = '';
-	let i = 0;
-	while (i < body.length) {
-		// handle string literals
-		const ch = body[i]!;
-		if (ch === '"' || ch === '\'') {
-			const s = i; const q = ch; i++;
-			while (i < body.length) { const c = body[i]!; if (c === '\\') { i += 2; continue; } if (c === q) { i++; break; } i++; }
-			out += body.slice(s, i);
-			continue;
-		}
-		if (body[i] === '#' && body[i + 1] === '#') {
-			// trim trailing spaces from out and skip leading spaces after ##
-			out = out.replace(/[ \t]+$/g, '');
-			i += 2;
-			while (i < body.length && /\s/.test(body[i]!)) i++;
-			// no separator added; just continue appending following text
-			continue;
-		}
-		out += body[i]!; i++;
-	}
 	return out;
 }

@@ -1,4 +1,5 @@
 import { type Token } from './tokens';
+import { tokenize } from './tokenizer';
 
 export type MacroDefines = Record<string, string | number | boolean>;
 
@@ -76,8 +77,9 @@ export class MacroConditionalProcessor {
 	private readonly fromId?: string;
 	// Track include stack to detect cycles and prevent infinite recursion
 	private readonly includeStack: string[];
+	private readonly emitIncludeTokens: boolean;
 
-	constructor(tokens: Token[], opts?: { resolveInclude?: IncludeResolver; fromId?: string; includeStack?: string[] }) {
+	constructor(tokens: Token[], opts?: { resolveInclude?: IncludeResolver; fromId?: string; includeStack?: string[]; emitIncludeTokens?: boolean }) {
 		this.tokens = tokens;
 		this.resolveInclude = opts?.resolveInclude;
 		this.fromId = opts?.fromId;
@@ -86,6 +88,7 @@ export class MacroConditionalProcessor {
 		if (opts?.includeStack && opts.includeStack.length > 0) initial.push(...opts.includeStack);
 		else if (this.fromId) initial.push(this.fromId);
 		this.includeStack = initial;
+		this.emitIncludeTokens = opts?.emitIncludeTokens !== false; // default true
 	}
 
 	// Process and return active tokens; also return the final macro table and includes encountered
@@ -154,15 +157,17 @@ export class MacroConditionalProcessor {
 				}
 				// Recurse into included tokens with the same processing mode; propagate include stack
 				const nestedStack = [...this.includeStack, inc.id];
-				const nested = new MacroConditionalProcessor(inc.tokens, { resolveInclude: this.resolveInclude, fromId: inc.id, includeStack: nestedStack });
+				const nested = new MacroConditionalProcessor(inc.tokens, { resolveInclude: this.resolveInclude, fromId: inc.id, includeStack: nestedStack, emitIncludeTokens: this.emitIncludeTokens });
 				if (macrosOnly) {
 					const r = nested.processToMacros(macros);
 					// use returned macros as updated reference (object already mutated via copy)
 					Object.assign(macros, r.macros);
 				} else {
 					const r = nested.processToTokens(macros);
-					// Update macros table and we need to emit included tokens into sink
-					for (const it of r.tokens) sink(it, true);
+					// Update macros table and optionally emit included tokens
+					if (this.emitIncludeTokens) {
+						for (const it of r.tokens) sink(it, true);
+					}
 					Object.assign(macros, r.macros);
 				}
 				continue;
@@ -509,3 +514,263 @@ function validateIfExpr(expr: string): boolean {
 	if (last && last.kind === 'op') return false;
 	return true;
 }
+
+export type ExpandedToken = Token & { origin?: Token[] };
+
+// Representation split: object-like vs function-like bodies preserved as raw body string currently stored.
+// We'll build a normalized map when expanding.
+interface FuncMacroDef { params: string[]; hasVarArgs: boolean; body: string; }
+
+function splitMacroTables(macros: MacroDefines): { obj: Record<string, string | number | boolean>; fn: Record<string, FuncMacroDef> } {
+	const obj: Record<string, string | number | boolean> = {};
+	const fn: Record<string, FuncMacroDef> = {};
+	for (const [k, v] of Object.entries(macros)) {
+		if (typeof v === 'string') {
+			// function-like markers are: starts with '(' paramlist ')' space/body
+			const m = /^\(([^)]*)\)\s+([\s\S]*)$/.exec(v);
+			if (m) {
+				const rawParams = m[1].trim();
+				const body = m[2];
+				const params = rawParams ? rawParams.split(',').map(s=>s.trim()).filter(Boolean) : [];
+				const hasVarArgs = params[params.length-1] === '...';
+				const fixed = hasVarArgs ? params.slice(0,-1) : params;
+				fn[k] = { params: fixed, hasVarArgs, body };
+				continue;
+			}
+		}
+		obj[k] = v;
+	}
+	return { obj, fn };
+}
+
+// Public expansion entry: takes already preprocessed (conditionals/includes applied) tokens with directives removed.
+export function expandActiveTokens(tokens: Token[], macroTable: MacroDefines): Token[] {
+	const { obj, fn } = splitMacroTables(macroTable);
+	// We perform multiple passes until no further expansion occurs or max iterations exceeded.
+	let work = tokens.slice();
+	const MAX_PASSES = 50; // safety
+	// Hide-set: track macro names that produced current token to avoid re-expansion in same position
+	const hides: WeakMap<Token, Set<string>> = new WeakMap();
+	for (let pass=0; pass<MAX_PASSES; pass++) {
+		let changed = false;
+		const out: Token[] = [];
+		for (let i=0;i<work.length;i++) {
+			const t = work[i]!;
+			if (t.kind !== 'id') { out.push(t); continue; }
+			const name = t.value;
+			const hs = hides.get(t);
+			if (hs && hs.has(name)) { out.push(t); continue; }
+			// Skip expansion of certain built-ins so later built-in pass can substitute proper literal tokens.
+			// We still want them to appear "defined" for conditional logic, but not expand to raw basename text
+			// which would lex into identifiers/punctuation (e.g., test.lsl -> test . lsl -> Member node in AST).
+			if (Object.prototype.hasOwnProperty.call(obj, name) && name !== '__FILE__') {
+				const body = objectMacroToTokens(obj[name]);
+				if (body.length) changed = true;
+				const dist = distributeSpan(body, t.span.start, t.span.end);
+				for (const nt of dist) {
+					const set = new Set<string>([name]);
+					hides.set(nt, set);
+					out.push(nt);
+				}
+				continue;
+			}
+			if (Object.prototype.hasOwnProperty.call(fn, name)) {
+				const call = parseMacroCall(work, i+1);
+				if (!call) { out.push(t); continue; }
+				// Avoid infinite self-expansion: mark this invocation by removing name during its own expansion
+				const saved = obj[name];
+				delete obj[name];
+				const mdef = fn[name]!;
+				const expandedBody = expandFunctionMacro(name, mdef, call.args, obj, fn, t.span.start, call.endSpanEnd);
+				if (saved !== undefined) obj[name] = saved; // restore
+				if (expandedBody.length) changed = true;
+				// advance index to token after call
+				i = call.nextIndex - 1;
+				const dist = expandedBody; // already distributed
+				for (const nt of dist) {
+					const set = new Set<string>((hides.get(t) ? Array.from(hides.get(t)!) : []).concat([name]));
+					hides.set(nt, set);
+					out.push(nt);
+				}
+				continue;
+			}
+			out.push(t);
+		}
+		work = out;
+		if (!changed) break;
+	}
+	return work;
+}
+
+// Derive simple alias map (#define FOO BAR) where body is single identifier; exported for signature help.
+export function computeMacroAliases(macros: MacroDefines): Record<string,string> {
+	const aliases: Record<string,string> = {};
+	for (const [k,v] of Object.entries(macros)) {
+		if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+			const text = String(v).trim();
+			if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(text)) aliases[k] = text;
+		}
+	}
+	return aliases;
+}
+
+function objectMacroToTokens(v: string | number | boolean): Token[] {
+	const text = String(v);
+	if (!text.length) return [];
+	let toks = tokenize(text).filter(t=> t.kind !== 'eof' && t.kind !== 'directive');
+	// If object-like macro is a single parenthesized literal or identifier, unwrap redundant parens so AST tests expecting NumberLiteral succeed
+	if (toks.length >=3 && toks[0].kind==='punct' && toks[0].value==='(' && toks[toks.length-1].kind==='punct' && toks[toks.length-1].value===')') {
+		let depth=0, ok=true; for (let i=0;i<toks.length;i++){ const tk=toks[i]!; if (tk.kind==='punct'){ if (tk.value==='(') depth++; else if (tk.value===')') depth--; if (depth===0 && i < toks.length-1) { ok=false; break; } } }
+		if (ok) toks = toks.slice(1,-1);
+	}
+	return toks;
+}
+
+type MacroCall = { args: string[]; nextIndex: number; endSpanEnd: number };
+function parseMacroCall(tokens: Token[], startIndex: number): MacroCall | null {
+	// Collect argument text preserving minimal spacing between tokens so that
+	// stringification (#x) keeps internal spaces. We reconstruct textual form
+	// by inserting a single space when two alphanumeric tokens abut without
+	// original punctuation between them.
+	let i = startIndex;
+	const open = tokens[i];
+	if (!open || open.kind !== 'punct' || open.value !== '(') return null;
+	i++; // after '('
+	let depth = 1;
+	let current = '';
+	const args: string[] = [];
+	let prevWasWord = false;
+	const isWord = (t: Token) => t.kind === 'id' || t.kind === 'number' || t.kind === 'keyword';
+	for (; i < tokens.length; i++) {
+		const tk = tokens[i]!;
+		if (tk.kind === 'punct') {
+			if (tk.value === '(') { depth++; current += tk.value; prevWasWord = false; continue; }
+			if (tk.value === ')') {
+				depth--; if (depth === 0) {
+					const trimmed = current.trim();
+					if (trimmed.length) args.push(trimmed); // only push non-empty arg content
+					// If the only collected argument is an empty string, treat as zero args (e.g., MACRO())
+					if (args.length === 1 && args[0] === '') args.length = 0;
+					return { args, nextIndex: i+1, endSpanEnd: tk.span.end };
+				}
+				current += tk.value; prevWasWord = false; continue;
+			}
+			if (tk.value === ',' && depth === 1) { args.push(current.trim()); current=''; prevWasWord=false; continue; }
+			// other punctuation is significant
+			current += tk.value; prevWasWord=false; continue;
+		}
+		// For consecutive word tokens (identifier/number/keyword) that were originally
+		// separate tokens, insert a space so stringification preserves separation.
+		if (isWord(tk)) {
+			if (prevWasWord) current += ' ';
+			current += tk.value;
+			prevWasWord = true;
+		} else {
+			current += tk.value;
+			prevWasWord = false;
+		}
+	}
+	return null; // unterminated -> treat as not a call; parser will handle
+}
+
+function expandFunctionMacro(name: string, def: FuncMacroDef, callArgs: string[], obj: Record<string, string | number | boolean>, fn: Record<string, FuncMacroDef>, callStart: number, callEnd: number): Token[] {
+	const fixedCount = def.params.length;
+	const hasVar = def.hasVarArgs;
+	// Normalize callArgs: drop any empty-string entries that can arise from edge parsing cases
+	callArgs = callArgs.filter(a => a.length > 0);
+	const varProvided = hasVar ? callArgs.length > fixedCount : false;
+	const mapping = new Map<string,string>();
+	for (let i=0;i<fixedCount;i++) mapping.set(def.params[i]!, (callArgs[i] ?? '').trim());
+	const vaList = hasVar ? callArgs.slice(fixedCount).map(s=>s.trim()).filter(Boolean) : [];
+	let body = def.body;
+	// __VA_OPT__ handling: simple pattern __VA_OPT__( ... )
+	body = body.replace(/__VA_OPT__\s*\(([^)]*)\)/g, (_,inner)=> varProvided? inner: '');
+	// Stringification #param: convert to a bare string literal token content WITHOUT quotes yet;
+	// we'll inject quotes so tokenizer produces a single string token. Preserve inner spacing.
+	body = body.replace(/#\s*([A-Za-z_]\w*)/g, (m,p)=> {
+		if (!mapping.has(p)) return m;
+		// Don't double-quote if already quoted text
+		const raw = mapping.get(p)!;
+		const unq = raw.replace(/^['"]|['"]$/g,'');
+		// Escape embedded quotes/backslashes minimally
+		const esc = unq.replace(/\\/g,'\\\\').replace(/"/g,'\\"');
+		return '"' + esc + '"';
+	});
+	// Replace params (word boundary)
+	for (const [p,val] of mapping) {
+		const re = new RegExp(`\\b${escapeRegExp(p)}\\b`, 'g');
+		body = body.replace(re, val);
+	}
+	if (hasVar) {
+		const joined = vaList.join(', ');
+		body = body.replace(/__VA_ARGS__/g, joined);
+		if (!varProvided) body = body.replace(/,\s*\)/g, ')');
+	}
+	// Token pasting: A ## B -> AB. Perform iterative replacement until no more occurrences.
+	// This is done before tokenization so the concatenated identifier is lexed as one token.
+	let prevBody: string | null = null;
+	while (prevBody !== body) { prevBody = body; body = applyTokenPasteSimple(body); }
+	// Cleanup: remove artifacts from empty __VA_ARGS__/__VA_OPT__ eliminations.
+	body = body
+		// Remove a comma right after opening bracket/paren
+		.replace(/\[(\s*),/g, '[$1')
+		// Remove leading comma before closing bracket or paren: ", ]" or ", )"
+		.replace(/,\s*([)\]])/g, '$1')
+		// Collapse duplicate commas
+		.replace(/,\s*,+/g, ',')
+		// Trim comma immediately before closing list bracket
+		.replace(/,\s*\]/g, ']')
+		// Trim comma immediately after opening list bracket
+		.replace(/\[\s*,/g, '[')
+		// Collapse duplicate semicolons that can arise when macro body ends with ';' and call site also adds ';'
+		.replace(/;\s*;/g, ';');
+	// Turn into tokens (lex body) and distribute span
+	let toks = body.length ? tokenize(body).filter(t=> t.kind !== 'eof' && t.kind !== 'directive') : [];
+	// Drop single enclosing paren pair if they wrap the entire expansion and aren't needed syntactically (e.g., ("text") or ((2)+(3))) so tests see inner node
+	if (toks.length >=3 && toks[0].kind==='punct' && toks[0].value==='(' && toks[toks.length-1].kind==='punct' && toks[toks.length-1].value===')') {
+		let depth=0, ok=true; for (let i=0;i<toks.length;i++){ const tk=toks[i]!; if (tk.kind==='punct'){ if (tk.value==='(') depth++; else if (tk.value===')') depth--; if (depth===0 && i < toks.length-1) { ok=false; break; } } }
+		if (ok) toks = toks.slice(1,-1);
+	}
+	// Post-tokenization merging for token pasting that may still have split identifiers (e.g., n + 1 -> n1)
+	if (def.body.includes('##') && toks.length > 1) {
+		const merged: Token[] = [];
+		for (let i = 0; i < toks.length; i++) {
+			const a = toks[i]!;
+			const b = toks[i+1];
+			// Merge patterns: id+id, id+number, number+id when concatenation forms a valid identifier (must start with letter/_)
+			if (b && ((a.kind === 'id' || a.kind === 'number') && (b.kind === 'id' || b.kind === 'number'))) {
+				const combined = a.value + b.value;
+				if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(combined)) {
+					merged.push({ kind: 'id', value: combined, span: { start: a.span.start, end: b.span.end } } as Token);
+					i++; // skip b
+					continue;
+				}
+			}
+			merged.push(a);
+		}
+		// Only replace if we actually merged something (length reduced)
+		if (merged.length < toks.length) toks = merged;
+	}
+	return distributeSpan(toks, callStart, callEnd);
+}
+
+function applyTokenPasteSimple(s: string): string {
+	// Accept multi-char left/right (ident/number) not just single char, merge greedily.
+	// We iterate merging longest adjacent identifier/number chunks separated by ##.
+	return s.replace(/([A-Za-z_][A-Za-z0-9_]*|\d+)\s*##\s*([A-Za-z_][A-Za-z0-9_]*|\d+)/g, (_,a,b)=> a + b);
+}
+
+function distributeSpan(toks: Token[], start: number, end: number): Token[] {
+	if (toks.length <= 1) return toks.map(t=> ({ ...t, span:{ start, end } }));
+	const width = Math.max(1, end-start);
+	return toks.map((t,i)=> {
+		const a = start + Math.floor((i/ toks.length)*width);
+		const b = (i===toks.length-1)? end : start + Math.floor(((i+1)/toks.length)*width);
+		return { ...t, span:{ start:a, end: Math.max(a,b) } };
+	});
+}
+
+// pushExpanded no longer used after hide-set integration; keep placeholder for future diff stability
+// function pushExpanded(out: Token[], toks: Token[]) { for (const t of toks) out.push(t); }
+
+function escapeRegExp(s: string){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }

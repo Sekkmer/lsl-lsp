@@ -15,7 +15,7 @@ describe('preprocessor: varargs into list literals', () => {
 			'}'
 		].join('\n');
 		const doc = docFrom(code);
-		const { tokens, analysis } = runPipeline(doc, defs);
+		const { tokens, expandedTokens, analysis } = runPipeline(doc, defs);
 		const asText = tokens.map(t => t.value).join(' ');
 		// Diagnostics: no generic syntax errors and no leaked __VA_ARGS__ identifier
 		const msgs = analysis.diagnostics.map(d => `${d.code}: ${d.message}`).join('\n');
@@ -26,6 +26,11 @@ describe('preprocessor: varargs into list literals', () => {
 		// Presence of list brackets in the expansion
 		expect(asText.includes('[')).toBe(true);
 		expect(asText.includes(']')).toBe(true);
+		// If expandedTokens provided, ensure macro directive not present
+		if (expandedTokens && expandedTokens.length) {
+			const expText = expandedTokens.map(t=>t.value).join(' ');
+			expect(expText).not.toContain('#define');
+		}
 	});
 
 	it('handles head + optional varargs with __VA_OPT__ inside list', async () => {
@@ -40,7 +45,7 @@ describe('preprocessor: varargs into list literals', () => {
 			'}'
 		].join('\n');
 		const doc = docFrom(code);
-		const { tokens, analysis } = runPipeline(doc, defs);
+		const { tokens, expandedTokens, analysis } = runPipeline(doc, defs);
 		const asText = tokens.map(t => t.value).join(' ');
 		const msgs = analysis.diagnostics.map(d => `${d.code}: ${d.message}`).join('\n');
 		// No parser errors; no leaked __VA_ARGS__ identifier
@@ -52,5 +57,9 @@ describe('preprocessor: varargs into list literals', () => {
 		expect(asText.includes('3')).toBe(true);
 		// Ensure no dangling comma before closing bracket
 		expect(asText).not.toContain(', ]');
+		if (expandedTokens && expandedTokens.length) {
+			const expText = expandedTokens.map(t=>t.value).join(' ');
+			expect(expText).not.toContain('#define');
+		}
 	});
 });

@@ -21,6 +21,7 @@ describe('e2e fixtures', () => {
 		expect(analysis.calls.find(c => c.name === 'llSay' && c.args === 2)).toBeTruthy();
 		// Only assert no errors; hints like unused vars may be present
 		const errorDiags = analysis.diagnostics.filter(d => d.severity === 1 || d.severity === 2);
+		// ensure no unexpected parser / analyzer errors
 		expect(errorDiags.length).toBe(0);
 	});
 	it('big.lsl produces stable outputs', async () => {
@@ -38,6 +39,7 @@ describe('e2e fixtures', () => {
 		// Should have parsed some function calls
 		expect(analysis.calls.length).toBeGreaterThan(0);
 		const errorOrWarn = analysis.diagnostics.filter(d => d.severity === 1 || d.severity === 2);
+		// ensure base compiles cleanly
 		expect(errorOrWarn.length).toBe(0);
 	});
 	it('base.lsl compiles cleanly and provides Sign/Verify/XorValue', async () => {
