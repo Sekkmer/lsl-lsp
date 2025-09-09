@@ -39,7 +39,7 @@ describe('unused locals/params', () => {
 		expect(warn?.message).toContain('underscore-prefixed');
 	});
 	it('flags unused locals/params in events', async () => {
-		const code = 'state default { touch_start(integer _c) { integer x; llOwnerSay("hi"); } }';
+		const code = 'default { touch_start(integer _c) { integer x; llOwnerSay("hi"); } }';
 		const { analysis } = await analyze(code);
 		// underscore param used? not used -> ok
 		expect(analysis.diagnostics.find(d => d.code === 'LSL102')).toBeFalsy();

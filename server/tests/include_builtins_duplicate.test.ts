@@ -20,16 +20,13 @@ describe('includes: duplicate built-in function declarations', () => {
 	it('emits duplicate function diagnostic at include site when header redeclares builtin', async () => {
 		const defsPath = path.join(__dirname, 'fixtures', 'lsl-defs.json');
 		const defs = await loadDefs(defsPath);
-		// Header tries to declare built-in llSay with some prototype
 		const header = tmpFile('dup_builtin.lslh', 'integer llSay(key id, string msg);\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\ninteger main(){ return 0; }\n`;
 		const doc = docFrom(code, 'file:///proj/dup_builtin.lsl');
 		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [includeDir] });
-		// Expect duplicate decl error for function llSay from include (conflicts with built-in)
 		const errs = analysis.diagnostics.filter(d => d.severity === 1);
 		expect(errs.some(d => /Duplicate declaration of function llSay/.test(d.message))).toBe(true);
-		// Include targets present
 		expect(pre.includeTargets?.length).toBe(1);
 	});
 });

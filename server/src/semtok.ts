@@ -242,7 +242,6 @@ export function buildSemanticTokens(
 			if (next && next.value === '(' && pre && pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, t.value)) {
 				push(t, idx('macro')); continue;
 			}
-			const inIncluded = pre && pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s => s.functions.has(t.value));
 			if (next && next.value === '(') {
 				if (defs.funcs.has(t.value)) {
 					// Built-in function: defaultLibrary and possibly deprecated
@@ -251,7 +250,7 @@ export function buildSemanticTokens(
 					if (overloads.some(o => o.deprecated)) mods |= bit('deprecated');
 					push(t, idx('function'), mods); continue;
 				}
-				if ((analysis && analysis.functions.has(t.value)) || inIncluded) {
+				if (analysis && analysis.functions.has(t.value)) {
 					push(t, idx('function')); continue;
 				}
 			}

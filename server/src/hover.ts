@@ -1,34 +1,91 @@
 import { Hover, MarkupKind, Position } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs } from './defs';
+import fs from 'node:fs';
 import { Analysis } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import { isKeyword } from './ast/lexer';
+
+// Simple in-memory cache for include file contents to avoid repeated sync reads during hover bursts
+const includeFileCache = new Map<string, string>();
+function readIncludeFile(file: string): string | null {
+	try {
+		let txt = includeFileCache.get(file);
+		if (txt == null) {
+			txt = fs.readFileSync(file, 'utf8');
+			includeFileCache.set(file, txt);
+		}
+		return txt;
+	} catch { return null; }
+}
+
+function extractGenericLeadingComment(text: string, declStart: number): string | null {
+	let i = declStart - 1;
+	while (i >= 0 && /[ \t\r\n]/.test(text[i]!)) i--;
+	if (i < 1) return null;
+	if (text[i] === '/' && text[i - 1] === '*') {
+		const end = i;
+		const start = text.lastIndexOf('/*', i - 1);
+		if (start >= 0) {
+			const raw = text.slice(start + 2, end - 1);
+			return raw.split(/\r?\n/).map(l => l.replace(/^[ \t]*\*?[ \t]?/, '').replace(/\s+$/,'')).join('\n').trim();
+		}
+	}
+	const lines: string[] = [];
+	let lineEnd = i;
+	while (lineEnd >= 0) {
+		let lineStart = lineEnd;
+		while (lineStart >= 0 && text[lineStart] !== '\n') lineStart--;
+		lineStart++;
+		const line = text.slice(lineStart, lineEnd + 1);
+		if (/^\s*\/\//.test(line)) {
+			lines.unshift(line.replace(/^\s*\/\/+\s?/, '').trimEnd());
+			lineEnd = lineStart - 2;
+			continue;
+		}
+		break;
+	}
+	if (lines.length) return lines.join('\n').trim();
+	return null;
+}
+
+function extractIncludeSymbolDoc(name: string, kind: 'func' | 'var' | 'macro', pre?: PreprocResult): string | null {
+	if (!pre || !pre.includeTargets) return null;
+	for (const inc of pre.includeTargets) {
+		if (!inc.resolved) continue;
+		const txt = readIncludeFile(inc.resolved);
+		if (!txt) continue;
+		let pattern: RegExp;
+		const id = name.replace(/[.*+?^${}()|[\]\\]/g, r => `\\${r}`);
+		// NOTE: We test one line at a time, so we don't need the 'm' flag here.  Use explicit \b word boundary.
+		if (kind === 'func') {
+			pattern = new RegExp(`^[\\t ]*[A-Za-z_][A-Za-z0-9_]*[\\t ]+${id}[\\t ]*\\(`);
+		} else if (kind === 'macro') {
+			// Match both object-like and function-like macros: #define NAME   or  #define NAME(...)
+			pattern = new RegExp(`^\\s*#\\s*define\\s+${id}(?:\\b|\\(|$)`);
+		} else {
+			pattern = new RegExp(`^[\\t ]*[A-Za-z_][A-Za-z0-9_]*[\\t ]+${id}[\\t ]*(?:=|;|$)`);
+		}
+		const lines = txt.split(/\r?\n/);
+		let offset = 0;
+		for (const L of lines) {
+			if (pattern.test(L)) {
+				const declStart = offset;
+				const doc = extractGenericLeadingComment(txt, declStart);
+				if (doc) return doc;
+				break;
+			}
+			offset += L.length + 1;
+		}
+	}
+	return null;
+}
 
 export function lslHover(doc: TextDocument, params: { position: Position }, defs: Defs, analysis?: Analysis, pre?: PreprocResult): Hover | null {
 	const fmtDoc = (s?: string) => (typeof s === 'string' ? s.replace(/\\r\\n|\\n/g, '\n') : s);
 	const off = doc.offsetAt(params.position);
 	const text = doc.getText();
 
-	// If hovering over an include target, show resolution summary
-	if (pre && pre.includeTargets && pre.includeTargets.length > 0) {
-		for (const it of pre.includeTargets) {
-			if (off >= it.start && off <= it.end) {
-				if (it.resolved && pre.includeSymbols && pre.includeSymbols.has(it.resolved)) {
-					const info = pre.includeSymbols.get(it.resolved)!;
-					const counts = [
-						`${info.functions.size} function${info.functions.size === 1 ? '' : 's'}`,
-						`${info.macroObjs.size + info.macroFuncs.size} macro${(info.macroObjs.size + info.macroFuncs.size) === 1 ? '' : 's'}`,
-						`${info.globals.size} global${info.globals.size === 1 ? '' : 's'}`
-					].join(', ');
-					const body = ['```lsl', `#include ${it.file}`, '```', `\nLoaded from: ${it.resolved}\nSymbols: ${counts}`].join('\n');
-					return { contents: { kind: MarkupKind.Markdown, value: body } };
-				}
-				const body = ['```lsl', `#include ${it.file}`, '```', '\nNot found in configured includePaths'].join('\n');
-				return { contents: { kind: MarkupKind.Markdown, value: body } };
-			}
-		}
-	}
 	let s = off; while (s > 0 && /[A-Za-z0-9_]/.test(text[s-1])) s--;
 	let e = off; while (e < text.length && /[A-Za-z0-9_]/.test(text[e])) e++;
 	const w = text.slice(s, e);
@@ -43,6 +100,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 	if (pre && pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, w)) {
 		const val = pre.macros[w as keyof typeof pre.macros];
 		const from = macroSourceFile(doc, pre, w);
+		const includeDoc = extractIncludeSymbolDoc(w, 'macro', pre);
 		// If macro is an alias to a known function name, show target function signature(s)
 		if (typeof val === 'string') {
 			const alias = String(val).trim();
@@ -54,6 +112,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 				const wiki = withWiki?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
 				const parts = [code, '', `Alias: #define ${w} ${alias}`, '', `[Wiki](${wiki})`];
 				if (from) parts.push('', `From: ${from}`);
+				if (includeDoc) parts.push('', includeDoc);
 				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 			}
 		}
@@ -61,6 +120,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		if (typeof val === 'number') {
 			const parts = ['```lsl', String(val), '```'];
 			if (from) parts.push('', `From: ${from}`);
+			if (includeDoc) parts.push('', includeDoc);
 			return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 		}
 		if (typeof val === 'string') {
@@ -71,24 +131,28 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 			if (isPureQuoted) {
 				const parts = ['```lsl', sVal, '```'];
 				if (from) parts.push('', `From: ${from}`);
+				if (includeDoc) parts.push('', includeDoc);
 				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 			}
 			// Otherwise: show define form so expressions (including quoted pieces) are clear
 			{
 				const parts = ['```lsl', `#define ${w}${sVal ? ' ' + sVal : ''}`, '```'];
 				if (from) parts.push('', `From: ${from}`);
+				if (includeDoc) parts.push('', includeDoc);
 				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 			}
 		}
 		if (typeof val === 'boolean') {
 			const parts = ['```lsl', val ? '1' : '0', '```'];
 			if (from) parts.push('', `From: ${from}`);
+			if (includeDoc) parts.push('', includeDoc);
 			return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 		}
 		// Otherwise, render the define line
 		const valueStr = val != null ? String(val) : '';
 		const parts = ['```lsl', `#define ${w}${valueStr ? ' ' + valueStr : ''}`, '```'];
 		if (from) parts.push('', `From: ${from}`);
+		if (includeDoc) parts.push('', includeDoc);
 		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
 	// Function-like macro hover: show signature and body without evaluation
@@ -97,6 +161,8 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		const from = macroSourceFile(doc, pre, w);
 		const parts = ['```lsl', `#define ${w}${body ? ' ' + body : ''}`, '```'];
 		if (from) parts.push('', `From: ${from}`);
+		const includeDoc = extractIncludeSymbolDoc(w, 'macro', pre);
+		if (includeDoc) parts.push('', includeDoc);
 		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
 	// Special macro __LINE__: show the current line number in this document
@@ -183,27 +249,6 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		if (paramDocs) parts.push('', 'Parameters:', withParamDocFormatting(paramDocs));
 		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
-	// Include-provided symbol hover (functions/globals) with source file hint
-	if (pre && pre.includeSymbols && pre.includeSymbols.size > 0) {
-		for (const [file, info] of pre.includeSymbols) {
-			const f = info.functions.get(w);
-			if (f) {
-				const sig = `${f.returns} ${f.name}(${f.params.map((p: { type: string; name?: string })=>`${p.type}${p.name ? ' ' + p.name : ''}`).join(', ')})`;
-				const parts = ['```lsl', sig, '```'];
-				if (f.doc && f.doc.trim()) parts.push('', f.doc);
-				parts.push('', `From: ${file}`);
-				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
-			}
-			const g = info.globals.get(w);
-			if (g) {
-				const sig = `${g.type ?? 'unknown'} ${w}`;
-				const parts = ['```lsl', sig, '```'];
-				if (g.doc && g.doc.trim()) parts.push('', g.doc);
-				parts.push('', `From: ${file}`);
-				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
-			}
-		}
-	}
 	// User-defined function hover (from analysis)
 	if (analysis && analysis.functions.has(w)) {
 		const d = analysis.functions.get(w)!;
@@ -215,6 +260,11 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		const declStart = doc.offsetAt(startPos);
 		const jsdoc = extractLeadingJsDoc(doc.getText(), declStart);
 		if (jsdoc) parts.push('', jsdoc);
+		else {
+			// Fallback: search include headers for a preceding comment
+			const incDoc = extractIncludeSymbolDoc(w, 'func', pre);
+			if (incDoc) parts.push('', incDoc);
+		}
 		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
 	// Variables and parameters: show declared type, and if it's an event parameter with docs, include them
@@ -236,6 +286,11 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 						parts.push('', `Parameter: ${pd.name}`, fmtDoc(pd.doc) as string);
 					}
 				}
+			}
+			// Fallback include doc for global vars
+			if (at.kind === 'var') {
+				const incDoc = extractIncludeSymbolDoc(w, 'var', pre);
+				if (incDoc) parts.push('', incDoc);
 			}
 			return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 		}
@@ -261,6 +316,10 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 						parts.push('', `Parameter: ${pd.name}`, fmtDoc(pd.doc) as string);
 					}
 				}
+			}
+			if (best.kind === 'var') {
+				const incDoc = extractIncludeSymbolDoc(w, 'var', pre);
+				if (incDoc) parts.push('', incDoc);
 			}
 			return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 		}
@@ -433,10 +492,5 @@ function macroSourceFile(doc: TextDocument, pre: PreprocResult | undefined, name
 	if (!pre) return null;
 	// Prefer local defines: no need to add From: for local
 	if (hasLocalMacroDefine(doc, name)) return null;
-	if (pre.includeSymbols && pre.includeSymbols.size > 0) {
-		for (const [file, info] of pre.includeSymbols) {
-			if (info.macroObjs.has(name) || info.macroFuncs.has(name)) return file;
-		}
-	}
 	return null;
 }

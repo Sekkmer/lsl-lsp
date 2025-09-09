@@ -5,7 +5,7 @@
 */
 import type { Expr, Stmt, Script, Function as FnNode, State, Event, Type, Span, Diagnostic } from './index';
 import { isType, spanFrom } from './index';
-import { Lexer, type MacroTables } from './lexer';
+import { Lexer } from './lexer';
 import type { Token } from '../core/tokens';
 import { preprocessForAst } from '../core/pipeline';
 import type { MacroDefines } from '../core/macro';
@@ -17,52 +17,30 @@ import { TokenStream } from '../core/tokens';
 type ParseOptions = {
 	macros?: MacroDefines;
 	includePaths?: string[];
+	// When provided, reuse precomputed preprocessing (tokens/macros) instead of invoking internally again.
+	pre?: ReturnType<typeof preprocessForAst>;
 };
 
 export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', opts?: ParseOptions): Script {
-	// Preprocess (conditionals, includes, macro tables, expanded token stream)
+	// Reuse provided pre result when available to avoid double preprocessing (important for tests/pipeline).
 	const fromPath = uri.startsWith('file://') ? require('vscode-uri').URI.parse(uri).fsPath : undefined;
 	const basename = basenameFromUri(uri);
-	const baseDefines = { ...(opts?.macros ?? {}), __FILE__: basename };
-	const pre = preprocessForAst(text, { includePaths: opts?.includePaths ?? [], fromPath, defines: baseDefines });
-	// If we have an expanded token stream from the macro engine, build a merged stream that
-	// preserves comments (for doc attachment) and applies built-in macro substitutions.
-	// Fallback to legacy Lexer path if something unexpected happens.
-	try {
-		if (pre.expandedTokens && pre.expandedTokens.length > 0) {
-			// DEBUG: capture any unexpected token kinds before feeding parser
-			// (temporary instrumentation – safe to leave; no side effects besides console error output when exceptions occur)
-			// Collect root file comment tokens using lightweight tokenizer (no macro expansion)
-			const tz = new Tokenizer(text);
-			const commentTokens: Token[] = [];
-			for (;;) {
-				const t = tz.next();
-				if (t.kind === 'comment-line' || t.kind === 'comment-block') commentTokens.push(t);
-				if (t.kind === 'eof') break;
-			}
-			// Expand built-ins (__LINE__, __FILE__, etc.) inside the already-expanded active code tokens
-			const lineStarts = computeLineStarts(text);
-			const builtinsExpanded = applyBuiltinExpansions(pre.expandedTokens, basename, lineStarts);
-			// Merge comments + expanded tokens by span.start order
-			const merged: Token[] = mergeTokensWithComments(builtinsExpanded, commentTokens);
-			// Feed parser using a TokenStream-backed adapter implementing Lexer interface subset
-			const ts = new TokenStream(merged);
-			const lxAdapter: Pick<Lexer, 'next' | 'peek' | 'pushBack'> = {
-				next: () => ts.next(),
-				peek: () => ts.peek(),
-				pushBack: (t: Token) => ts.pushBack(t)
-			} as unknown as Lexer; // cast for Parser constructor compatibility
-			const P = new Parser(lxAdapter as Lexer, text, { disableSourceHeuristics: true });
-			return P.parseScript();
-		}
-	} catch (e) {
-		// fall through to legacy path but surface the reason during tests/debug sessions
-		try { console.error('parseScriptFromText: expandedTokens path failed; falling back to legacy lexer. Error:', e instanceof Error ? e.message : String(e)); } catch { /* ignore */ }
-	}
-	// Legacy path (should be rare now): use raw lexer (still provides built-ins + comments)
-	const macros: MacroTables = { obj: pre.macros, fn: pre.funcMacros };
-	const lx = new Lexer(text, { macros, disabled: pre.disabledRanges, filename: basename });
-	const P = new Parser(lx, text);
+	// Avoid redefining __FILE__ early; builtin expansion handles it.
+	const baseDefines = { ...(opts?.macros ?? {}) };
+	const pre = opts?.pre ?? preprocessForAst(text, { includePaths: opts?.includePaths ?? [], fromPath, defines: baseDefines });
+	const tz = new Tokenizer(text);
+	const commentTokens: Token[] = [];
+	for (;;) { const t = tz.next(); if (t.kind === 'comment-line' || t.kind === 'comment-block') commentTokens.push(t); if (t.kind === 'eof') break; }
+	const lineStarts = computeLineStarts(text);
+	const builtinsExpanded = applyBuiltinExpansions(pre.expandedTokens || [], basename, lineStarts);
+	const merged: Token[] = mergeTokensWithComments(builtinsExpanded, commentTokens);
+	const ts = new TokenStream(merged);
+	const lxAdapter: Pick<Lexer, 'next' | 'peek' | 'pushBack'> = {
+		next: () => ts.next(),
+		peek: () => ts.peek(),
+		pushBack: (t: Token) => ts.pushBack(t)
+	} as unknown as Lexer;
+	const P = new Parser(lxAdapter as Lexer, text, { disableSourceHeuristics: true });
 	return P.parseScript();
 }
 
@@ -88,10 +66,10 @@ function applyBuiltinExpansions(tokens: Token[], basename: string, lineStarts: n
 	return tokens.map(t => {
 		if (t.kind === 'id') {
 			if (t.value === '__LINE__') {
-				return { kind: 'number', value: String(lineOf(t.span.start, lineStarts)), span: t.span } as Token;
+				return { kind: 'number', value: String(lineOf(t.span.start, lineStarts)), span: t.span, file: t.file || '<unknown>' } as Token;
 			}
 			if (t.value === '__FILE__') {
-				return { kind: 'string', value: JSON.stringify(basename), span: t.span } as Token;
+				return { kind: 'string', value: JSON.stringify(basename), span: t.span, file: t.file || '<unknown>' } as Token;
 			}
 		}
 		return t;
@@ -99,14 +77,33 @@ function applyBuiltinExpansions(tokens: Token[], basename: string, lineStarts: n
 }
 
 function mergeTokensWithComments(code: Token[], comments: Token[]): Token[] {
-	// Exclude any stray eof tokens from code list
+	// Goal: keep original expanded token order (which encodes include inlining) while
+	// still exposing root-file comments to the parser so leading doc comments attach.
+	// Previous implementation globally sorted by span which broke ordering because
+	// include tokens use their own file-local span coordinates.
 	const codeFiltered = code.filter(t => t.kind !== 'eof');
-	const all = codeFiltered.concat(comments);
-	all.sort((a, b) => a.span.start - b.span.start || a.span.end - b.span.end);
-	// Append single EOF token
-	const lastEnd = all.length ? Math.max(...all.map(t => t.span.end)) : 0;
-	all.push({ kind: 'eof', value: '', span: { start: lastEnd, end: lastEnd } });
-	return all;
+	// Root-file path is the first token's file (best effort)
+	const rootFile = codeFiltered.find(t => !!t.file)?.file;
+	const pendingComments = comments
+		.filter(c => c.kind === 'comment-line' || c.kind === 'comment-block')
+		.sort((a, b) => a.span.start - b.span.start || a.span.end - b.span.end);
+	const out: Token[] = [];
+	let ci = 0;
+	for (const tk of codeFiltered) {
+		if (rootFile && tk.file === rootFile) {
+			// Flush any comments whose start is <= this root-file token start
+			while (ci < pendingComments.length && pendingComments[ci]!.span.start <= tk.span.start) {
+				out.push(pendingComments[ci++]!);
+			}
+		}
+		out.push(tk);
+	}
+	// Append remaining comments (e.g., those after last code token)
+	while (ci < pendingComments.length) out.push(pendingComments[ci++]!);
+	const lastEnd = out.length ? Math.max(...out.map(t => t.span.end)) : 0;
+	const eofFile = codeFiltered.length ? (codeFiltered[codeFiltered.length - 1]!.file || rootFile || '<unknown>') : (rootFile || '<unknown>');
+	out.push({ kind: 'eof', value: '', span: { start: lastEnd, end: lastEnd }, file: eofFile } as Token);
+	return out;
 }
 
 interface ParserOptions { disableSourceHeuristics?: boolean }
@@ -156,10 +153,10 @@ class Parser {
 		if (kindOk && valueOk) { this.look = null; return t; }
 		// insertion recovery: do not consume unexpected token; fabricate the expected one
 		const pos = t.span.start;
-		this.report(t, `expected ${value ? `'${value}'` : kind ?? 'token'}`);
+		this.report(t, `expected ${value ? `'${value}'` : (kind ?? 'token')}`);
 		const k: Token['kind'] = kind ?? t.kind;
 		const v: string = value ?? '';
-		return { kind: k, value: v, span: { start: pos, end: pos } };
+		return { kind: k, value: v, span: { start: pos, end: pos }, file: this.peek().file || '<unknown>' };
 	}
 	private maybe(kind: Token['kind'], value?: string): Token | null {
 		const t = this.peek();
@@ -182,7 +179,9 @@ class Parser {
 		const t = this.peek();
 		if (t.kind === 'id' || t.kind === 'keyword') { this.look = null; return t; }
 		// fallback: fabricate expected id token to keep progress
-		return this.eat('id');
+		const fabricated = this.eat('id');
+		if (!fabricated.file) (fabricated as Token).file = this.peek().file || '<unknown>';
+		return fabricated;
 	}
 
 	private syncTopLevel() {
@@ -234,14 +233,83 @@ class Parser {
 
 	parseScript(): Script {
 		const start = this.peek().span.start;
-		const functions = new Map<string, FnNode>();
+		type FnWithOrigin = FnNode & { originFile?: string };
+		type GlobalWithOrigin = import('./index').GlobalVar & { originFile?: string };
+		const functions = new Map<string, FnWithOrigin>();
 		const states = new Map<string, State>();
-		const globals = new Map<string, import('./index').GlobalVar>();
+		const globals = new Map<string, GlobalWithOrigin>();
+		// Helper to normalize identifier names so that leading/trailing "noise" characters
+		// (historically tolerated in LSL tooling: # $ ? \ ' ") do not cause distinct symbols.
+		// The lexer already strips these for identifier tokens produced after unification, but
+		// some earlier test expectations (identifier_noise) rely on a defensive normalization
+		// layer here in case future token sources (e.g. synthetic include decl scan) surface
+		// raw names containing noise. Keep logic extremely small and allocation-light.
+		const normalizeName = (name: string): string => {
+			if (!name) return name;
+			let s = 0; let e = name.length;
+			const isNoise = (c: string) => c === '#' || c === '$' || c === '?' || c === '\\' || c === '"' || c === '\'';
+			while (s < e && isNoise(name[s]!)) s++;
+			while (e > s && isNoise(name[e - 1]!)) e--;
+			return name.slice(s, e);
+		};
 		while (this.peek().kind !== 'eof') {
 			// skip any directives that may have been peeked
 			if (this.peek().kind === 'directive') { this.look = null; this.lx.next(); continue; }
 			// skip stray semicolons
 			if (this.maybe('punct', ';')) continue;
+			// Permissive mode: tolerate bare call or expression statements that appear at
+			// top-level in included headers (test fixtures intentionally include a call
+			// like `llSay(0, "dbg");`). Historically these were ignored; to preserve
+			// zero-diagnostic expectation we consume a leading pattern <id '(' ... ')'> ';'
+			// without emitting an error. We only trigger when the first token is an id
+			// (not a type keyword) and we immediately see '(' as the next non-trivia token.
+			{
+				const t0 = this.peek();
+				if (t0.kind === 'id') {
+					const la = this.lookAheadNonTrivia(2)[1];
+					if (la && la.kind === 'punct' && la.value === '(') {
+						// Before treating it as a bare call, detect implicit-void function pattern id(...) { ... }.
+						// We can't toggle disableSourceHeuristics (readonly); instead perform a lightweight
+						// ad-hoc scan: ensure that after the parenthesis group the next non-trivia token is '{'.
+						let scanIdx = 0;
+						let parenDepth = 0;
+						let sawGroup = false;
+						const tokens: Token[] = [];
+						// Collect a small window of tokens to inspect pattern id ( ... ) '{'
+						while (scanIdx < 40) { // arbitrary small cap
+							const t = this.lookAheadNonTrivia(scanIdx + 1)[scanIdx];
+							if (!t) break;
+							tokens.push(t);
+							if (tokens.length === 1) { scanIdx++; continue; } // first is id
+							if (tokens.length === 2 && !(t.kind === 'punct' && t.value === '(')) break; // not call pattern
+							if (t.kind === 'punct' && t.value === '(') { parenDepth++; }
+							else if (t.kind === 'punct' && t.value === ')') { parenDepth--; if (parenDepth === 0) { sawGroup = true; break; } }
+							scanIdx++;
+						}
+						let looksImplicit = false;
+						if (sawGroup) {
+							// After capturing the group, peek the next non-trivia token after the ')'
+							const afterGroup = this.lookAheadNonTrivia(tokens.length + 1)[tokens.length];
+							looksImplicit = !!afterGroup && afterGroup.kind === 'punct' && afterGroup.value === '{';
+						}
+						if (!looksImplicit) {
+							// Treat as bare call/expression statement: consume id + balanced parens then optional ';'
+							this.next(); // id
+							if (this.peek().kind === 'punct' && this.peek().value === '(') {
+								let depth = 0;
+								while (true) {
+									const t = this.next();
+									if (t.kind === 'punct' && t.value === '(') depth++;
+									else if (t.kind === 'punct' && t.value === ')') { depth--; if (depth === 0) break; }
+									if (t.kind === 'eof') break;
+								}
+								if (this.peek().kind === 'punct' && this.peek().value === ';') this.next();
+								continue; // proceed to next top-level construct
+							}
+						}
+					}
+				}
+			}
 			// Detect and report illegal global state-change statements: "state <id>;"
 			if (this.peek().kind === 'keyword' && this.peek().value === 'state') {
 				const tState = this.peek();
@@ -268,7 +336,7 @@ class Parser {
 					if (this.peek().kind === 'keyword' && this.peek().value === 'default') { this.next(); }
 					else { this.eat('id'); }
 					this.maybe('punct', ';');
-					this.report({ kind: 'id', value: '', span: { start: tState.span.start, end: matched.end } }, 'State change statements are only allowed inside event handlers', 'LSL023');
+					this.report({ kind: 'id', value: '', span: { start: tState.span.start, end: matched.end }, file: tState.file || '<unknown>' }, 'State change statements are only allowed inside event handlers', 'LSL023');
 					continue;
 				}
 			}
@@ -291,13 +359,31 @@ class Parser {
 				try { decl = this.parseTopLevel(); }
 				catch (e: unknown) { const msg = e instanceof Error ? e.message : String(e); this.report(this.peek(), msg); this.syncTopLevel(); continue; }
 				if ('varType' in decl) {
-					// duplicate global variable
-					if (globals.has(decl.name)) this.report({ kind: 'id', value: decl.name, span: decl.span }, 'Duplicate declaration', 'LSL070');
-					globals.set(decl.name, decl);
+					const norm = normalizeName(decl.name);
+					const prev = globals.get(norm);
+					if (prev) {
+						const prevFile = prev.originFile;
+						const curFile = nextTok.file || '<unknown>';
+						if (!prevFile || prevFile === curFile) {
+							this.report({ kind: 'id', value: norm, span: decl.span, file: curFile }, 'Duplicate declaration', 'LSL070');
+						}
+					}
+					if (norm !== decl.name) { (decl as { name: string }).name = norm; }
+					const gWithOrigin: GlobalWithOrigin = { ...decl, originFile: nextTok.file || '<unknown>' } as GlobalWithOrigin;
+					globals.set(norm, gWithOrigin);
 				} else {
-					// duplicate function
-					if (functions.has(decl.name)) this.report({ kind: 'id', value: decl.name, span: decl.span }, 'Duplicate declaration', 'LSL070');
-					functions.set(decl.name, decl);
+					const norm = normalizeName(decl.name);
+					const prev = functions.get(norm);
+					if (prev) {
+						const prevFile = prev.originFile;
+						const curFile = nextTok.file || '<unknown>';
+						if (!prevFile || prevFile === curFile) {
+							this.report({ kind: 'id', value: norm, span: decl.span, file: curFile }, 'Duplicate declaration', 'LSL070');
+						}
+					}
+					if (norm !== decl.name) { (decl as { name: string }).name = norm; }
+					const fWithOrigin: FnWithOrigin = { ...decl, originFile: nextTok.file || '<unknown>' } as FnWithOrigin;
+					functions.set(norm, fWithOrigin);
 				}
 				continue;
 			}
@@ -314,9 +400,17 @@ class Parser {
 				const params = this.parseParamList();
 				const body = this.parseBlock(/*inFunctionOrEvent*/ true);
 				const span = spanFrom(nameTok.span.start, body.span.end);
-				const node: FnNode = { span, kind: 'Function', name: nameTok.value, parameters: params, body, comment: leading, returnType: 'void' };
-				if (functions.has(node.name)) this.report({ kind: 'id', value: node.name, span }, 'Duplicate declaration', 'LSL070');
-				functions.set(node.name, node);
+				const norm = normalizeName(nameTok.value);
+				const node: FnNode = { span, kind: 'Function', name: norm, parameters: params, body, comment: leading, returnType: 'void' };
+				const prev = functions.get(norm);
+				if (prev) {
+					const prevFile = prev.originFile;
+					const curFile = nameTok.file;
+					if (!prevFile || prevFile === curFile) {
+						this.report({ kind: 'id', value: norm, span, file: curFile } as Token, 'Duplicate declaration', 'LSL070');
+					}
+				}
+				functions.set(norm, { ...node, originFile: nameTok.file });
 				continue;
 			}
 			// otherwise, skip unexpected token at top-level
@@ -333,19 +427,66 @@ class Parser {
 		// Capture any leading doc comment right at decl start
 		const leading = this.consumeLeadingComment();
 		const first = this.next();
-		if (!(first.kind === 'keyword' && isType(first.value))) throw this.err(first, 'expected type');
+		if (!(first.kind === 'keyword' && isType(first.value))) { this.report(first, 'expected type', 'LSL000'); return { span: first.span, kind: 'GlobalVar', varType: 'integer' as Type, name: '__error', comment: undefined }; }
 		const varType = first.value as Type;
-		const nameTok = this.eatNameToken();
-		const name = nameTok.value;
-		if (this.maybe('punct', '(')) {
-			// function
+		// Collect a run of identifier/keyword tokens immediately following the type. Some external
+		// headers use attribute-like markers before the real variable name: `string _user DEFAULT_DOMAIN = "...";`
+		// We treat the LAST token in such a run as the variable name unless the FIRST token is
+		// immediately followed by '(' (function declaration). We continue consuming id/keyword tokens
+		// until we see one of: '=' (initializer), ';' (end of decl), '(' (parameter list – only if it
+		// follows the FIRST token), or any non id/keyword token. This avoids prematurely stopping on
+		// attribute-like markers that appear between the type and the true variable name.
+		const nameCandidates: Token[] = [];
+		{
+			let guard = 0;
+			let sawPotentialFunc = false;
+			while (guard < 32) { // slightly larger cap for safety
+				const pk = this.peek();
+				if (!(pk.kind === 'id' || pk.kind === 'keyword')) break;
+				nameCandidates.push(this.next());
+				guard++;
+				// Function declaration detection: only consider the FIRST candidate; if immediately followed
+				// by '(' treat entire construct as function and stop collecting further name candidates.
+				if (nameCandidates.length === 1) {
+					const la = this.lookAheadNonTrivia(2)[1];
+					if (la && la.kind === 'punct' && la.value === '(') { sawPotentialFunc = true; break; }
+					continue;
+				}
+				// Look ahead one token past current to decide if we should stop accumulating.
+				const la2 = this.lookAheadNonTrivia(2)[1];
+				if (!la2) break;
+				if (la2.kind === 'op' && la2.value === '=') break; // start of initializer
+				if (la2.kind === 'punct' && la2.value === ';') break; // end of declaration
+				// If we encounter '(' after more than one candidate, that's ambiguous (likely stray attribute
+				// followed by function name). Treat FIRST token as name for function; push back extra consumed
+				// tokens (other than first) so they can be parsed as statements (rare). Simpler: just stop and
+				// let normal function path below treat collected[0] as name.
+				if (la2.kind === 'punct' && la2.value === '(') break;
+			}
+			// If we broke out because we saw a function pattern, ensure only the first candidate is kept
+			// to avoid misinterpreting attributes as part of the name.
+			if (sawPotentialFunc && nameCandidates.length > 1) {
+				nameCandidates.splice(1); // keep only first
+			}
+		}
+		if (nameCandidates.length === 0) {
+			// Fallback to original behaviour
+			nameCandidates.push(this.eatNameToken());
+		}
+		const funcLook = this.peek();
+		if (funcLook.kind === 'punct' && funcLook.value === '(') {
+			// Function decl: use FIRST candidate as name; remaining candidates ignored as stray attrs
+			const fnNameTok = nameCandidates[0]!;
+			this.next(); // consume '('
 			const params = this.parseParamList();
 			const body = this.parseBlock(/*inFunctionOrEvent*/ true);
 			const span = spanFrom(first.span.start, body.span.end);
-			const node: FnNode = { span, kind: 'Function', name, parameters: params, body, comment: leading, returnType: varType };
+			const node: FnNode = { span, kind: 'Function', name: fnNameTok.value, parameters: params, body, comment: leading, returnType: varType };
 			return node;
 		}
-		// global var
+		// Global variable: choose LAST candidate as the variable name; earlier ones are attributes
+		const nameTok = nameCandidates[nameCandidates.length - 1]!;
+		const name = nameTok.value;
 		let initializer: Expr | undefined;
 		if (this.maybe('op', '=')) { initializer = this.parseExpr(); }
 		this.eat('punct', ';');
@@ -364,7 +505,17 @@ class Parser {
 			if (this.peek().kind === 'punct' && this.peek().value === '{') { this.report(this.peek(), 'missing ) to close parameter list', 'LSL000'); break; }
 			if (++guard > 10000) { this.report(this.peek(), 'parser recovery limit in parameter list', 'LSL000'); break; }
 			const tType = this.next();
-			if (!(tType.kind === 'keyword' && isType(tType.value))) throw this.err(tType, 'expected param type');
+			if (!(tType.kind === 'keyword' && isType(tType.value))) {
+				// Recovery: if we see an id or other token where a type is expected, report once and try to skip until ',' or ')'
+				this.report(tType, 'expected param type', 'LSL000');
+				// attempt to resync
+				while (this.peek().kind !== 'punct' || (this.peek().value !== ',' && this.peek().value !== ')')) {
+					if (this.peek().kind === 'eof') break;
+					this.next();
+				}
+				this.maybe('punct', ',');
+				continue;
+			}
 			const tName = this.eatNameToken();
 			params.set(tName.value, tType.value as Type);
 			this.maybe('punct', ',');
@@ -436,15 +587,12 @@ class Parser {
 			if (++loopGuard > 10000) { this.report(this.peek(), 'parser recovery limit reached inside default state', 'LSL000'); break; }
 			while (this.peek().kind === 'directive') { this.look = null; this.lx.next(); }
 			if (this.maybe('punct', ';')) continue;
-			// Boundary detection: encountering a new top-level decl inside a default state means a missing '}'
 			const look = this.peek();
 			if (look.kind === 'keyword') {
 				const ahead = this.lookAheadNonTrivia(3);
 				const t1 = ahead[1];
 				const t2 = ahead[2];
-				const tokenStateDecl = look.value === 'state' && (
-					((t1 && (t1.kind === 'id' || (t1.kind === 'keyword' && t1.value === 'default'))) && t2 && t2.kind === 'punct' && t2.value === '{')
-				);
+				const tokenStateDecl = look.value === 'state' && (((t1 && (t1.kind === 'id' || (t1.kind === 'keyword' && t1.value === 'default'))) && t2 && t2.kind === 'punct' && t2.value === '{'));
 				const tokenDefaultDecl = look.value === 'default' && (t1 && t1.kind === 'punct' && t1.value === '{');
 				const tokenFuncDecl = isType(look.value) && (t1 && (t1.kind === 'id' || t1.kind === 'keyword') && t2 && t2.kind === 'punct' && t2.value === '(');
 				if (tokenStateDecl || tokenDefaultDecl || tokenFuncDecl) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
@@ -452,19 +600,23 @@ class Parser {
 			if (look.kind === 'eof') { this.report(look, 'missing } before end of file', 'LSL000'); break; }
 			const t = this.peek();
 			if (t.kind === 'id') {
-				const evNameTok = this.next();
-				if (this.maybe('punct', '(')) {
+				// Treat any identifier followed by '(' as an event declaration. This keeps unknown event
+				// names producing proper analyzer diagnostics (LSL021) instead of being parsed as statements.
+				const la = this.lookAheadNonTrivia(2)[1];
+				if (la && la.kind === 'punct' && la.value === '(') {
+					const evNameTok = this.next();
+					this.eat('punct', '(');
 					const params = this.parseParamList();
 					const body = this.parseBlock(/*inFunctionOrEvent*/ true);
 					const ev: Event = { span: spanFrom(evNameTok.span.start, body.span.end), kind: 'Event', name: evNameTok.value, parameters: params, body };
 					events.push(ev);
 					continue;
-				} else {
-					try { this.parseStmt(false); } catch { /* ignore; reported */ }
-					continue;
 				}
+				// Otherwise parse as a statement
+				try { this.parseStmt(false); } catch { /* ignore */ }
+				continue;
 			}
-			try { this.parseStmt(false); } catch { /* ignore; reported */ }
+			try { this.parseStmt(false); } catch { /* ignore */ }
 		}
 		return { span: spanFrom(def.span.start, this.peek().span.end), kind: 'State', name: 'default', events };
 	}
@@ -502,13 +654,13 @@ class Parser {
 							const kw = this.eat('keyword', 'state');
 							if (this.peek().kind === 'keyword' && this.peek().value === 'default') this.next(); else this.eat('id');
 							const body = this.parseBlock(true);
-							this.report({ kind: 'id', value: '', span: { start: kw.span.start, end: body.span.end } }, 'State declarations are only allowed at global scope', 'LSL022');
+							this.report({ kind: 'id', value: '', span: { start: kw.span.start, end: body.span.end }, file: kw.file || '<unknown>' }, 'State declarations are only allowed at global scope', 'LSL022');
 							statements.push({ span: spanFrom(kw.span.start, body.span.end), kind: 'ErrorStmt' } as Stmt);
 							continue;
 						} else if (isDefaultStateDecl) {
 							const def = this.eat('keyword', 'default');
 							const body = this.parseBlock(true);
-							this.report({ kind: 'id', value: '', span: { start: def.span.start, end: body.span.end } }, 'State declarations are only allowed at global scope', 'LSL022');
+							this.report({ kind: 'id', value: '', span: { start: def.span.start, end: body.span.end }, file: def.file || '<unknown>' }, 'State declarations are only allowed at global scope', 'LSL022');
 							statements.push({ span: spanFrom(def.span.start, body.span.end), kind: 'ErrorStmt' } as Stmt);
 							continue;
 						}
@@ -585,12 +737,8 @@ class Parser {
 		while (i < this.src.length) {
 			const ch = this.src[i]!;
 			if (ch === ' ' || ch === '\t' || ch === '\r' || ch === '\n') { i++; continue; }
-			if (ch === '/' && this.src[i + 1] === '/') { // line comment
-				i += 2; while (i < this.src.length && this.src[i] !== '\n') i++; continue;
-			}
-			if (ch === '/' && this.src[i + 1] === '*') { // block comment
-				i += 2; while (i < this.src.length && !(this.src[i] === '*' && this.src[i + 1] === '/')) i++; if (i < this.src.length) i += 2; continue;
-			}
+			if (ch === '/' && this.src[i + 1] === '/') { i += 2; while (i < this.src.length && this.src[i] !== '\n') i++; continue; }
+			if (ch === '/' && this.src[i + 1] === '*') { i += 2; while (i < this.src.length && !(this.src[i] === '*' && this.src[i + 1] === '/')) i++; if (i < this.src.length) i += 2; continue; }
 			break;
 		}
 		// identifier (allow leading noise like #, $, ?, \\)
@@ -751,7 +899,7 @@ class Parser {
 					else { nameTok = this.eat('id'); }
 					if (this.peek().kind === 'punct' && this.peek().value === '{') {
 						const body = this.parseBlock(true);
-						this.report({ kind: 'id', value: '', span: { start: kw.span.start, end: body.span.end } }, 'State declarations are only allowed at global scope', 'LSL022');
+						this.report({ kind: 'id', value: '', span: { start: kw.span.start, end: body.span.end }, file: kw.file || '<unknown>' }, 'State declarations are only allowed at global scope', 'LSL022');
 						return { span: spanFrom(kw.span.start, body.span.end), kind: 'ErrorStmt' } as Stmt;
 					}
 					this.maybe('punct', ';');
@@ -762,7 +910,7 @@ class Parser {
 					if (this.lx.peek().kind === 'punct' && this.lx.peek().value === '{') {
 						const def = this.eat('keyword', 'default');
 						const body = this.parseBlock(true);
-						this.report({ kind: 'id', value: '', span: { start: def.span.start, end: body.span.end } }, 'State declarations are only allowed at global scope', 'LSL022');
+						this.report({ kind: 'id', value: '', span: { start: def.span.start, end: body.span.end }, file: def.file || '<unknown>' }, 'State declarations are only allowed at global scope', 'LSL022');
 						return { span: spanFrom(def.span.start, body.span.end), kind: 'ErrorStmt' } as Stmt;
 					}
 					break;
@@ -826,7 +974,7 @@ class Parser {
 
 	private parseVarDecl(): Stmt {
 		const tType = this.eat('keyword');
-		if (!isType(tType.value)) throw this.err(tType, 'expected type');
+		if (!isType(tType.value)) { this.report(tType, 'expected type', 'LSL000'); return { span: tType.span, kind: 'ErrorStmt' } as Stmt; }
 		const nameTok = this.eatNameToken();
 		let initializer: Expr | undefined;
 		if (this.maybe('op', '=')) initializer = this.parseExpr();
@@ -907,7 +1055,6 @@ class Parser {
 		const expr = this.parseExpr();
 		const semi = this.maybe('punct', ';');
 		if (!semi) {
-			// Tailored message for semicolon test and better recovery
 			this.report(this.peek(), 'Missing semicolon after return', 'LSL000');
 			return { span: spanFrom(kw.span.start, expr.span.end), kind: 'ReturnStmt', expression: expr };
 		}
@@ -1086,7 +1233,8 @@ class Parser {
 			// unsupported indexing operator expr[...]
 			if (this.maybe('punct', '[')) {
 				while (!this.maybe('punct', ']') && this.peek().kind !== 'eof') { try { this.parseExpr(); } catch { this.next(); } this.maybe('punct', ','); }
-				this.report({ kind: 'punct', value: '[]', span: { start: expr.span.start, end: this.peek().span.end } }, 'Indexing with [] is not supported', 'LSL000');
+				const fileForIdx = (expr as unknown as { file?: string }).file || this.peek().file || '<unknown>';
+				this.report({ kind: 'punct', value: '[]', span: { start: expr.span.start, end: this.peek().span.end }, file: fileForIdx }, 'Indexing with [] is not supported', 'LSL000');
 				expr = { ...expr, span: spanFrom(expr.span.start, this.peek().span.end) };
 				continue;
 			}

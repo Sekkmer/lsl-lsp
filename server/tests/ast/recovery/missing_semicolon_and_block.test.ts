@@ -19,7 +19,7 @@ describe('AST parser recovery: missing tokens', () => {
 			'integer f(integer x){',
 			'	integer y = x;',
 			'// missing closing } for function',
-			'state default { event(){ integer z = 3; } }'
+			'default { event(){ integer z = 3; } }'
 		].join('\n');
 		const s = parseScriptFromText(src);
 		// Function and state should still be recognized

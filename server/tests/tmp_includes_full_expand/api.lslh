@@ -1,0 +1,3 @@
+integer GLOB_Y;
+integer utilAdd(integer a, integer b);
+state Included { state_entry() { } }

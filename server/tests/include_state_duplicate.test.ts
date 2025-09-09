@@ -24,10 +24,8 @@ describe('includes: duplicate state names', () => {
 		const code = `#include "${path.basename(header.path)}"\nstate Foo {\n\tstate_entry(){ }\n}`;
 		const doc = docFrom(code, 'file:///proj/dup_state.lsl');
 		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [includeDir] });
-		// One duplicate decl error at the include directive
 		const errors = analysis.diagnostics.filter(d => d.severity === 1);
 		expect(errors.some(d => /Duplicate declaration of state Foo/.test(d.message))).toBe(true);
-		// Sanity: includeTargets recorded
-		expect(pre.includeTargets.length).toBe(1);
+		expect(pre.includeTargets?.length).toBe(1);
 	});
 });

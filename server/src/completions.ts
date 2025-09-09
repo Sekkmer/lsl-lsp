@@ -160,20 +160,6 @@ export function lslCompletions(
 		items.push(typeScored({ label: name, kind: CompletionItemKind.Function, detail: sig }, decl.type || 'any'));
 	}
 
-	// Include-provided globals and functions
-	if (pre && pre.includeSymbols) {
-		for (const [file, info] of pre.includeSymbols) {
-			void file;
-			for (const [gname] of info.globals) {
-				if (!seenNames.has(gname)) items.push(scored({ label: gname, kind: CompletionItemKind.Variable }));
-			}
-			for (const [fname, f] of info.functions) {
-				const sig = `${f.returns} ${fname}(${f.params.map((p: { type: string; name?: string }) => `${p.type}${p.name ? ' ' + p.name : ''}`).join(', ')})`;
-				items.push(typeScored({ label: fname, kind: CompletionItemKind.Function, detail: sig }, f.returns));
-			}
-		}
-	}
-
 	// Macros
 	if (pre) {
 		for (const [mname, mval] of Object.entries(pre.macros || {})) {
@@ -182,11 +168,6 @@ export function lslCompletions(
 		}
 		for (const mname of Object.keys(pre.funcMacros || {})) {
 			items.push(scored({ label: mname, kind: CompletionItemKind.Function }));
-		}
-		// Macros from includes too
-		for (const info of pre.includeSymbols?.values() || []) {
-			for (const [mname] of info.macroObjs) items.push(scored({ label: mname, kind: CompletionItemKind.Constant }));
-			for (const [mname] of info.macroFuncs) items.push(scored({ label: mname, kind: CompletionItemKind.Function }));
 		}
 	}
 

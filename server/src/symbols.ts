@@ -3,7 +3,9 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Analysis } from './analysisTypes';
 import type { Defs } from './defs';
 import type { PreprocResult } from './core/preproc';
-import { resolveSymbolAt } from './resolver';
+import { resolveSymbolAt, scanIncludesForSymbol } from './resolver';
+import path from 'node:path';
+import { URI } from 'vscode-uri';
 
 export function documentSymbols(a: Analysis): DocumentSymbol[] {
 	const states: Map<string, DocumentSymbol> = new Map();
@@ -57,6 +59,27 @@ export function gotoDefinition(doc: TextDocument, pos: Position, a: Analysis, pr
 	if (!target) return null;
 	if ('uri' in target && 'range' in target) {
 		return { uri: target.uri, range: target.range };
+	}
+	// Fallback: if no navigable target (builtin) but symbol present in includes as user prototype
+	if (!('uri' in target) && pre) {
+		// Identify word under cursor and verify it's followed by '('
+		const text = doc.getText();
+		const offset = doc.offsetAt(pos);
+		const isWord = (ch: string) => /[A-Za-z0-9_]/.test(ch);
+		let s = offset; while (s > 0 && isWord(text[s - 1]!)) s--;
+		let e = offset; while (e < text.length && isWord(text[e]!)) e++;
+		if (e > s) {
+			const name = text.slice(s, e);
+			// Only attempt if next non-space char is '(' (likely function call)
+			let k = e; while (k < text.length && /[ \t]/.test(text[k]!)) k++;
+			if (text[k] === '(') {
+				const hit = scanIncludesForSymbol(name, pre);
+				if (hit) {
+					const uri = hit.file.startsWith('file://') ? hit.file : URI.file(path.resolve(hit.file)).toString();
+					return { uri, range: { start: { line: hit.line, character: hit.startChar }, end: { line: hit.line, character: hit.endChar } } };
+				}
+			}
+		}
 	}
 	return null;
 }

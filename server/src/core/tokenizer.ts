@@ -136,7 +136,7 @@ export class Tokenizer {
 	}
 
 	private findLineEnd(pos: number): number { let i = pos; while (i < this.n && this.text[i] !== '\n') i++; return i; }
-	private mk(kind: Token['kind'], value: string, start: number, end: number): Token { return { kind, value, span: { start, end } }; }
+	private mk(kind: Token['kind'], value: string, start: number, end: number): Token { return { kind, value, span: { start, end }, file: '<unknown>' }; }
 }
 
 export function tokenize(text: string): Token[] {

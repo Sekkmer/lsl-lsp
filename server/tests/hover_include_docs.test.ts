@@ -55,4 +55,21 @@ describe('hover: include docs for functions/globals', async () => {
 		expect(md).toContain('integer GLOB_X');
 		expect(md).toMatch(/global in header/);
 	});
+
+	it('shows // comment above included macro', async () => {
+		const header = tmpFile('with_macro_doc.lslh', [
+			'// macro adds stuff',
+			'#define ADDX(x,y) ((x)+(y))',
+			'integer USE = ADDX(1,2);'
+		].join('\n'));
+		const includeDir = path.dirname(await header.write());
+		const code = `#include "${path.basename(header.path)}"\ninteger z = ADDX(3,4);\n`;
+		const doc = docFrom(code, 'file:///proj/hover_inc_macro.lsl');
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [includeDir] });
+		const hoverPos = doc.positionAt(code.indexOf('ADDX(3') + 2);
+		const hv = lslHover(doc, { position: hoverPos }, defs, analysis, pre);
+		expect(hv).toBeTruthy();
+		const md = hoverToString(hv!);
+		expect(md).toMatch(/macro adds stuff/);
+	});
 });

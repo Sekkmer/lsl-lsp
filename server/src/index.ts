@@ -21,32 +21,26 @@ import {
 	Definition,
 	LocationLink,
 	FileChangeType,
-} from 'vscode-languageserver/node';
-// Enable proper TS stack traces with source maps in Node
-import 'source-map-support/register.js';
-import { TextDocument } from 'vscode-languageserver-textdocument';
-import { loadDefs, Defs } from './defs';
-import type { PreprocResult } from './core/preproc';
-import { preprocessForAst } from './core/pipeline';
-import { lex } from './lexer';
-import { Analysis, LSL_DIAGCODES } from './analysisTypes';
-import { semanticTokensLegend, buildSemanticTokens } from './semtok';
-import { lslCompletions, resolveCompletion, lslSignatureHelp } from './completions';
-import { lslHover } from './hover';
-import { formatDocumentEdits, type FormatSettings, formatRangeEdits, detectIndent } from './format';
-import { documentSymbols, gotoDefinition } from './symbols';
-import {
 	DocumentLink, DocumentLinkParams, DocumentFormattingParams, TextEdit, CodeAction, CodeActionKind, Range,
 	DocumentRangeFormattingParams, DocumentOnTypeFormattingParams
 } from 'vscode-languageserver/node';
+import 'source-map-support/register.js';
+import { TextDocument } from 'vscode-languageserver-textdocument';
+import { documentSymbols, gotoDefinition } from './symbols';
 import { URI } from 'vscode-uri';
 import { prepareRename as navPrepareRename, computeRenameEdits, findAllReferences } from './navigation';
 import { parseScriptFromText } from './ast/parser';
 import { analyzeAst } from './ast/analyze';
 import { isType } from './ast';
-import { preprocessMacros } from './core/pipeline';
-import fs from 'node:fs';
-import { parseIncludeSymbols, clearIncludeSymbolsCache } from './includeSymbols';
+import { Defs, loadDefs } from './defs';
+import type { PreprocResult } from './core/preproc';
+import { Analysis, LSL_DIAGCODES } from './analysisTypes';
+import { lex } from './lexer';
+import { semanticTokensLegend, buildSemanticTokens } from './semtok';
+import { lslCompletions, resolveCompletion, lslSignatureHelp } from './completions';
+import { lslHover } from './hover';
+import { formatDocumentEdits, formatRangeEdits, detectIndent, type FormatSettings } from './format';
+import { preprocessForAst } from './core/pipeline';
 
 const connection: Connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -54,6 +48,8 @@ const documents = new TextDocuments(TextDocument);
 let defs: Defs | null = null;
 // Persist workspace root paths (filesystem paths) detected at initialize time
 let workspaceRootPaths: string[] = [];
+// Baseline macros captured at initialize / config change; used to seed each new document's preprocessor.
+let baselineMacros: Record<string, string | number | boolean> = {};
 const settings = {
 	definitionsPath: '',
 	includePaths: [] as string[],
@@ -145,8 +141,12 @@ function djb2Hash(str: string): number {
 	for (let i = 0; i < str.length; i++) h = (((h << 5) + h) ^ str.charCodeAt(i)) >>> 0;
 	return h >>> 0;
 }
-function computeConfigHash(macros: Record<string, string | number | boolean>, includePaths: string[]): number {
-	const s = stableStringify({ macros, includePaths });
+function computeConfigHash(macros: Record<string, string | number | boolean>, includePaths: string[], docUri?: string): number {
+	// Include docUri so that per-file guard patterns (e.g. #ifndef FOO / #define FOO at top)
+	// never reuse another file's cached macro tables/disabled ranges. Without this a file opened
+	// after another sharing the same guards could see its body disabled if the previous file
+	// defined the guard macro. (User report: "seeing macros defined at the first line".)
+	const s = stableStringify({ macros, includePaths, doc: docUri || '' });
 	return djb2Hash(s);
 }
 
@@ -155,63 +155,26 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 	const key = doc.uri;
 	const currentVersion = getDocVersion(doc);
 	const hit = pipelineCache.get(key);
-	const currentHash = computeConfigHash(settings.macros, settings.includePaths);
+	const currentHash = computeConfigHash(settings.macros, settings.includePaths, doc.uri);
 	if (hit && hit.version === currentVersion && hit.configHash === currentHash) return hit;
 
-	// Run macros-only prepass to cheaply compute includes and avoid unnecessary reindex work
-	let macrosOnlyIncludes: string[] = [];
-	try {
-		const fromPath = URI.parse(doc.uri).fsPath;
-		const mr = preprocessMacros(doc.getText(), { includePaths: settings.includePaths, fromPath, defines: settings.macros });
-		macrosOnlyIncludes = mr.includes || [];
-		if (!arraysShallowEqual(hit?.macrosOnlyIncludes, macrosOnlyIncludes)) {
-			indexIncludesList(key, macrosOnlyIncludes);
-		}
-	} catch {
-		// ignore macros-only failures; fall back to legacy indexing later
-	}
-
-	// Use new tokenizer+macro pipeline for disabled ranges/macros/includes; keep legacy PreprocResult shape for analyzeAst compatibility
-	const full = preprocessForAst(doc.getText(), { includePaths: settings.includePaths, fromPath: URI.parse(doc.uri).fsPath, defines: settings.macros });
+	// Single unified preprocessing run (new pipeline)
+	const full = preprocessForAst(doc.getText(), { includePaths: settings.includePaths, fromPath: URI.parse(doc.uri).fsPath, defines: { ...baselineMacros } });
+	const macrosOnlyIncludes: string[] = full.includes || [];
+	if (!arraysShallowEqual(hit?.macrosOnlyIncludes, macrosOnlyIncludes)) indexIncludesList(key, macrosOnlyIncludes);
 	const pre: PreprocResult = {
 		disabledRanges: full.disabledRanges,
 		macros: full.macros,
 		funcMacros: full.funcMacros,
 		includes: full.includes,
-		includeSymbols: new Map(),
 		includeTargets: full.includeTargets,
 		missingIncludes: full.missingIncludes,
 		preprocDiagnostics: full.preprocDiagnostics,
 		diagDirectives: full.diagDirectives,
 		conditionalGroups: full.conditionalGroups,
 	};
-	// Populate includeSymbols by parsing resolved include files (best-effort)
-	try {
-		// Recursively crawl includes using macro-aware processor to gather symbols for direct and transitive headers
-		const includePaths = settings.includePaths || [];
-		const roots: string[] = [];
-		if (full.includeTargets && full.includeTargets.length > 0) {
-			for (const it of full.includeTargets) { if (it.resolved) roots.push(it.resolved); }
-		} else if (full.includes && full.includes.length > 0) {
-			roots.push(...full.includes);
-		}
-		const queue: string[] = [...roots];
-		const seen = new Set<string>();
-		while (queue.length) {
-			const file = queue.shift()!;
-			if (!file || seen.has(file)) continue;
-			seen.add(file);
-			try {
-				const text = fs.readFileSync(file, 'utf8');
-				const r = preprocessMacros(text, { includePaths, fromPath: file, defines: {} });
-				const info = parseIncludeSymbols(file);
-				if (info) pre.includeSymbols!.set(file, info);
-				for (const dep of r.includes || []) { if (!seen.has(dep)) queue.push(dep); }
-			} catch { /* ignore individual include failures */ }
-		}
-	} catch { /* ignore include symbol extraction errors */ }
 	const tokens = lex(doc, pre.disabledRanges);
-	const ast: import('./ast').Script = parseScriptFromText(doc.getText(), doc.uri, { macros: settings.macros, includePaths: settings.includePaths });
+	const ast: import('./ast').Script = parseScriptFromText(doc.getText(), doc.uri, { macros: { ...baselineMacros }, includePaths: settings.includePaths, pre: full });
 	const analysis: Analysis = analyzeAst(doc, ast, defs, pre);
 	const entry: PipelineCache = { version: currentVersion, pre, tokens, analysis, ast, macrosOnlyIncludes, configHash: currentHash };
 	pipelineCache.set(key, entry);
@@ -220,7 +183,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 	return entry;
 }
 
-// (no standalone helpers; we reuse preprocessMacros for traversal inside getPipeline)
+// (macros-only legacy prepass removed – unified preprocessor supplies includes)
 
 // Revalidate all open documents after cache-clearing or configuration changes
 async function revalidateAllOpenDocs() {
@@ -237,12 +200,12 @@ async function revalidateAllOpenDocs() {
 
 connection.onInitialize(async (params: InitializeParams): Promise<InitializeResult> => {
 	// Ensure include symbols cache starts clean to avoid rare staleness on rapid restarts
-	try { clearIncludeSymbolsCache(); } catch { /* ignore */ }
 	// Read initializationOptions
 	const initOpts = (params.initializationOptions || {});
 	settings.definitionsPath = initOpts.definitionsPath || '';
 	settings.includePaths = initOpts.includePaths || [];
 	settings.macros = initOpts.macros || {};
+	baselineMacros = { ...settings.macros }; // capture baseline after init options
 	settings.logFile = initOpts.logFile || '';
 	settings.debug = !!initOpts.debug;
 
@@ -325,7 +288,6 @@ connection.onInitialized(() => {
 	// Clear caches on workspace folder changes (e.g., reload) and revalidate
 	try {
 		connection.workspace.onDidChangeWorkspaceFolders(async () => {
-			try { clearIncludeSymbolsCache(); } catch { /* ignore */ }
 			pipelineCache.clear();
 			includeToDocs.clear();
 			// Refresh workspace roots and merge into includePaths
@@ -367,6 +329,7 @@ connection.onDidChangeConfiguration(async change => {
 		settings.includePaths = merged.filter(p => (p && !seen.has(p) && (seen.add(p), true)));
 	}
 	settings.macros = newSettings.macros ?? settings.macros;
+	baselineMacros = { ...settings.macros }; // refresh baseline on config change
 	settings.enableSemanticTokens = newSettings.enableSemanticTokens ?? settings.enableSemanticTokens;
 	if (newSettings.format) {
 		settings.format.enabled = newSettings.format.enabled ?? settings.format.enabled;
@@ -381,7 +344,6 @@ connection.onDidChangeConfiguration(async change => {
 		return false;
 	})();
 	if (changed) {
-		try { clearIncludeSymbolsCache(); } catch { /* ignore */ }
 		pipelineCache.clear();
 		includeToDocs.clear();
 		await revalidateAllOpenDocs();
@@ -636,7 +598,6 @@ connection.onShutdown(async () => {
 		// Clear caches and detach include index to allow event loop to drain
 		pipelineCache.clear();
 		includeToDocs.clear();
-		try { clearIncludeSymbolsCache(); } catch { /* ignore */ }
 	} catch {
 		// ignore
 	}

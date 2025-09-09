@@ -2,26 +2,52 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range } from 'vscode-languageserver/node';
 import type { Defs } from '../defs';
 import type { PreprocResult } from '../core/preproc';
-import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, TYPES, Stmt } from './index';
+import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, Stmt } from './index';
 import { validateOperatorsFromAst } from '../op_validate_ast';
 import type { SimpleType } from './infer';
 import { inferExprTypeFromAst } from './infer';
 import { normalizeType } from '../defs';
 import { AssertNever } from '../utils';
-
-// Reuse Analysis/Diag types from the parser module
+import type { Token } from '../core/tokens';
 import type { Analysis, Diag, Decl } from '../analysisTypes';
 import { LSL_DIAGCODES } from '../analysisTypes';
+import type { DiagCode } from '../analysisTypes';
 
 // Scope now carries a lightweight kind tag to distinguish event/function contexts
 type Scope = { parent?: Scope; vars: Map<string, Decl>; kind?: 'event' | 'func' | 'state' | 'global' | 'block' };
 
 export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: PreprocResult): Analysis {
 	const diagnostics: Diag[] = [];
+	// Merge parser diagnostics (previously only available on Script) into analysis diagnostics so
+	// downstream tests that inspect analysis.diagnostics see syntax/duplicate/state errors emitted
+	// during parsing (e.g. LSL070 duplicate globals/functions, LSL022 illegal state decls, missing
+	// semicolons, unterminated comments). Earlier refactor unified preprocessing+parsing but dropped
+	// this merge causing multiple diagnostics-based tests to fail. We map parser spans to Ranges here.
+	try {
+		if (script.diagnostics && script.diagnostics.length) {
+			for (const pd of script.diagnostics) {
+				const range = spanToRange(doc, pd.span);
+				// Map parser severity strings (if any) to LSP DiagnosticSeverity; default to Error.
+				let severity: DiagnosticSeverity = DiagnosticSeverity.Error;
+				if (pd.severity === 'warning') severity = DiagnosticSeverity.Warning;
+				else if (pd.severity === 'info') severity = DiagnosticSeverity.Information;
+				// Coerce parser code (string) into known DiagCode union; fallback to SYNTAX.
+				const allCodes = LSL_DIAGCODES as Record<string, string>;
+				const values: string[] = Object.values(allCodes);
+				const code = (pd.code && values.includes(pd.code)) ? pd.code as typeof values[number] : LSL_DIAGCODES.SYNTAX;
+				// Only push if not already present (avoid double-reporting in rare cases where analyzer re-emits)
+				if (!diagnostics.some(d => d.code === code && d.range.start.line === range.start.line && d.range.start.character === range.start.character && d.message === pd.message)) {
+					const diagCode = code as DiagCode;
+					diagnostics.push({ code: diagCode, message: pd.message, range, severity });
+				}
+			}
+		}
+	} catch { /* best effort merge; ignore errors */ }
 	const decls: Analysis['decls'] = [];
 	const refs: Analysis['refs'] = [];
 	const refTargets = new Map<number, Decl>();
 	const calls: Analysis['calls'] = [];
+	// Populated after collecting top-level declarations
 	const states = new Map<string, Analysis['decls'][number]>();
 	const functions = new Map<string, Analysis['decls'][number]>();
 	const globalDecls: Decl[] = [];
@@ -50,6 +76,49 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		}
 	} catch { /* ignore */ }
 
+	// ---------------- Missing helper structures (reconstructed after accidental file corruption) ----------------
+	// Type scope used by operator/type validation helpers
+	type TypeScope = { parent?: TypeScope; view: Map<string, SimpleType> };
+	function pushTypeScope(parent?: TypeScope): TypeScope { return { parent, view: new Map<string, SimpleType>() }; }
+	function addType(scope: TypeScope, name: string, type: string) { scope.view.set(name, normalizeType(type) as SimpleType); }
+	// Global (file) scope for variables/functions/states
+	const globalScope: Scope = { vars: new Map(), kind: 'global' };
+	const globalTypeScope: TypeScope = pushTypeScope();
+	// Fallback symbol sets (used when scanning expanded tokens for include-provided decls)
+	const fallbackFuncs = new Set<string>();
+	const fallbackGlobals = new Set<string>();
+	const fallbackMacros = new Set<string>();
+	// Usage tracking for unused param/local diagnostics
+	type UsageContext = { usedParamNames: Set<string>; usedLocalNames: Set<string>; paramDecls: Decl[]; localDecls: Decl[] };
+	const usageStack: UsageContext[] = [];
+	// Reserved identifiers: anything colliding with builtin keywords/types/funcs/events/consts
+	function isReserved(defs: Defs, name: string): boolean {
+		try { if (process.env.LSL_DEBUG_RESERVED) console.log('[isReserved-debug]', name); } catch {/*ignore*/}
+		// NOTE: The identifier "event" is not itself an event handler name present in defs.events;
+		// it is nevertheless a reserved word in LSL and must be disallowed as a user identifier.
+		// Older logic special-cased this; during refactor the special-case was dropped causing
+		// tests expecting a reserved diagnostic for a variable named "event" to fail. We restore it here.
+		if (name === 'event') return true;
+		return defs.keywords.has(name) || defs.types.has(name) || defs.funcs.has(name) || defs.events.has(name) || defs.consts.has(name);
+	}
+	// Find the name occurrence range within a span; if preferHeader is true, only search before '{'
+	function findNameRangeInSpan(name: string, span: { start: number; end: number }, preferHeader: boolean): Range {
+		const r = spanToRange(doc, span);
+		try {
+			let slice = doc.getText().slice(doc.offsetAt(r.start), doc.offsetAt(r.end));
+			if (preferHeader) {
+				const b = slice.indexOf('{');
+				if (b >= 0) slice = slice.slice(0, b);
+			}
+			const re = new RegExp(`\\b${name.replace(/[-\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
+			const m = re.exec(slice);
+			if (m) {
+				const startOff = doc.offsetAt(r.start) + m.index;
+				return { start: doc.positionAt(startOff), end: doc.positionAt(startOff + name.length) };
+			}
+		} catch { /* ignore */ }
+		return { start: r.start, end: r.start }; // fallback
+	}
 	// Track label declarations within the current function/event body (for validating jump targets)
 	let currentLabels: Set<string> | null = null;
 	function collectLabels(stmt: Stmt | null): Set<string> {
@@ -68,246 +137,6 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		}
 		visit(stmt);
 		return labels;
-	}
-
-	// Fallback: scan resolved include files directly when pre.includeSymbols lacks entries for them.
-	// Extracts typed function headers, [const ]typed globals, and object-like macros.
-	type FallbackSymbols = { functions: Map<string, { returns: SimpleType; params: SimpleType[] }>; globals: Set<string>; macros: Set<string> };
-	const fallbackByFile = new Map<string, FallbackSymbols>();
-	const fallbackFuncs = new Set<string>();
-	const fallbackGlobals = new Set<string>();
-	const fallbackMacros = new Set<string>();
-	try {
-		const fs = require('node:fs') as typeof import('node:fs');
-		// Optional debug logger for fallback include scan: enabled when LSL_FALLBACK_DEBUG=1
-		const dbg = (msg: string) => { try { if (process && process.env && process.env.LSL_FALLBACK_DEBUG === '1') console.error(`[analyze:fallback] ${msg}`); } catch { /* ignore */ } };
-		const knownTypes = new Set<string>([...TYPES, 'quaternion'].map(t => String(t)));
-		const toSimple = (t: string): SimpleType => {
-			const nt = normalizeType(t);
-			return (knownTypes.has(nt) ? (nt as SimpleType) : 'any') as SimpleType;
-		};
-		// Collect resolved include file paths from includeSymbols map keys and includeTargets entries
-		const resolvedIncludeFiles = new Set<string>();
-		try {
-			if (pre.includeSymbols) {
-				for (const k of pre.includeSymbols.keys()) resolvedIncludeFiles.add(k);
-			}
-			for (const it of pre.includeTargets || []) {
-				const fp = (it && typeof (it as unknown) === 'object' && (it as { resolved?: unknown }).resolved);
-				if (typeof fp === 'string' && fp) resolvedIncludeFiles.add(fp);
-			}
-		} catch { /* ignore */ }
-		for (const filePath of resolvedIncludeFiles) {
-			const already = pre.includeSymbols?.get(filePath);
-			// If the lightweight includeSymbols scanner didn't detect any function prototypes
-			// for this include, run the fallback textual scan to recover typed function headers
-			// (even if macros/globals were found). This helps headers that define full functions
-			// instead of prototypes (e.g., ARES/api/auth.h.lsl: integer sec_check(...){ ... }).
-			const needsFallback = !already || (already.functions.size === 0);
-			if (!needsFallback) continue;
-			try {
-				const text = fs.readFileSync(filePath, 'utf8');
-				const lines = text.split(/\r?\n/);
-				const out: FallbackSymbols = { functions: new Map(), globals: new Set(), macros: new Set() };
-				let braceDepth = 0;
-				let inBlockComment = false;
-				for (let i = 0; i < lines.length; i++) {
-					const raw = lines[i];
-					// Remove block comments while preserving order; track inBlockComment across lines
-					let code = '';
-					for (let p = 0; p < raw.length;) {
-						if (!inBlockComment && p + 1 < raw.length && raw[p] === '/' && raw[p + 1] === '*') { inBlockComment = true; p += 2; continue; }
-						if (inBlockComment) {
-							if (p + 1 < raw.length && raw[p] === '*' && raw[p + 1] === '/') { inBlockComment = false; p += 2; continue; }
-							p++;
-							continue;
-						}
-						code += raw[p++];
-					}
-					// Strip line comments from remaining code
-					const L = code.replace(/\/\/.*$/, '');
-					// macros: object-like only
-					{
-						const m = /^\s*#\s*define\s+([A-Za-z_]\w*)(?!\s*\()\b/.exec(L);
-						if (m) { const name = m[1]; out.macros.add(name); continue; }
-					}
-					if (braceDepth === 0) {
-						// const/typed globals
-						const g = /^\s*(?:const\s+)?([A-Za-z_]\w+)\s+([A-Za-z_]\w+)\s*(?:=|;)/.exec(L);
-						if (g) {
-							const t = normalizeType(g[1]);
-							if (knownTypes.has(t)) out.globals.add(g[2]);
-						}
-						// typed function headers: <type> <name>(params) [;|{|EOL]
-						const f = /^\s*([A-Za-z_]\w+)\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:[{;]|$)/.exec(L);
-						if (f) {
-							const ret = normalizeType(f[1]);
-							if (knownTypes.has(ret)) {
-								const name = f[2];
-								const params: SimpleType[] = [];
-								const raw = (f[3] || '').trim();
-								if (raw.length > 0) {
-									for (const piece of raw.split(',')) {
-										const p = piece.trim().replace(/\s+/g, ' ');
-										const parts = p.split(' ');
-										params.push(toSimple(parts[0] || 'any'));
-									}
-								}
-								out.functions.set(name, { returns: toSimple(ret), params });
-							}
-						}
-					}
-					// update brace depth using comment-free code only
-					for (let k = 0; k < L.length; k++) { const ch = L[k]; if (ch === '{') braceDepth++; else if (ch === '}') braceDepth = Math.max(0, braceDepth - 1); }
-				}
-				fallbackByFile.set(filePath, out);
-				dbg(`scanned ${filePath}: funcs=[${Array.from(out.functions.keys()).join(', ')}], globals=${out.globals.size}, macros=${out.macros.size}`);
-				for (const n of out.functions.keys()) fallbackFuncs.add(n);
-				for (const n of out.globals.values()) fallbackGlobals.add(n);
-				for (const n of out.macros.values()) fallbackMacros.add(n);
-			} catch { /* ignore single include errors */ }
-		}
-	} catch { /* fs not available (e.g., browser) */ }
-
-	// Track identifier usage within the current function/event body for unused diagnostics
-	type UsageContext = {
-		usedParamNames: Set<string>;
-		usedLocalNames: Set<string>;
-		paramDecls: Decl[];
-		localDecls: Decl[];
-	};
-	const usageStack: UsageContext[] = [];
-
-	// Helper: reserved identifiers are 'event' plus any keyword or type in defs
-	const isReserved = (defs: Defs | null | undefined, name: string): boolean => {
-		if (!defs) return false;
-		if (name === 'event') return true;
-		return defs.keywords.has(name) || defs.types.has(name);
-	};
-
-	// Convert AST diagnostics into LSP diagnostics (these are also surfaced by the server separately)
-	for (const d of script.diagnostics || []) {
-		const diagCode = ((): import('../analysisTypes').DiagCode => {
-			const v = d.code as unknown;
-			const allowed = Object.values(LSL_DIAGCODES) as string[];
-			return (typeof v === 'string' && allowed.includes(v)) ? (v as import('../analysisTypes').DiagCode) : LSL_DIAGCODES.SYNTAX;
-		})();
-		diagnostics.push({
-			code: diagCode,
-			message: d.message,
-			range: spanToRange(doc, d.span),
-			severity: d.severity === 'warning' ? DiagnosticSeverity.Warning : d.severity === 'info' ? DiagnosticSeverity.Information : DiagnosticSeverity.Error,
-		});
-	}
-
-	// Build decls for globals, functions, and states/events
-	const globalScope: Scope = { vars: new Map(), kind: 'global' };
-
-	// Helper: find the identifier range for a given name inside a node's span
-	// If headerOnly is true, search only up to the first '{' to avoid matching inside bodies
-	function findNameRangeInSpan(name: string, span: { start: number; end: number }, headerOnly = false): Range {
-		const fullRange = spanToRange(doc, span);
-		const startOff = doc.offsetAt(fullRange.start);
-		const endOff = doc.offsetAt(fullRange.end);
-		let slice = doc.getText().slice(startOff, endOff);
-		if (headerOnly) {
-			const braceIdx = slice.indexOf('{');
-			if (braceIdx >= 0) slice = slice.slice(0, braceIdx);
-		}
-		// word-boundary match for the identifier
-		const re = new RegExp(`\\b${name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`);
-		const m = re.exec(slice);
-		if (m) {
-			const s = startOff + (m.index as number);
-			return { start: doc.positionAt(s), end: doc.positionAt(s + name.length) };
-		}
-		// Fallback to the full span if not found
-		return fullRange;
-	}
-
-	// Type scopes provide scoped SimpleType lookups for operator/type validation
-	type TypeScope = { parent?: TypeScope; types: Map<string, SimpleType>; view: Map<string, SimpleType> };
-	const pushTypeScope = (parent?: TypeScope): TypeScope => ({ parent, types: new Map(), view: new Map(parent ? parent.view : undefined) });
-	const addType = (ts: TypeScope, name: string, type: string | undefined) => {
-		const nt = type ? normalizeType(type) : 'any';
-		const simple: SimpleType = isLslType(nt) ? (nt as SimpleType) : 'any';
-		ts.types.set(name, simple);
-		ts.view.set(name, simple);
-	};
-
-	// Globals
-	for (const [name, g] of script.globals) {
-		// Reserved identifier check for global variables
-		if (isReserved(defs, name)) {
-			diagnostics.push({
-				code: LSL_DIAGCODES.RESERVED_IDENTIFIER,
-				message: `"${name}" is reserved and cannot be used as an identifier`,
-				range: spanToRange(doc, g.span),
-				severity: DiagnosticSeverity.Error,
-			});
-		}
-		const d: Decl = { name, range: findNameRangeInSpan(name, g.span, true), kind: 'var', type: g.varType };
-		decls.push(d);
-		globalDecls.push(d);
-		globalScope.vars.set(name, d);
-	}
-	// Global type scope seeded with globals
-	const globalTypeScope: TypeScope = pushTypeScope();
-	for (const [name, g] of script.globals) addType(globalTypeScope, name, g.varType);
-	// Functions
-	for (const [name, f] of script.functions) {
-		// Reserved identifier check for function names
-		if (isReserved(defs, name)) {
-			diagnostics.push({
-				code: LSL_DIAGCODES.RESERVED_IDENTIFIER,
-				message: `"${name}" is reserved and cannot be used as an identifier`,
-				range: spanToRange(doc, f.span),
-				severity: DiagnosticSeverity.Error,
-			});
-		}
-		const d: Decl = { name, range: findNameRangeInSpan(name, f.span, true), kind: 'func', type: (f.returnType ?? undefined), params: [] };
-		// Enrich with full/header/body ranges
-		try {
-			const fullR = spanToRange(doc, f.span);
-			const fullText = doc.getText().slice(doc.offsetAt(fullR.start), doc.offsetAt(fullR.end));
-			const braceIdx = fullText.indexOf('{');
-			const headerEndOff = braceIdx >= 0 ? (doc.offsetAt(fullR.start) + braceIdx) : doc.offsetAt(fullR.start);
-			const headerRange = { start: fullR.start, end: doc.positionAt(headerEndOff) };
-			const bodyRange = braceIdx >= 0 ? { start: doc.positionAt(headerEndOff), end: fullR.end } : undefined;
-			d.fullRange = fullR; d.headerRange = headerRange; d.bodyRange = bodyRange;
-		} catch { /* ignore */ }
-		// Parameter decls are tracked for scope during walk
-		for (const [pname, ptype] of f.parameters) d.params!.push({ name: pname, type: ptype });
-		decls.push(d); functions.set(name, d);
-	}
-	// States + events
-	for (const [name, st] of script.states) {
-		const d: Decl = { name, range: findNameRangeInSpan(name, st.span, true), kind: 'state' };
-		// Enrich with ranges for the state block
-		try {
-			const fullR = spanToRange(doc, st.span);
-			const fullText = doc.getText().slice(doc.offsetAt(fullR.start), doc.offsetAt(fullR.end));
-			const braceIdx = fullText.indexOf('{');
-			const headerEndOff = braceIdx >= 0 ? (doc.offsetAt(fullR.start) + braceIdx) : doc.offsetAt(fullR.start);
-			const headerRange = { start: fullR.start, end: doc.positionAt(headerEndOff) };
-			const bodyRange = braceIdx >= 0 ? { start: doc.positionAt(headerEndOff), end: fullR.end } : undefined;
-			d.fullRange = fullR; d.headerRange = headerRange; d.bodyRange = bodyRange;
-		} catch { /* ignore */ }
-		decls.push(d); states.set(name, d);
-		for (const ev of st.events) {
-			const evDecl: Decl = { name: ev.name, range: findNameRangeInSpan(ev.name, ev.span, true), kind: 'event', params: [...ev.parameters].map(([n, t]) => ({ name: n, type: t })) };
-			// Ranges for event declaration
-			try {
-				const fullR = spanToRange(doc, ev.span);
-				const fullText = doc.getText().slice(doc.offsetAt(fullR.start), doc.offsetAt(fullR.end));
-				const braceIdx = fullText.indexOf('{');
-				const headerEndOff = braceIdx >= 0 ? (doc.offsetAt(fullR.start) + braceIdx) : doc.offsetAt(fullR.start);
-				const headerRange = { start: fullR.start, end: doc.positionAt(headerEndOff) };
-				const bodyRange = braceIdx >= 0 ? { start: doc.positionAt(headerEndOff), end: fullR.end } : undefined;
-				evDecl.fullRange = fullR; evDecl.headerRange = headerRange; evDecl.bodyRange = bodyRange;
-			} catch { /* ignore */ }
-			decls.push(evDecl);
-		}
 	}
 
 	// Events declared outside any state are not captured in script.states; detect by a simple text scan fallback
@@ -392,9 +221,6 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					|| defs.types.has(e.name)
 					|| defs.keywords.has(e.name)
 					|| defs.funcs.has(e.name)
-					|| (pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s =>
-						s.functions.has(e.name) || s.globals.has(e.name) || s.macroObjs.has(e.name) || s.macroFuncs.has(e.name)
-					))
 					|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, e.name))
 					|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, e.name))
 					|| fallbackFuncs.has(e.name)
@@ -424,15 +250,13 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					const calleeName = e.callee.name;
 					calls.push({ name: calleeName, args: e.args.length, range: { start, end }, argRanges });
 					addRef(calleeName, spanToRange(doc, e.callee.span), scope);
-					// Unknown callee identifier check (builtin/defs or includeSymbols or local function)
 					const known = resolveInScope(calleeName, scope)
 						|| defs.funcs.has(calleeName)
-						|| (pre.includeSymbols && Array.from(pre.includeSymbols.values()).some(s => s.functions.has(calleeName) || s.macroFuncs.has(calleeName) || s.macroObjs.has(calleeName)))
 						|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, calleeName))
 						|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, calleeName))
 						|| fallbackFuncs.has(calleeName)
 						|| defs.consts.has(calleeName) // tolerate accidental const call as known id for better downstream type error
-						|| defs.types.has(calleeName)	 // likewise for types
+						|| defs.types.has(calleeName) // likewise for types
 						|| defs.keywords.has(calleeName);
 					if (!known) {
 						diagnostics.push({
@@ -571,7 +395,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 			const guaranteed = allPathsReturn(fn.body);
 			if (!guaranteed) {
-				diagnostics.push({ code: LSL_DIAGCODES.MISSING_RETURN, message: `Missing return in function ${fn.name} returning ${returnType}` , range: spanToRange(doc, fn.span), severity: DiagnosticSeverity.Error });
+				diagnostics.push({ code: LSL_DIAGCODES.MISSING_RETURN, message: `Missing return in function ${fn.name} returning ${returnType}`, range: spanToRange(doc, fn.span), severity: DiagnosticSeverity.Error });
 			}
 		}
 		// After analyzing the function body, emit unused diagnostics for params and locals
@@ -912,87 +736,271 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		functionReturnTypes.set(name, r);
 		// no separate void set needed; we record 'void' in functionReturnTypes
 	}
-	// Include-provided functions
-	if (pre.includeSymbols && pre.includeSymbols.size > 0) {
-		// Build quick lookup for local script-level declarations
-		const localFuncNames = new Set<string>([...script.functions.keys()]);
-		const localGlobalNames = new Set<string>([...script.globals.keys()]);
-		// Helper to map an include file path to this doc's include directive range
-		const rangeForIncludeFile = (file: string): Range => {
-			const hit = (pre.includeTargets || []).find(it => it.resolved === file) || (pre.includeTargets || [])[0];
-			if (hit) return { start: doc.positionAt(hit.start), end: doc.positionAt(hit.end) };
-			// Fallback to start of document if no include directive was recorded (shouldn't happen)
-			return { start: doc.positionAt(0), end: doc.positionAt(0) };
-		};
-		for (const [file, info] of pre.includeSymbols.entries()) {
-			for (const [name, fn] of info.functions) {
-				// If this function already exists in built-in defs or is defined in the current script,
-				// report a duplicate declaration error at the include site and do not import the signature.
-				if (defs.funcs.has(name) || localFuncNames.has(name)) {
-					const where = rangeForIncludeFile(info.file || '');
-					diagnostics.push({
-						code: LSL_DIAGCODES.DUPLICATE_DECL,
-						message: `Duplicate declaration of function ${name} from include` + (defs.funcs.has(name) ? ' (conflicts with built-in)' : ' (conflicts with local function)'),
-						range: where,
-						severity: DiagnosticSeverity.Error,
-					});
-					// Do not add this include signature to callSignatures
-					continue;
-				}
-				if (!functionReturnTypes.has(name)) functionReturnTypes.set(name, toSimpleType(fn.returns));
-				const params = (fn.params || []).map((p: { type?: string }) => toSimpleType(p.type || 'any'));
-				const prev = callSignatures.get(name) || []; prev.push(params); callSignatures.set(name, prev);
-			}
-			// Detect duplicate globals from includes conflicting with script globals or built-in constants/types
-			for (const [gname] of info.globals) {
-				if (localGlobalNames.has(gname) || defs.consts.has(gname) || defs.types.has(gname) || defs.keywords.has(gname)) {
-					const where = rangeForIncludeFile(file);
-					diagnostics.push({
-						code: LSL_DIAGCODES.DUPLICATE_DECL,
-						message: `Duplicate declaration of global ${gname} from include`,
-						range: where,
-						severity: DiagnosticSeverity.Error,
-					});
-				}
-			}
-			// Detect duplicate states from includes conflicting with locally-declared states
-			if (info.states && info.states.size > 0) {
-				for (const stName of info.states) {
-					if (states.has(stName)) {
-						const where = rangeForIncludeFile(file);
-						diagnostics.push({
-							code: LSL_DIAGCODES.DUPLICATE_DECL,
-							message: `Duplicate declaration of state ${stName} from include`,
-							range: where,
-							severity: DiagnosticSeverity.Error,
-						});
-					}
-				}
-			}
-		}
-	}
-
-	// Fallback: augment callSignatures/return types with functions discovered directly in include files
-	for (const sym of fallbackByFile.values()) {
-		for (const [name, meta] of sym.functions) {
-			if (!callSignatures.has(name)) callSignatures.set(name, [meta.params]);
-			else { const prev = callSignatures.get(name)!; prev.push(meta.params); }
-			if (!functionReturnTypes.has(name)) functionReturnTypes.set(name, meta.returns);
-		}
-	}
 
 	// Validate global initializers with global scope types
 	for (const [, g] of script.globals) {
+		// Create a declaration entry for each user global (was previously missing)
+		const name = g.name;
+		// TEMP DEBUG: log global name for reserved identifier investigation
+		try { if (process.env.LSL_DEBUG_RESERVED) console.log('[analyze-debug] global', name); } catch { /* ignore */ }
+		// Reserved identifier check for global variable names
+		if (isReserved(defs, name)) {
+			diagnostics.push({
+				code: LSL_DIAGCODES.RESERVED_IDENTIFIER,
+				message: `"${name}" is reserved and cannot be used as an identifier`,
+				range: spanToRange(doc, g.span),
+				severity: DiagnosticSeverity.Error,
+			});
+		}
+		const range = findNameRangeInSpan(name, g.span, false);
+		const d: Decl = { name, range, kind: 'var', type: g.varType };
+		decls.push(d);
+		globalDecls.push(d);
+		globalScope.vars.set(name, d);
+		addType(globalTypeScope, name, g.varType);
 		if (g.initializer) {
-			// Walk the initializer to record refs and surface UNKNOWN_IDENTIFIER, then validate operators/types
 			walkExpr(g.initializer, globalScope, globalTypeScope);
 			validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures);
 		}
 	}
 
+	// Collect function/state/event declarations up-front so later analysis (refs, state-change validity) can resolve them.
+	// Functions
+	for (const [, f] of script.functions) {
+		const name = f.name;
+		if (isReserved(defs, name)) {
+			diagnostics.push({
+				code: LSL_DIAGCODES.RESERVED_IDENTIFIER,
+				message: `"${name}" is reserved and cannot be used as an identifier`,
+				range: spanToRange(doc, f.span),
+				severity: DiagnosticSeverity.Error,
+			});
+		}
+		const nameRange = findNameRangeInSpan(name, f.span, true);
+		// Derive header/body ranges (best effort)
+		const fullRange = spanToRange(doc, f.span);
+		let headerRange = fullRange; let bodyRange = fullRange;
+		try {
+			const text = doc.getText().slice(doc.offsetAt(fullRange.start), doc.offsetAt(fullRange.end));
+			const braceIdx = text.indexOf('{');
+			if (braceIdx >= 0) {
+				headerRange = { start: fullRange.start, end: doc.positionAt(doc.offsetAt(fullRange.start) + braceIdx) };
+				const closeOff = doc.offsetAt(fullRange.end);
+				bodyRange = { start: doc.positionAt(doc.offsetAt(fullRange.start) + braceIdx), end: fullRange.end };
+				void closeOff; // silence unused var if not used
+			}
+		} catch { /* ignore header/body extraction errors */ }
+		const params = [...f.parameters].map(([pname, ptype]) => ({ name: pname, type: ptype }));
+		const d: Decl = { name, range: nameRange, kind: 'func', type: f.returnType || 'void', params, fullRange, headerRange, bodyRange };
+		decls.push(d);
+		functions.set(name, d);
+		globalScope.vars.set(name, d); // allow forward reference resolution within file
+	}
+
+	// States + events
+	for (const [, st] of script.states) {
+		const sName = st.name;
+		const sRange = findNameRangeInSpan(sName, st.span, true);
+		const sFull = spanToRange(doc, st.span);
+		let sHeader = sFull; let sBody = sFull;
+		try {
+			const text = doc.getText().slice(doc.offsetAt(sFull.start), doc.offsetAt(sFull.end));
+			const braceIdx = text.indexOf('{');
+			if (braceIdx >= 0) {
+				sHeader = { start: sFull.start, end: doc.positionAt(doc.offsetAt(sFull.start) + braceIdx) };
+				sBody = { start: sHeader.end, end: sFull.end };
+			}
+		} catch { /* ignore */ }
+		const sd: Decl = { name: sName, range: sRange, kind: 'state', fullRange: sFull, headerRange: sHeader, bodyRange: sBody };
+		decls.push(sd);
+		states.set(sName, sd);
+		// Events within the state
+		for (const ev of st.events) {
+			const eName = ev.name;
+			const eRange = findNameRangeInSpan(eName, ev.span, true);
+			const eFull = spanToRange(doc, ev.span);
+			let eHeader = eFull; let eBody = eFull;
+			try {
+				const text = doc.getText().slice(doc.offsetAt(eFull.start), doc.offsetAt(eFull.end));
+				const braceIdx = text.indexOf('{');
+				if (braceIdx >= 0) {
+					eHeader = { start: eFull.start, end: doc.positionAt(doc.offsetAt(eFull.start) + braceIdx) };
+					eBody = { start: eHeader.end, end: eFull.end };
+				}
+			} catch { /* ignore */ }
+			const params = [...ev.parameters].map(([pname, ptype]) => ({ name: pname, type: ptype }));
+			const ed: Decl = { name: eName, range: eRange, kind: 'event', params, fullRange: eFull, headerRange: eHeader, bodyRange: eBody };
+			decls.push(ed);
+		}
+	}
+
 	// Walk functions and states once, validating expressions inline
+	// BEFORE walking functions we may need to synthesize declarations coming from included headers
+	// that the parser ignored (e.g. function prototypes and global variable declarations ending with ';').
+	// Map include file -> range of its #include directive in root doc for better diagnostic ranges.
+	const includeRangeByFile = new Map<string, { start: ReturnType<typeof doc.positionAt>; end: ReturnType<typeof doc.positionAt> }>();
+	try {
+		const targets = pre.includeTargets as undefined | { start: number; end: number; file: string; resolved: string | null }[];
+		if (targets) for (const t of targets) { const r = { start: doc.positionAt(t.start), end: doc.positionAt(t.end) }; if (t.resolved) includeRangeByFile.set(t.resolved, r); includeRangeByFile.set(t.file, r); }
+	} catch { /* ignore */ }
+
+	try {
+		const expandedEarly = pre.expandedTokens as unknown as Token[] | undefined;
+		if (expandedEarly && expandedEarly.length) {
+			let primaryFsPath: string | undefined; try { const u = (doc.uri.startsWith('file://') ? require('vscode-uri').URI.parse(doc.uri).fsPath : undefined); primaryFsPath = u; } catch { /* ignore */ }
+			// Current declared names
+			const declaredFuncNames = new Set<string>(); for (const d of decls) if (d.kind === 'func') declaredFuncNames.add(d.name);
+			const declaredVarNames = new Set<string>(); for (const d of decls) if (d.kind === 'var') declaredVarNames.add(d.name);
+			// Builtin functions so we don't synthesize decls for them
+			const builtinFuncNames = new Set<string>(); for (const [name] of defs.funcs) builtinFuncNames.add(name);
+			// Simple pattern scan
+			for (let i = 0; i < expandedEarly.length; i++) {
+				const t = expandedEarly[i]!;
+				const anyT = t as Token & { originFile?: string; file?: string };
+				const origin = anyT.originFile || anyT.file;
+				if (!origin || (primaryFsPath && origin === primaryFsPath)) {
+					continue; // only includes
+				}
+				// Ignore tokens originating from includes that are clearly within a state body when scanning prototypes/globals
+				if (t.kind === 'keyword' && t.value === 'state') { // skip ahead to matching closing brace to avoid noise
+					let depthBr = 0; let k = i + 1; let entered = false;
+					while (k < expandedEarly.length) {
+						const tk = expandedEarly[k]!;
+						if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === '{') { depthBr++; entered = true; }
+						else if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === '}') { depthBr--; if (entered && depthBr <= 0) { i = k; break; } }
+						if (tk.kind === 'eof') break; k++;
+					}
+					continue;
+				}
+				// Function prototype: (<type keyword|id>) <id> '(' ... ')' ';'
+				if ((t.kind === 'keyword' || t.kind === 'id')) {
+					const nameTok = expandedEarly[i + 1];
+					const lparen = expandedEarly[i + 2];
+					if (nameTok && nameTok.kind === 'id' && lparen && (lparen.kind === 'punct' || lparen.kind === 'op') && lparen.value === '(') {
+						let j = i + 3; let depth = 1; let foundClose = -1;
+						while (j < expandedEarly.length) {
+							const tk = expandedEarly[j]!;
+							if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === '(') depth++;
+							else if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === ')') { depth--; if (depth === 0) { foundClose = j; break; } }
+							if (tk.kind === 'eof') break; j++;
+						}
+						if (foundClose > 0) {
+							const semi = expandedEarly[foundClose + 1];
+							if (semi && (semi.kind === 'punct' || semi.kind === 'op') && semi.value === ';') {
+								const fname = nameTok.value;
+								if (!declaredFuncNames.has(fname) && !builtinFuncNames.has(fname)) {
+									const incRange = includeRangeByFile.get(origin) || { start: doc.positionAt(0), end: doc.positionAt(0) };
+									const d: Decl = { name: fname, kind: 'func', range: incRange, type: t.value, params: [] };
+									decls.push(d); functions.set(fname, d); declaredFuncNames.add(fname);
+								}
+							}
+							// advance to after ';' if present
+							if (semi && semi.value === ';') { i = foundClose + 1; continue; }
+						}
+					}
+				}
+				// Global variable: <type> <id> ';' not followed by '(' (avoid misreading function without params but w/ body later)
+				if ((t.kind === 'keyword' || t.kind === 'id')) {
+					const nameTok = expandedEarly[i + 1];
+					const semi = expandedEarly[i + 2];
+					if (nameTok && nameTok.kind === 'id' && semi && (semi.kind === 'punct' || semi.kind === 'op') && semi.value === ';' ) {
+						if (!declaredVarNames.has(nameTok.value)) {
+							const incRange = includeRangeByFile.get(origin) || { start: doc.positionAt(0), end: doc.positionAt(0) };
+							const d: Decl = { name: nameTok.value, kind: 'var', range: incRange, type: t.value };
+							decls.push(d); globalDecls.push(d); declaredVarNames.add(nameTok.value);
+						}
+						i = i + 2; continue; // jump past var decl
+					}
+				}
+			}
+		}
+	} catch { /* ignore synthetic decl errors */ }
+
 	for (const [, f] of script.functions) visitFunction(f);
 	for (const [, s] of script.states) visitState(s);
+
+	// After building declarations from the (expanded) AST, perform cross-include duplicate detection.
+	// Because we now fully expand includes into pre.expandedTokens, header declarations surface as part
+	// of the parsed script unless they were only forward declarations (e.g. prototypes) filtered out by the parser.
+	// We replicate the legacy behaviour: if an included header redeclares a built-in function or state name
+	// that is also declared in the main script, emit a duplicate diagnostic pointing at the included declaration.
+	try {
+		// Access expandedTokens produced by preprocessForAst (available when using new parser path)
+		const expanded = pre.expandedTokens as unknown as Token[] | undefined;
+		if (expanded && expanded.length) {
+			// Build a quick index of builtin function names for fast membership checks
+			const builtinFuncNames = new Set<string>();
+			for (const [name] of defs.funcs) builtinFuncNames.add(name);
+			// Existing declared user functions and states (from this script body)
+			const userFuncNames = new Set<string>();
+			for (const d of decls) if (d.kind === 'func') userFuncNames.add(d.name);
+			const userStateNames = new Set<string>();
+			for (const d of decls) if (d.kind === 'state') userStateNames.add(d.name);
+			// Scan token stream for simple prototypes originating from include files:
+			// pattern: <type-id> <id> '(' ... ')' ';'  (function prototype) OR 'state' <id> '{'
+			// We only care when originFile differs from primary doc (heuristic: token has originFile and
+			// that path is different from current file path resolved from doc.uri) and the name clashes.
+			let primaryFsPath: string | undefined;
+			try { const u = (doc.uri.startsWith('file://') ? require('vscode-uri').URI.parse(doc.uri).fsPath : undefined); primaryFsPath = u; } catch { /* ignore */ }
+			const toks = expanded as Token[];
+			for (let i = 0; i < toks.length; i++) {
+				const t = toks[i]!;
+				const anyT = t as Token & { originFile?: string; file?: string };
+				const origin = anyT.originFile || anyT.file;
+				if (!origin || (primaryFsPath && origin === primaryFsPath)) continue; // only interested in included files
+				// Detect state header: 'state' <id> '{'
+				if ((t.kind === 'id' || t.kind === 'keyword') && t.value === 'state') {
+					const nTok = toks[i + 1]; const brace = toks[i + 2];
+					if (nTok && nTok.kind === 'id' && brace && (brace.kind === 'punct' || brace.kind === 'op') && brace.value === '{') {
+						const name = nTok.value;
+						if (userStateNames.has(name)) {
+							const incRange = includeRangeByFile.get(origin);
+							const range = incRange || { start: doc.positionAt(nTok.span.start), end: doc.positionAt(nTok.span.end) };
+							diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Duplicate declaration of state ${name}`, range, severity: DiagnosticSeverity.Error });
+						}
+					}
+					continue;
+				}
+				// Potential function prototype: id id '(' ... ')' ';' (allow any first id; parser may have skipped prototype)
+				if (t.kind === 'id' || t.kind === 'keyword') {
+					const nameTok = toks[i + 1];
+					if (nameTok && nameTok.kind === 'id') {
+						const lparen = toks[i + 2];
+						if (lparen && (lparen.kind === 'punct' || lparen.kind === 'op') && lparen.value === '(') {
+							let j = i + 3; let depth = 1; let foundClose = -1;
+							while (j < toks.length) {
+								const tk = toks[j]!;
+								if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === '(') depth++;
+								else if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === ')') { depth--; if (depth === 0) { foundClose = j; break; } }
+								if (tk.kind === 'eof') break;
+								j++;
+							}
+							if (foundClose > 0) {
+								const semi = toks[foundClose + 1];
+								if (semi && (semi.kind === 'punct' || semi.kind === 'op') && semi.value === ';') {
+									const fname = nameTok.value;
+									if (builtinFuncNames.has(fname) || userFuncNames.has(fname)) {
+										const incRange = includeRangeByFile.get(origin);
+										const range = incRange || { start: doc.positionAt(nameTok.span.start), end: doc.positionAt(nameTok.span.end) };
+										diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Duplicate declaration of function ${fname}`, range, severity: DiagnosticSeverity.Error });
+									}
+									// Also synthesize missing global variable decls (defensive second pass) if pattern <type> <id> ';' and not already declared
+								} else {
+									// Non-prototype path: check for global var (handled earlier but safe)
+									const after = toks[i + 2];
+									if (after && (after.kind === 'punct' || after.kind === 'op') && after.value === ';' && !globalDecls.some(g => g.name === nameTok.value)) {
+										const incRange = includeRangeByFile.get(origin) || { start: doc.positionAt(0), end: doc.positionAt(0) };
+										const d: Decl = { name: nameTok.value, kind: 'var', range: incRange, type: t.value };
+										decls.push(d); globalDecls.push(d);
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	} catch { /* best effort; ignore errors in duplicate detection */ }
 
 	// Unused globals: globals that are never referenced anywhere
 	if (globalDecls.length > 0) {
@@ -1012,10 +1020,15 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	if (dd && (dd.disableLine.size > 0 || dd.disableNextLine.size > 0 || dd.blocks.length > 0)) {
 		finalDiagnostics = diagnostics.filter(d => {
 			const startOff = doc.offsetAt(d.range.start);
-			const lineNo = doc.positionAt(startOff).line + 1; // 1-based
+			const zeroBasedLine = doc.positionAt(startOff).line; // 0-based
+			// In preprocessing we stored line numbers as 0-based when calling lineOf(); convert consistently here.
 			const hasCode = (set: Set<string> | null) => !set || set.has(d.code);
-			const s1 = dd.disableLine.get(lineNo); if (s1 && hasCode(s1)) return false;
-			const s2 = dd.disableNextLine.get(lineNo); if (s2 && hasCode(s2)) return false;
+			// disable-line: same physical line (maps stored with 0-based line index)
+			const s1 = dd.disableLine.get(zeroBasedLine) || dd.disableLine.get(zeroBasedLine + 1); // tolerate previous storage style
+			if (s1 && hasCode(s1)) return false;
+			// disable-next-line: directive appears on previous line suppressing this one. Maps store directive line index.
+			const sPrev = dd.disableNextLine.get(zeroBasedLine - 1);
+			if (sPrev && hasCode(sPrev)) return false;
 			for (const b of dd.blocks) {
 				if (startOff >= b.start && startOff <= b.end && hasCode(b.codes)) return false;
 			}

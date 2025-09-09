@@ -23,7 +23,10 @@ export function builtinMacroForLexer(
 		case '__LINE__':
 			return { kind: 'number', value: String(ctx.line) };
 		case '__FILE__':
-			return { kind: 'string', value: JSON.stringify(ctx.filename) };
+			// Defer __FILE__ expansion until AST parser builtin pass so we can reliably
+			// compute the basename from the final document URI. Returning null keeps
+			// the identifier token intact through preprocessing/macro expansion.
+			return null; // handled later in parser.applyBuiltinExpansions
 		case '__TIME__': {
 			const d = ctx.now ?? new Date();
 			const time = d.toLocaleTimeString('en-US', { hour12: false });

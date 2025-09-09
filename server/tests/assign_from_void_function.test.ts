@@ -10,7 +10,7 @@ describe('assignment from void-returning function', () => {
 		const code = `
 integer x;
 foo(){ x = foo(); }
-state default{ state_entry(){ integer y = foo(); } }
+default{ state_entry(){ integer y = foo(); } }
 `;
 		const doc = docFrom(code, 'file:///voiduser.lsl');
 		const defs = await loadDefs(defsPath);

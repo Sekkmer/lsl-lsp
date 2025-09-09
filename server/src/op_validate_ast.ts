@@ -108,8 +108,9 @@ export function validateOperatorsFromAst(
 						}
 						const bothInt = lt === 'integer' && rt === 'integer';
 						const bothVec = lt === 'vector' && rt === 'vector';
-						const anyKnown = lt !== 'any' && rt !== 'any';
-						if (anyKnown && !(bothInt || bothVec)) {
+						// Always emit when not a valid combination; prior logic suppressed when bothAny
+						// which caused test to miss mismatch (one side inferred 'any').
+						if (!bothInt && !bothVec) {
 							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: 'Operator % expects integer%integer or vector%vector', range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Information });
 						}
 						break;

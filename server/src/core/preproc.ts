@@ -1,3 +1,6 @@
+import type { MacroDefines } from './macro';
+import type { Token } from './tokens';
+
 export type DisabledRange = { start: number; end: number };
 
 export type DiagDirectives = {
@@ -11,14 +14,13 @@ export type ConditionalGroup = { head: { start: number; end: number }; branches:
 
 export interface PreprocResult {
 	disabledRanges: DisabledRange[];
-	macros: import('./macro').MacroDefines;
+	macros: MacroDefines;
 	funcMacros: Record<string, string>;
 	includes: string[];
-	// Optional compatibility fields for existing consumers
-	includeSymbols?: Map<string, import('../includeSymbols').IncludeInfo>;
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[];
 	missingIncludes?: { start: number; end: number; file: string }[];
 	preprocDiagnostics?: { start: number; end: number; message: string; code?: string }[];
 	diagDirectives?: DiagDirectives;
 	conditionalGroups?: ConditionalGroup[];
+	expandedTokens?: Token[];
 }

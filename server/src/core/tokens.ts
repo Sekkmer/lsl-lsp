@@ -3,21 +3,22 @@
 export type Span = { start: number; end: number };
 
 export type TokenKind =
-  | 'id'
-  | 'number'
-  | 'string'
-  | 'keyword'
-  | 'op'
-  | 'punct'
-  | 'comment-line'
-  | 'comment-block'
-  | 'directive' // entire preprocessor directive line (combined with continuations)
-  | 'eof';
+	| 'id'
+	| 'number'
+	| 'string'
+	| 'keyword'
+	| 'op'
+	| 'punct'
+	| 'comment-line'
+	| 'comment-block'
+	| 'directive' // entire preprocessor directive line (combined with continuations)
+	| 'eof';
 
 export interface Token {
-  kind: TokenKind;
-  value: string; // raw text slice (string tokens include quotes)
-  span: Span;    // absolute offsets in original file
+	kind: TokenKind;
+	value: string;
+	span: Span;
+	file: string;
 }
 
 export const KEYWORDS = new Set<string>([
@@ -61,13 +62,14 @@ export class TokenStream {
 			if (this.idx < this.arr.length) {
 				t = this.arr[this.idx++];
 			} else {
-				t = { kind: 'eof', value: '', span: { start: this.lastEnd, end: this.lastEnd } };
+				const file = this.arr.length > 0 ? this.arr[this.arr.length - 1]?.file : '<unknown>';
+				t = { kind: 'eof', value: '', span: { start: this.lastEnd, end: this.lastEnd }, file };
 			}
 		} else if (this.producer) {
 			// Read one token from producer
 			t = this.producer();
 		} else {
-			t = { kind: 'eof', value: '', span: { start: this.lastEnd, end: this.lastEnd } };
+			t = { kind: 'eof', value: '', span: { start: this.lastEnd, end: this.lastEnd }, file: '<unknown>' };
 		}
 		if (t.kind === 'eof') { this.stickyEof = t; return t; }
 		this.lastEnd = t.span.end;

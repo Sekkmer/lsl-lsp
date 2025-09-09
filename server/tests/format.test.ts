@@ -11,7 +11,6 @@ function fmt(input: string, settings?: Partial<FormatSettings>, pre?: Partial<Pr
 		funcMacros: {},
 		includes: [],
 		includeTargets: [],
-		includeSymbols: new Map(),
 	};
 	const fmtSettings: FormatSettings = {
 		enabled: true,
@@ -52,7 +51,7 @@ describe('formatter basics', () => {
 	});
 
 	it('reindents with detected style (tabs)', () => {
-		const src = 'state default{\n\t\tif (true) {\n\treturn;\n\t}\n}\n';
+		const src = 'default{\n\t\tif (true) {\n\treturn;\n\t}\n}\n';
 		const out = fmt(src);
 		// initial used tabs, formatter will detect tabs and reindent consistently
 		expect(out).toContain('\n\t\tif (true) {');

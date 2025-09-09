@@ -7,7 +7,7 @@ describe('parser/analyzer', () => {
 	it('finds states, events, functions, variables', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom(`
-state default {
+default {
 	state_entry() {
 	integer g = 1;
 	llSay(0, "ok");

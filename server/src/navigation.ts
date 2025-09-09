@@ -1,6 +1,5 @@
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Range, TextEdit } from 'vscode-languageserver/node';
-import { URI } from 'vscode-uri';
 import type { Analysis } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import type { Defs } from './defs';
@@ -53,14 +52,6 @@ export function prepareRename(
 	const name = w.text;
 	const isMacro = Object.prototype.hasOwnProperty.call(pre.macros, name) || Object.prototype.hasOwnProperty.call(pre.funcMacros, name);
 	if (isMacro) return { start: doc.positionAt(w.start), end: doc.positionAt(w.end) };
-	if (pre.includeSymbols && pre.includeSymbols.size > 0) {
-		let found = 0;
-		for (const info of pre.includeSymbols.values()) {
-			if (!info) continue;
-			if (info.functions.has(name) || info.globals.has(name) || info.macroObjs.has(name) || info.macroFuncs.has(name)) found++;
-		}
-		if (found === 1) return { start: doc.positionAt(w.start), end: doc.positionAt(w.end) };
-	}
 	return null;
 }
 
@@ -128,44 +119,7 @@ export function computeRenameEdits(
 			}
 			running += L.length + 1;
 		}
-		if (pre.includeSymbols && pre.includeSymbols.size > 0) {
-			for (const [file, info] of pre.includeSymbols) {
-				if (!info) continue;
-				const mo = info.macroObjs.get(oldName);
-				const mf = info.macroFuncs.get(oldName);
-				const hit = mo || mf;
-				if (hit) {
-					const uri = URI.file(file).toString();
-					const start = { line: hit.line, character: hit.col };
-					const end = { line: hit.line, character: hit.endCol };
-					(changes[uri] ||= []).push({ range: { start, end }, newText: newName });
-					break;
-				}
-			}
-		}
 		return { changes };
-	}
-
-	if (pre.includeSymbols && pre.includeSymbols.size > 0) {
-		let chosen: { file: string; line: number; col: number; endCol: number } | null = null;
-		for (const [file, info] of pre.includeSymbols) {
-			if (!info) continue;
-			const fn = info.functions.get(oldName);
-			const g = info.globals.get(oldName);
-			const hit = fn ? { file, line: fn.line, col: fn.col, endCol: fn.endCol } : (g ? { file, line: g.line, col: g.col, endCol: g.endCol } : null);
-			if (hit) { chosen = hit; break; }
-		}
-		if (chosen) {
-			const uri = URI.file(chosen.file).toString();
-			(changes[uri] ||= []).push({ range: { start: { line: chosen.line, character: chosen.col }, end: { line: chosen.line, character: chosen.endCol } }, newText: newName });
-			for (const t of tokens) {
-				if (t.kind === 'id' && t.value === oldName) {
-					const resolved = analysis.refAt(t.start);
-					if (!resolved) addEdit(doc.uri, t.start, t.end);
-				}
-			}
-			return { changes };
-		}
 	}
 
 	// Fallback: rename the word under cursor in this document
@@ -220,33 +174,6 @@ export function findAllReferences(
 				}
 				running += L.length + 1;
 			}
-			if (pre.includeSymbols && pre.includes) {
-				for (const file of pre.includes) {
-					const info = pre.includeSymbols.get(file);
-					if (!info) continue;
-					const mo = info.macroObjs.get(name);
-					const mf = info.macroFuncs.get(name);
-					const hit = mo || mf;
-					if (hit) out.push({ uri: URI.file(file).toString(), range: { start: { line: hit.line, character: hit.col }, end: { line: hit.line, character: hit.endCol } } });
-				}
-			}
-		}
-		for (const t of tokens) {
-			if (t.kind === 'id' && t.value === name) {
-				const resolved = analysis.refAt(t.start);
-				if (!resolved) pushLoc(doc.uri, { start: doc.positionAt(t.start), end: doc.positionAt(t.end) });
-			}
-		}
-		return out;
-	}
-
-	if (pre.includeSymbols && pre.includeSymbols.size > 0) {
-		for (const [file, info] of pre.includeSymbols) {
-			if (!info) continue;
-			const fn = info.functions.get(name);
-			const g = info.globals.get(name);
-			const hit = fn ? { line: fn.line, col: fn.col, endCol: fn.endCol } : (g ? { line: g.line, col: g.col, endCol: g.endCol } : null);
-			if (hit && includeDecl) out.push({ uri: URI.file(file).toString(), range: { start: { line: hit.line, character: hit.col }, end: { line: hit.line, character: hit.endCol } } });
 		}
 		for (const t of tokens) {
 			if (t.kind === 'id' && t.value === name) {

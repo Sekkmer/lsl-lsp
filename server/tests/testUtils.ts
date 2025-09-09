@@ -13,8 +13,6 @@ import { parseScriptFromText } from '../src/ast/parser';
 import { analyzeAst } from '../src/ast/analyze';
 import { URI } from 'vscode-uri';
 import { basenameFromUri } from '../src/builtins';
-import { parseIncludeSymbols, clearIncludeSymbolsCache } from '../src/includeSymbols';
-import fsSync from 'node:fs';
 
 export function docFrom(code: string, uri = 'file:///test.lsl') {
 	return TextDocument.create(uri, 'lsl', 1, code);
@@ -29,8 +27,6 @@ export type RunPipelineOptions = { macros?: Record<string, string | number | boo
 
 export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOptions) {
 	// Use new tokenizer+macro pipeline for disabled ranges/macros/includes, mirroring server integration
-	// Reset include symbols cache to avoid stale results if files are rewritten rapidly in tests
-	try { clearIncludeSymbolsCache(); } catch { /* ignore */ }
 	const fromPath = URI.parse(doc.uri).fsPath;
 	const full = preprocessForAst(doc.getText(), { includePaths: opts?.includePaths ?? [], fromPath, defines: opts?.macros ?? {} });
 	const pre: PreprocResult = {
@@ -38,12 +34,12 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOpt
 		macros: { ...full.macros },
 		funcMacros: full.funcMacros,
 		includes: full.includes,
-		includeSymbols: new Map(),
 		includeTargets: full.includeTargets,
 		missingIncludes: full.missingIncludes,
 		preprocDiagnostics: full.preprocDiagnostics,
 		diagDirectives: full.diagDirectives,
 		conditionalGroups: full.conditionalGroups,
+		expandedTokens: full.expandedTokens,
 	};
 
 	// Inject __FILE__ into macro table for tests that inspect pre.macros directly
@@ -58,62 +54,15 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOpt
 	// Preserve original lexer tokens for existing tests; expose expandedTokens separately for targeted assertions
 	const tokens = rawTokens;
 	// New AST pipeline: parse to AST, then analyze
-	const script = parseScriptFromText(doc.getText(), doc.uri, { macros: opts?.macros, includePaths: opts?.includePaths });
-	// Populate includeSymbols for tests, mirroring server getPipeline
-	try {
-		const sink = new Map<string, ReturnType<typeof parseIncludeSymbols>>();
-		const seen = new Set<string>();
-		const roots: string[] = [];
-		if (pre.includeTargets && pre.includeTargets.length > 0) {
-			for (const it of pre.includeTargets) { if (it.resolved) roots.push(it.resolved); }
-		} else if (pre.includes && pre.includes.length > 0) {
-			roots.push(...pre.includes);
-		}
-		for (const r of roots) loadIncludeSymbolsRecursive(r, opts?.includePaths || [], sink, seen);
-		for (const [fp, info] of sink) { if (info) pre.includeSymbols!.set(fp, info); }
-	} catch {/* ignore */}
+	// Reuse the macro table produced by the first preprocess pass to avoid divergence
+	// (notably for synthetic built-ins like __FILE__ whose presence controls conditional branches).
+	// Passing full.macros ensures #if defined(__FILE__) guarded declarations are preserved
+	// consistently between the preprocessing used for analysis and the parser invocation here.
+	const script = parseScriptFromText(doc.getText(), doc.uri, { macros: { ...full.macros, ...(opts?.macros || {}) }, includePaths: opts?.includePaths, pre: full });
 	const analysis = analyzeAst(doc, script, defs, pre);
 	const sem = buildSemanticTokens(doc, tokens, defs, pre, analysis);
 
-	// debug logging removed
-
 	return { pre, tokens, rawTokens, expandedTokens: expanded, analysis, sem };
-}
-
-function parseIncludesFromText(text: string): string[] {
-	const out: string[] = [];
-	const lines = text.split(/\r?\n/);
-	for (const L of lines) {
-		const m = /^\s*#\s*include\s+(["<])([^">]+)[">]/.exec(L);
-		if (m) out.push(m[2]!);
-	}
-	return out;
-}
-
-function resolveIncludeCompat(baseDir: string, target: string, includePaths: string[]): string | null {
-	const rel = path.resolve(baseDir, target);
-	try { if (fsSync.existsSync(rel) && fsSync.statSync(rel).isFile()) return rel; } catch { /* ignore */ }
-	for (const p of includePaths) {
-		try {
-			const cand = path.resolve(p, target);
-			if (fsSync.existsSync(cand) && fsSync.statSync(cand).isFile()) return cand;
-		} catch { /* ignore */ }
-	}
-	return null;
-}
-
-function loadIncludeSymbolsRecursive(rootFile: string, includePaths: string[], sink: Map<string, ReturnType<typeof parseIncludeSymbols>>, seen: Set<string>) {
-	if (seen.has(rootFile)) return;
-	seen.add(rootFile);
-	try {
-		const info = parseIncludeSymbols(rootFile);
-		if (info) sink.set(rootFile, info);
-		const text = fsSync.readFileSync(rootFile, 'utf8');
-		const deps = parseIncludesFromText(text)
-			.map(t => resolveIncludeCompat(path.dirname(rootFile), t, includePaths))
-			.filter((p): p is string => !!p);
-		for (const dep of deps) loadIncludeSymbolsRecursive(dep, includePaths, sink, seen);
-	} catch { /* ignore */ }
 }
 
 export function tokensToDebug(tokens: ReturnType<typeof lex>) {

@@ -3,7 +3,7 @@
 
 integer g = 7;
 
-state default {
+default {
 	state_entry() {
 		integer x = 1;
 #ifdef DEBUG

@@ -284,7 +284,7 @@ export class Lexer {
 	}
 
 	private mk(kind: Token['kind'], value: string, start: number, end: number): Token {
-		return { kind, value, span: { start, end } };
+		return { kind, value, span: { start, end }, file: '<unknown>' };
 	}
 
 	private lineNumberFor(pos: number): number {
