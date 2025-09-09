@@ -2,7 +2,7 @@
 	"name": "vscode-lsl-lsp",
 	"displayName": "LSL LSP",
 	"description": "LSL (Linden Scripting Language) support with #include/#ifdef, semantics, and diagnostics.",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"license": "MIT",
 	"publisher": "Sekkmer",
 	"author": {
