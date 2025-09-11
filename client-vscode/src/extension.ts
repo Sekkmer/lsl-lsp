@@ -225,10 +225,19 @@ export async function activate(context: vscode.ExtensionContext) {
 	const restartCmd = vscode.commands.registerCommand('lsl.restartServer', async () => {
 		if (client) { await client.stop(); await client.start(); }
 	});
+	const clearCachesCmd = vscode.commands.registerCommand('lsl.clearCaches', async () => {
+		if (!client) return;
+		try {
+			await client.sendRequest('lsl/clearCaches');
+			vscode.window.showInformationMessage('LSL: caches cleared');
+		} catch (e) {
+			vscode.window.showErrorMessage('LSL: failed to clear caches: ' + (e instanceof Error ? e.message : String(e)));
+		}
+	});
 	const buildServerCmd = vscode.commands.registerCommand('lsl.buildServer', async () => {
 		await vscode.commands.executeCommand('workbench.action.tasks.runTask', 'build server');
 	});
-	context.subscriptions.push(showLogsCmd, showClientLogsCmd, restartCmd, buildServerCmd, status, debugChannel, traceChannel);
+	context.subscriptions.push(showLogsCmd, showClientLogsCmd, restartCmd, clearCachesCmd, buildServerCmd, status, debugChannel, traceChannel);
 
 	client.onDidChangeState(({ newState }) => {
 		if (newState === State.Running) {

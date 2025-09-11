@@ -62,6 +62,7 @@
 			{ "command": "lsl.showServerLogs", "title": "Show Language Server Trace", "category": "LSL" },
 			{ "command": "lsl.showClientLogs", "title": "Show Client Logs", "category": "LSL" },
 			{ "command": "lsl.restartServer", "title": "Restart Language Server", "category": "LSL" },
+			{ "command": "lsl.clearCaches", "title": "Clear Caches", "category": "LSL" },
 			{ "command": "lsl.buildServer", "title": "Build Server (repo task)", "category": "LSL" }
 		],
 		"configuration": {

@@ -41,6 +41,7 @@ import { lslCompletions, resolveCompletion, lslSignatureHelp } from './completio
 import { lslHover } from './hover';
 import { formatDocumentEdits, formatRangeEdits, detectIndent, type FormatSettings } from './format';
 import { preprocessForAst } from './core/pipeline';
+import { clearIncludeResolverCache } from './core/pipeline';
 
 const connection: Connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -74,6 +75,8 @@ const settings = {
 // -------------------------------------------------
 type PipelineCache = {
 	version: number;
+	// Content hash (FNV-1a) of document text to guard against rare cases where version doesn't bump
+	textHash: number;
 	pre: PreprocResult;
 	tokens: ReturnType<typeof lex>;
 	analysis: Analysis;
@@ -154,12 +157,15 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 	if (!defs) return null;
 	const key = doc.uri;
 	const currentVersion = getDocVersion(doc);
+	// Compute fast FNV-1a 32-bit hash of current text to detect silent content changes
+	const text = doc.getText();
+	let h = 2166136261 >>> 0; for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } const currentTextHash = h >>> 0;
 	const hit = pipelineCache.get(key);
 	const currentHash = computeConfigHash(settings.macros, settings.includePaths, doc.uri);
-	if (hit && hit.version === currentVersion && hit.configHash === currentHash) return hit;
+	if (hit && hit.version === currentVersion && hit.configHash === currentHash && hit.textHash === currentTextHash) return hit;
 
 	// Single unified preprocessing run (new pipeline)
-	const full = preprocessForAst(doc.getText(), { includePaths: settings.includePaths, fromPath: URI.parse(doc.uri).fsPath, defines: { ...baselineMacros } });
+	const full = preprocessForAst(text, { includePaths: settings.includePaths, fromPath: URI.parse(doc.uri).fsPath, defines: { ...baselineMacros } });
 	const macrosOnlyIncludes: string[] = full.includes || [];
 	if (!arraysShallowEqual(hit?.macrosOnlyIncludes, macrosOnlyIncludes)) indexIncludesList(key, macrosOnlyIncludes);
 	const pre: PreprocResult = {
@@ -174,9 +180,9 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 		conditionalGroups: full.conditionalGroups,
 	};
 	const tokens = lex(doc, pre.disabledRanges);
-	const ast: import('./ast').Script = parseScriptFromText(doc.getText(), doc.uri, { macros: { ...baselineMacros }, includePaths: settings.includePaths, pre: full });
+	const ast: import('./ast').Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, includePaths: settings.includePaths, pre: full });
 	const analysis: Analysis = analyzeAst(doc, ast, defs, pre);
-	const entry: PipelineCache = { version: currentVersion, pre, tokens, analysis, ast, macrosOnlyIncludes, configHash: currentHash };
+	const entry: PipelineCache = { version: currentVersion, textHash: currentTextHash, pre, tokens, analysis, ast, macrosOnlyIncludes, configHash: currentHash };
 	pipelineCache.set(key, entry);
 	// Only fall back to legacy include indexing if macros-only prepass failed to provide includes
 	if (!macrosOnlyIncludes || macrosOnlyIncludes.length === 0) indexIncludes(key, pre);
@@ -310,6 +316,22 @@ connection.onInitialized(() => {
 		});
 	} catch {
 		// older clients may not support this capability
+	}
+});
+
+// Manual cache clear request (invoked by client command)
+connection.onRequest('lsl/clearCaches', async () => {
+	try {
+		connection.console.log('[lsl-lsp] clearCaches request: flushing caches');
+		pipelineCache.clear();
+		includeToDocs.clear();
+		clearIncludeResolverCache();
+		// Revalidate all open docs after flush
+		await revalidateAllOpenDocs();
+		return { ok: true };
+	} catch (e) {
+		connection.console.error('[lsl-lsp] clearCaches failed: ' + String(e));
+		return { ok: false, error: String(e) };
 	}
 });
 
@@ -669,9 +691,16 @@ connection.onCodeAction((params): CodeAction[] => {
 
 // Revalidate when includes change on disk (watched by client)
 connection.onDidChangeWatchedFiles(ev => {
+	let defsChanged = false;
+	const defsUri = settings.definitionsPath ? URI.file(settings.definitionsPath).toString() : '';
 	for (const c of ev.changes) {
-		// Only consider content changes or created/deleted
-		if (c.type === FileChangeType.Changed || c.type === FileChangeType.Created || c.type === FileChangeType.Deleted) {
+		const changeType = c.type;
+		if (changeType === FileChangeType.Changed || changeType === FileChangeType.Created || changeType === FileChangeType.Deleted) {
+			// Detect defs file change -> reload definitions & full revalidate
+			if (defsUri && c.uri === defsUri) {
+				defsChanged = true;
+				continue; // defer processing dependents until after reload
+			}
 			const uri = c.uri;
 			const dependents = includeToDocs.get(uri);
 			if (!dependents) continue;
@@ -683,5 +712,19 @@ connection.onDidChangeWatchedFiles(ev => {
 				}
 			}
 		}
+	}
+	if (defsChanged) {
+		(async () => {
+			try {
+				connection.console.log('[lsl-lsp] definitions file changed: reloading');
+				defs = await loadDefs(settings.definitionsPath);
+			} catch (e) {
+				connection.console.error('[lsl-lsp] failed to reload definitions: ' + String(e));
+			}
+			// Clear all caches & revalidate everything so new defs propagate
+			pipelineCache.clear();
+			includeToDocs.clear();
+			await revalidateAllOpenDocs();
+		})();
 	}
 });
