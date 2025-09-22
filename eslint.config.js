@@ -21,6 +21,7 @@ export default tseslint.config(
 		extends: [js.configs.recommended, ...tseslint.configs.recommended],
 		rules: {
 			indent: ['error', 'tab', { SwitchCase: 1 }],
+			'quotes': ['error', 'single'],
 			'@typescript-eslint/no-require-imports': 'off',
 			'@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }]
 		}
