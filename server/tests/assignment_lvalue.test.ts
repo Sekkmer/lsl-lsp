@@ -3,7 +3,7 @@ import { docFrom, runPipeline } from './testUtils';
 import { loadDefs } from '../src/defs';
 import path from 'node:path';
 
-const defsPath = path.join(__dirname, 'fixtures', 'lsl-defs.json');
+const defsPath = path.join(__dirname, 'fixtures', 'lsl-defs.yaml');
 
 describe('assignment left-hand side must be a variable', () => {
 	it('flags string literal on LHS', async () => {

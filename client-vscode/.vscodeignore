@@ -4,7 +4,7 @@
 # Include only built extension runtime and assets
 !out/**
 !server/out/**
-!common/lsl-defs.json
+!common/lsl_definitions.yaml
 !media/**
 !syntaxes/**
 !language-configuration.json

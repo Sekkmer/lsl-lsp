@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
+import yaml from 'js-yaml';
 
 const WIKI_BASE = 'https://wiki.secondlife.com';
 const CATEGORY_FUNCS = `${WIKI_BASE}/wiki/Category:LSL_Functions`;
@@ -154,12 +155,22 @@ async function isValidWikiContent(url: string): Promise<boolean> {
 
 export type LslDefs = {
 	version: string;
-	types: string[];
-	keywords: string[];
 	constants: { name: string; type: string; value?: number | string; doc?: string; deprecated?: boolean; wiki?: string }[];
 	events: { name: string; params: { name: string; type: string; doc?: string }[]; doc?: string; wiki?: string }[];
 	functions: { name: string; returns: string; params: { name: string; type: string; default?: string; doc?: string }[]; doc?: string; deprecated?: boolean; wiki?: string }[];
 };
+
+function isYamlFile(file: string): boolean {
+	return /\.ya?ml$/i.test(file);
+}
+
+async function readDefsBundle(file: string): Promise<LslDefs> {
+	const raw = await fs.readFile(file, 'utf8');
+	if (isYamlFile(file)) {
+		return yaml.load(raw, { json: true }) as LslDefs;
+	}
+	return JSON.parse(raw) as LslDefs;
+}
 
 async function listFunctionLinks(html: string): Promise<string[]> {
 	const $ = cheerio.load(html);
@@ -1086,17 +1097,6 @@ export async function parseEventPage(html: string) {
 	return { name: nameLowerUnderscore, params, ...(doc ? { doc } : {}) };
 }
 
-function getAllTypes(): string[] {
-	// Stable order similar to common/lsl-defs.json
-	const order = ['integer', 'float', 'string', 'key', 'vector', 'rotation', 'list', 'void'];
-	return order.filter(t => TYPE_SET.has(t));
-}
-
-function getKeywords(): string[] {
-	// Minimal set; can be extended later
-	return ['if', 'else', 'for', 'while', 'do', 'return', 'state', 'default', 'jump', 'label'];
-}
-
 async function assembleDefs(): Promise<LslDefs> {
 	const version = new Date().toISOString().slice(0, 10);
 	// Functions
@@ -1349,8 +1349,6 @@ async function assembleDefs(): Promise<LslDefs> {
 
 		return {
 			version,
-			types: getAllTypes(),
-			keywords: getKeywords(),
 			constants: withWikiConsts,
 			events: withWikiEvents,
 			functions: withWikiFuncs,
@@ -1364,8 +1362,6 @@ async function assembleDefs(): Promise<LslDefs> {
 		const withWikiEvents = eventsOut.map(e => ({ ...e, wiki: e.wiki || `${WIKI_BASE}/wiki/${encodeURIComponent(e.name)}` }));
 		return {
 			version,
-			types: getAllTypes(),
-			keywords: getKeywords(),
 			constants: withWikiConsts,
 			events: withWikiEvents,
 			functions: withWikiFuncs,
@@ -2257,10 +2253,10 @@ async function main() {
 	} else if (which === 'merge-consts') {
 		// Usage: merge-consts [consts.json] [defs-in.json] [defs-out.json]
 		const constsFile = process.argv[3] || path.resolve(PKG_ROOT, 'out', 'lsl-consts.json');
-		const defsInFile = process.argv[4] || path.resolve(PKG_ROOT, '..', 'common', 'lsl-defs.json');
+		const defsInFile = process.argv[4] || path.resolve(PKG_ROOT, '..', 'common', 'lsl_definitions.yaml');
 		const defsOutFile = process.argv[5] || path.resolve(PKG_ROOT, 'out', 'lsl-defs.merged.json');
 		const constsRaw = JSON.parse(await fs.readFile(constsFile, 'utf8')) as { constants: { name: string; value?: number; doc?: string; wiki?: string }[] };
-		const defsRaw = JSON.parse(await fs.readFile(defsInFile, 'utf8')) as LslDefs;
+		const defsRaw = await readDefsBundle(defsInFile);
 		// Build a quick lookup for values/docs
 		const constMap = new Map<string, { value?: number; doc?: string; wiki?: string }>();
 		for (const c of constsRaw.constants || []) constMap.set(c.name, { value: c.value, doc: c.doc, wiki: c.wiki });
@@ -2278,8 +2274,6 @@ async function main() {
 		});
 		const merged: LslDefs = {
 			version: defsRaw.version,
-			types: defsRaw.types,
-			keywords: defsRaw.keywords,
 			constants: mergedConstants,
 			events: defsRaw.events,
 			functions: defsRaw.functions,
@@ -2290,9 +2284,9 @@ async function main() {
 	} else if (which.startsWith('merge-consts-verify')) {
 		// Usage: merge-consts-verify [consts.json] [defs.json]
 		const constsFile = process.argv[3] || path.resolve(PKG_ROOT, 'out', 'lsl-consts.json');
-		const defsFile = process.argv[4] || path.resolve(PKG_ROOT, '..', 'common', 'lsl-defs.json');
+		const defsFile = process.argv[4] || path.resolve(PKG_ROOT, '..', 'common', 'lsl_definitions.yaml');
 		const constsRaw = JSON.parse(await fs.readFile(constsFile, 'utf8')) as { constants: { name: string; value?: number }[] };
-		const defsRaw = JSON.parse(await fs.readFile(defsFile, 'utf8')) as LslDefs;
+		const defsRaw = await readDefsBundle(defsFile);
 		const mapIn = new Map<string, number>();
 		for (const c of (constsRaw.constants || [])) {
 			if (typeof c.value === 'number') mapIn.set(c.name, c.value);

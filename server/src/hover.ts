@@ -1,10 +1,12 @@
 import { Hover, MarkupKind, Position } from 'vscode-languageserver/node';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Defs } from './defs';
+import type { DefFunction } from './defs';
 import fs from 'node:fs';
 import { Analysis } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import { isKeyword } from './ast/lexer';
+import { isType } from './ast';
 
 // Simple in-memory cache for include file contents to avoid repeated sync reads during hover bursts
 const includeFileCache = new Map<string, string>();
@@ -81,6 +83,24 @@ function extractIncludeSymbolDoc(name: string, kind: 'func' | 'var' | 'macro', p
 	return null;
 }
 
+function formatNumber(value: number): string {
+	if (!Number.isFinite(value)) return String(value);
+	if (Number.isInteger(value)) return value.toString();
+	return value.toFixed(3).replace(/\.0+$/g, '').replace(/(\.\d*?)0+$/, '$1');
+}
+
+function appendFunctionMeta(parts: string[], functions: DefFunction[]): void {
+	if (!functions || functions.length === 0) return;
+	const energyEntry = functions.find(f => typeof f.energy === 'number');
+	const sleepEntry = functions.find(f => typeof f.sleep === 'number');
+	const experience = functions.some(f => f.experience === true);
+	const metaSegments: string[] = [];
+	if (energyEntry && typeof energyEntry.energy === 'number') metaSegments.push(`Energy: ${formatNumber(energyEntry.energy)}`);
+	if (sleepEntry && typeof sleepEntry.sleep === 'number') metaSegments.push(`Sleep: ${formatNumber(sleepEntry.sleep)}s`);
+	if (metaSegments.length) parts.push('', `**Cost:** ${metaSegments.join(' · ')}`);
+	if (experience) parts.push('', '_Experience-only_');
+}
+
 export function lslHover(doc: TextDocument, params: { position: Position }, defs: Defs, analysis?: Analysis, pre?: PreprocResult): Hover | null {
 	const fmtDoc = (s?: string) => (typeof s === 'string' ? s.replace(/\\r\\n|\\n/g, '\n') : s);
 	const off = doc.offsetAt(params.position);
@@ -92,7 +112,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 	if (!w) return null;
 
 	// Keywords: do not produce hover for language keywords
-	if (isKeyword(w) || defs.keywords.has(w)) {
+	if (isKeyword(w)) {
 		return null;
 	}
 
@@ -110,7 +130,9 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 				const code = ['```lsl', ...sigLines, '```'].join('\n');
 				const withWiki = fs.find(f => !!f.wiki);
 				const wiki = withWiki?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
-				const parts = [code, '', `Alias: #define ${w} ${alias}`, '', `[Wiki](${wiki})`];
+				const parts = [code];
+				appendFunctionMeta(parts, fs);
+				parts.push('', `Alias: #define ${w} ${alias}`, '', `[Wiki](${wiki})`);
 				if (from) parts.push('', `From: ${from}`);
 				if (includeDoc) parts.push('', includeDoc);
 				return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
@@ -189,7 +211,9 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 			const code = ['```lsl', ...sigLines, '```'].join('\n');
 			const withWiki = fs.find(f => !!f.wiki);
 			const wiki = withWiki?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
-			const parts = [code, '', `[Wiki](${wiki})`];
+			const parts = [code];
+			appendFunctionMeta(parts, fs);
+			parts.push('', `[Wiki](${wiki})`);
 			if (lookupName !== callCtx.name) parts.push('', `Alias: ${callCtx.name} → ${lookupName}`);
 			// Show the current parameter doc if available
 			const best = fs.find(f => (f.params?.length || 0) > callCtx.index) || fs[0];
@@ -243,6 +267,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 			}
 		}
 		const parts = [code];
+		appendFunctionMeta(parts, fs);
 		const wiki = fs.find(f => f.wiki)?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
 		parts.push('', `[Wiki](${wiki})`);
 		if (docstr) parts.push('', docstr);
@@ -336,7 +361,7 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		if (paramDocs) parts.push('', 'Parameters:', withParamDocFormatting(paramDocs));
 		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
-	if (defs.types.has(w)) {
+	if (isType(w)) {
 		const code = ['```lsl', `type ${w}`, '```'].join('\n');
 		return { contents: { kind: MarkupKind.Markdown, value: code } };
 	}

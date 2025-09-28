@@ -2,8 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { parseScriptFromText } from '../src/ast/parser';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { analyzeAst } from '../src/ast/analyze';
-import { loadDefs } from '../src/defs';
-import path from 'node:path';
+import { loadTestDefs } from './loadDefs.testutil';
 
 describe('inactive branch filtering', () => {
 	it('only active #elif branch global visible; no duplicate', async () => {
@@ -11,7 +10,7 @@ describe('inactive branch filtering', () => {
 		const uri = 'file:///inactive_branch_filtering.lsl';
 		const script = parseScriptFromText(code, uri, { macros: {}, includePaths: [] });
 		const doc = TextDocument.create(uri, 'lsl', 1, code);
-		const defs = await loadDefs(path.resolve(__dirname, '../out/lsl-defs.json'));
+		const defs = await loadTestDefs();
 		const analysis = analyzeAst(doc, script, defs, { disabledRanges: [], macros: {}, funcMacros: {}, includes: [] });
 		// No duplicate decl diagnostics
 		const dupes = analysis.diagnostics.filter(d => d.code === 'LSL070');

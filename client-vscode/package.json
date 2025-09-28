@@ -71,7 +71,7 @@
 				"lsl.definitionsPath": {
 					"type": "string",
 					"default": "",
-					"description": "Path to LSL definition file (JSON/YAML). Leave empty to use the bundled common/lsl-defs.json."
+					"description": "Path to LSL definition file (JSON/YAML). Leave empty to use the bundled third_party/lsl_definitions.yaml."
 				},
 				"lsl.includePaths": {
 					"type": "array",

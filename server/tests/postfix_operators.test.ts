@@ -5,7 +5,7 @@ import path from 'node:path';
 import { runPipeline } from './testUtils';
 import { Analysis } from '../src/analysisTypes';
 
-const defsPath = path.join(__dirname, '..', '..', 'common', 'lsl-defs.json');
+const defsPath = path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 function diagMsgs(analysis: Analysis) {
 	return analysis.diagnostics.map((d) => `${d.message} @${d.code}`);

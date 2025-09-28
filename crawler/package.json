@@ -22,11 +22,13 @@
   },
   "dependencies": {
     "cheerio": "^1.1.2",
+    "js-yaml": "^4.1.0",
     "undici": "^7.15.0",
     "zod": "^4.1.1"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "@types/js-yaml": "^4.0.9",
     "domhandler": "^5.0.3",
     "tsx": "^4.20.5",
     "typescript": "^5.9.2"

@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import { docFrom, runPipeline } from './testUtils';
 import { loadDefs } from '../src/defs';
 
-const defsPath = path.join(__dirname, 'fixtures', 'lsl-defs.json');
+const defsPath = path.join(__dirname, 'fixtures', 'lsl-defs.yaml');
 
 function tmpFile(rel: string, contents: string) {
 	const base = path.join(__dirname, 'tmp_includes');

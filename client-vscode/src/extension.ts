@@ -141,25 +141,37 @@ export async function activate(context: vscode.ExtensionContext) {
 	function resolveDefinitionsPath(input: unknown): string {
 		const firstWs = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 		let p = typeof input === 'string' && input.trim().length > 0 ? input.trim() : '';
+		const resolveCandidates = (base: string, ...segments: string[]): string | undefined => {
+			const prefix = path.join(base, ...segments);
+			const yamlPath = path.join(prefix, 'lsl_definitions.yaml');
+			if (requireExists(yamlPath)) return yamlPath;
+			return undefined;
+		};
 		// Expand ${workspaceFolder}
 		if (p && firstWs) p = p.replace('${workspaceFolder}', firstWs);
 		// Make absolute if needed
 		if (p && !path.isAbsolute(p)) p = firstWs ? path.join(firstWs, p) : path.join(context.extensionUri.fsPath, p);
-		// If not provided or file missing, try workspace common/lsl-defs.json
+		// If not provided or file missing, try workspace/common bundles YAML
+		const repoRootFromExt = path.resolve(context.extensionUri.fsPath, '..');
 		if (!p || !requireExists(p)) {
 			if (firstWs) {
-				const wsCommon = path.join(firstWs, 'common', 'lsl-defs.json');
-				if (requireExists(wsCommon)) return wsCommon;
+				const wsCommon = resolveCandidates(firstWs, 'common');
+				if (wsCommon) return wsCommon;
+				const wsServer = resolveCandidates(firstWs, 'server', 'out');
+				if (wsServer) return wsServer;
 			}
 			// When running the extension from its folder (Run Extension), also try the sibling repo common
-			const repoRootFromExt = path.resolve(context.extensionUri.fsPath, '..');
-			const siblingCommon = path.join(repoRootFromExt, 'common', 'lsl-defs.json');
-			if (requireExists(siblingCommon)) return siblingCommon;
-			const repoCrawler = path.join(repoRootFromExt, 'crawler', 'out', 'lsl-defs.json');
-			if (requireExists(repoCrawler)) return repoCrawler;
+			const siblingCommon = resolveCandidates(repoRootFromExt, 'common');
+			if (siblingCommon) return siblingCommon;
+			const siblingServer = resolveCandidates(repoRootFromExt, 'server', 'out');
+			if (siblingServer) return siblingServer;
 			// Fall back to extension-bundled common
-			const extCommon = path.join(context.extensionUri.fsPath, 'common', 'lsl-defs.json');
-			if (requireExists(extCommon)) return extCommon;
+			const extCommon = resolveCandidates(context.extensionUri.fsPath, 'common');
+			if (extCommon) return extCommon;
+			const extServer = resolveCandidates(context.extensionUri.fsPath, 'server', 'out');
+			if (extServer) return extServer;
+			const repoCrawlerJson = path.join(repoRootFromExt, 'crawler', 'out', 'lsl-defs.json');
+			if (requireExists(repoCrawlerJson)) return repoCrawlerJson;
 		}
 		return p;
 	}

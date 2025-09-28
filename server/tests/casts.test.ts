@@ -3,7 +3,7 @@ import { docFrom, runPipeline } from './testUtils';
 import { loadDefs } from '../src/defs';
 import path from 'node:path';
 
-const defsPath = path.join(__dirname, '..', '..', 'common', 'lsl-defs.json');
+const defsPath = path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 describe('casts validation', () => {
 	it('redundant cast warns', async () => {

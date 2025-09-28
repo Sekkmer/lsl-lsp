@@ -21,13 +21,6 @@ export interface Token {
 	file: string;
 }
 
-export const KEYWORDS = new Set<string>([
-	'if', 'else', 'while', 'do', 'for', 'return', 'state', 'default', 'jump',
-	// types (LSL)
-	'integer', 'float', 'string', 'key', 'vector', 'rotation', 'quaternion', 'list',
-	'void', 'event'
-]);
-
 export class TokenStream {
 	// Source can be a static array of tokens or a producer function
 

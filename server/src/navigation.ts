@@ -2,8 +2,8 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Range, TextEdit } from 'vscode-languageserver/node';
 import type { Analysis } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
-import type { Defs } from './defs';
 import type { Token as LexToken } from './lexer';
+import { isKeyword } from './ast/lexer';
 
 export type SimpleToken = { kind: string; value: string; start: number; end: number };
 
@@ -20,22 +20,15 @@ export function getWordAt(doc: TextDocument, offset: number): { start: number; e
 	return { start: s, end: e, text: w };
 }
 
-export function isReservedIdentifier(defs: Defs | null, name: string): boolean {
-	if (!defs) return false;
-	if (name === 'event') return true;
-	return defs.keywords.has(name) || defs.types.has(name);
-}
-
 export function prepareRename(
 	doc: TextDocument,
 	offset: number,
 	analysis: Analysis,
 	pre: PreprocResult,
-	defs: Defs | null
 ): Range | null {
 	const w = getWordAt(doc, offset);
 	if (!w) return null;
-	if (isReservedIdentifier(defs, w.text)) return null;
+	if (isKeyword(w.text)) return null;
 
 	const atDecl = analysis.symbolAt(offset);
 	if (atDecl && doc.offsetAt(atDecl.range.start) <= offset && offset <= doc.offsetAt(atDecl.range.end)) {
@@ -61,7 +54,6 @@ export function computeRenameEdits(
 	newName: string,
 	analysis: Analysis,
 	pre: PreprocResult,
-	defs: Defs | null,
 	tokens: ReadonlyArray<LexToken>
 ): { changes: Record<string, TextEdit[]> } {
 	const changes: Record<string, TextEdit[]> = {};
@@ -80,7 +72,7 @@ export function computeRenameEdits(
 	const oldName = w.text;
 	if (oldName === newName) return { changes };
 	if (!/^[A-Za-z_]\w*$/.test(newName)) return { changes };
-	if (isReservedIdentifier(defs, newName)) return { changes };
+	if (isKeyword(newName)) return { changes };
 
 	let targetDecl = analysis.symbolAt(offset);
 	if (!targetDecl) {

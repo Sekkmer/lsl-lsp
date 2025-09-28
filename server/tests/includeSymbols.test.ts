@@ -5,7 +5,7 @@ import { docFrom, runPipeline, semToSpans } from './testUtils';
 import { semanticTokensLegend } from '../src/semtok';
 import { loadDefs } from '../src/defs';
 
-const defsPath = path.join(__dirname, 'fixtures', 'lsl-defs.json');
+const defsPath = path.join(__dirname, 'fixtures', 'lsl-defs.yaml');
 
 function tmpFile(rel: string, contents: string) {
 	const base = path.join(__dirname, 'tmp_includes');
@@ -54,7 +54,7 @@ describe('include symbols/macros', () => {
 		const doc = docFrom(code, 'file:///proj/missing.lsl');
 		const defs = await loadDefs(defsPath);
 		const { pre } = runPipeline(doc, defs, { includePaths: [] });
-		expect(pre.missingIncludes.length).toBeGreaterThanOrEqual(1);
+		expect((pre.missingIncludes ?? []).length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('recognizes globals from included headers', async () => {

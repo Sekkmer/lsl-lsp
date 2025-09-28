@@ -3,7 +3,7 @@ import path from 'node:path';
 import { docFrom, runPipeline } from './testUtils';
 import { loadDefs } from '../src/defs';
 
-const defsPath = path.join(__dirname, '..', '..', 'common', 'lsl-defs.json');
+const defsPath = path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 describe('VectorLiteral component typing', () => {
 	it('flags non-numeric components in vector literal', async () => {

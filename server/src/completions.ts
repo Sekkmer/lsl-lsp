@@ -9,6 +9,8 @@ import type { Analysis, Decl } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import path from 'node:path';
 import fs from 'node:fs';
+import { TYPES } from './ast';
+import { KEYWORD_SET } from './ast/lexer';
 
 export function lslCompletions(
 	doc: TextDocument,
@@ -60,10 +62,10 @@ export function lslCompletions(
 		return out;
 	}
 
-	// Keywords
-	for (const k of defs.keywords) items.push(scored({ label: k, kind: CompletionItemKind.Keyword }));
 	// Types
-	for (const t of defs.types) items.push(scored({ label: t, kind: CompletionItemKind.Class, detail: 'type' }));
+	for (const t of TYPES) items.push(scored({ label: t, kind: CompletionItemKind.Class, detail: 'type' }));
+	// Keywords
+	for (const k of KEYWORD_SET) items.push(scored({ label: k, kind: CompletionItemKind.Keyword }));
 	// Constants
 	for (const c of defs.consts.values()) items.push(typeScored({ label: c.name, kind: CompletionItemKind.EnumMember, detail: c.type, documentation: c.doc }, c.type));
 	// Events

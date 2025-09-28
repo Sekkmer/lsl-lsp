@@ -20,6 +20,9 @@ importers:
       eslint:
         specifier: ^9.9.0
         version: 9.34.0
+      js-yaml:
+        specifier: ^4.1.0
+        version: 4.1.0
       typescript-eslint:
         specifier: ^8.40.0
         version: 8.40.0(eslint@9.34.0)(typescript@5.9.2)
@@ -51,6 +54,9 @@ importers:
       cheerio:
         specifier: ^1.1.2
         version: 1.1.2
+      js-yaml:
+        specifier: ^4.1.0
+        version: 4.1.0
       undici:
         specifier: ^7.15.0
         version: 7.15.0
@@ -58,6 +64,9 @@ importers:
         specifier: ^4.1.1
         version: 4.1.1
     devDependencies:
+      '@types/js-yaml':
+        specifier: ^4.0.9
+        version: 4.0.9
       '@types/node':
         specifier: ^24.3.0
         version: 24.3.0
@@ -76,6 +85,9 @@ importers:
       ajv:
         specifier: ^8.17.1
         version: 8.17.1
+      js-yaml:
+        specifier: ^4.1.0
+        version: 4.1.0
       source-map-support:
         specifier: ^0.5.21
         version: 0.5.21
@@ -88,10 +100,10 @@ importers:
       vscode-uri:
         specifier: ^3.1.0
         version: 3.1.0
-      yaml:
-        specifier: ^2.8.1
-        version: 2.8.1
     devDependencies:
+      '@types/js-yaml':
+        specifier: ^4.0.9
+        version: 4.0.9
       '@types/node':
         specifier: ^24.3.0
         version: 24.3.0
@@ -617,6 +629,9 @@ packages:
 
   '@types/estree@1.0.8':
     resolution: {integrity: sha512-dWHzHa2WqEXI/O1E9OjrocMTKJl2mSrEolh1Iomrv6U+JuNwaHXsXx9bLu5gG7BUWFIN0skIQJQ/L1rIex4X6w==}
+
+  '@types/js-yaml@4.0.9':
+    resolution: {integrity: sha512-k4MGaQl5TGo/iipqb2UDG2UwjXziSWkh0uysQelTlJpX1qGlpUZYm8PnO4DxG1qBomtJUdYJ6qR6xdIah10JLg==}
 
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
@@ -2717,6 +2732,8 @@ snapshots:
 
   '@types/estree@1.0.8': {}
 
+  '@types/js-yaml@4.0.9': {}
+
   '@types/json-schema@7.0.15': {}
 
   '@types/node@24.3.0':
@@ -4505,7 +4522,8 @@ snapshots:
 
   yallist@4.0.0: {}
 
-  yaml@2.8.1: {}
+  yaml@2.8.1:
+    optional: true
 
   yauzl@2.10.0:
     dependencies:

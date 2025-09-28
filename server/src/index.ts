@@ -258,7 +258,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 		const p = settings.definitionsPath && settings.definitionsPath.trim().length > 0
 			? settings.definitionsPath
 			: '';
-		defs = await loadDefs(p || 'lsl-defs.json');
+		defs = await loadDefs(p);
 	} catch (e) {
 		// loadDefs already falls back to bundled defs; ensure defs is set or rethrow
 		if (!defs) throw e;
@@ -588,7 +588,7 @@ connection.onPrepareRename((params, token) => {
 	const doc = documents.get(params.textDocument.uri); if (!doc || !defs) return null;
 	const entry = getPipeline(doc); if (!entry) return null;
 	const offset = doc.offsetAt(params.position);
-	return navPrepareRename(doc, offset, entry.analysis, entry.pre, defs);
+	return navPrepareRename(doc, offset, entry.analysis, entry.pre);
 });
 
 connection.onRenameRequest((params, token) => {
@@ -597,7 +597,7 @@ connection.onRenameRequest((params, token) => {
 	const entry = getPipeline(doc); if (!entry) return { changes: {} };
 	const newName = params.newName || '';
 	const offset = doc.offsetAt(params.position);
-	return computeRenameEdits(doc, offset, newName, entry.analysis, entry.pre, defs, entry.tokens);
+	return computeRenameEdits(doc, offset, newName, entry.analysis, entry.pre, entry.tokens);
 });
 
 documents.listen(connection);

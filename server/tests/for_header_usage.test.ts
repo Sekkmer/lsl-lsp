@@ -3,7 +3,7 @@ import { docFrom, runPipeline } from './testUtils';
 import { loadDefs } from '../src/defs';
 import path from 'node:path';
 
-const defsPath = path.join(__dirname, '..', '..', 'common', 'lsl-defs.json');
+const defsPath = path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 describe('for-loop header identifier usage', () => {
 	it('does not flag local used only in for-header in function', async () => {

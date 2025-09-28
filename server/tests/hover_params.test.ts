@@ -15,6 +15,10 @@ describe('hover: parameter docs inside calls', async () => {
 		expect(hv).toBeTruthy();
 		const md = hoverToString(hv!);
 		expect(md).toContain('llSay(');
+		expect(md).toContain('**Cost:**');
+		expect(md).toContain('Energy: 10');
+		expect(md).toContain('Sleep: 0.1s');
+		expect(md).toContain('Experience-only');
 		expect(md).toContain('Parameter: channel');
 		expect(md).toContain('public chat');
 	});

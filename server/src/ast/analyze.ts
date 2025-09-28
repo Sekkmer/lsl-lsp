@@ -8,10 +8,11 @@ import type { SimpleType } from './infer';
 import { inferExprTypeFromAst } from './infer';
 import { normalizeType } from '../defs';
 import { AssertNever } from '../utils';
-import type { Token } from '../core/tokens';
 import type { Analysis, Diag, Decl } from '../analysisTypes';
 import { LSL_DIAGCODES } from '../analysisTypes';
 import type { DiagCode } from '../analysisTypes';
+import { isKeyword } from './lexer';
+import { Token } from '../core/tokens';
 
 // Scope now carries a lightweight kind tag to distinguish event/function contexts
 type Scope = { parent?: Scope; vars: Map<string, Decl>; kind?: 'event' | 'func' | 'state' | 'global' | 'block' };
@@ -98,8 +99,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		// it is nevertheless a reserved word in LSL and must be disallowed as a user identifier.
 		// Older logic special-cased this; during refactor the special-case was dropped causing
 		// tests expecting a reserved diagnostic for a variable named "event" to fail. We restore it here.
-		if (name === 'event') return true;
-		return defs.keywords.has(name) || defs.types.has(name) || defs.funcs.has(name) || defs.events.has(name) || defs.consts.has(name);
+		return isKeyword(name) || defs.funcs.has(name) || defs.events.has(name) || defs.consts.has(name);
 	}
 	// Find the name occurrence range within a span; if preferHeader is true, only search before '{'
 	function findNameRangeInSpan(name: string, span: { start: number; end: number }, preferHeader: boolean): Range {
@@ -218,8 +218,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				addRef(e.name, spanToRange(doc, e.span), scope);
 				const known = resolveInScope(e.name, scope)
 					|| defs.consts.has(e.name)
-					|| defs.types.has(e.name)
-					|| defs.keywords.has(e.name)
+					|| isKeyword(e.name)
 					|| defs.funcs.has(e.name)
 					|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, e.name))
 					|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, e.name))
@@ -256,8 +255,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 						|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, calleeName))
 						|| fallbackFuncs.has(calleeName)
 						|| defs.consts.has(calleeName) // tolerate accidental const call as known id for better downstream type error
-						|| defs.types.has(calleeName) // likewise for types
-						|| defs.keywords.has(calleeName);
+						|| isKeyword(calleeName);
 					if (!known) {
 						diagnostics.push({
 							code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER,

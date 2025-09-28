@@ -5,7 +5,8 @@ import { Defs } from './defs';
 import type { PreprocResult } from './core/preproc';
 import { Analysis } from './analysisTypes';
 import type { Decl } from './analysisTypes';
-import { isKeyword as isAstKeyword } from './ast/lexer';
+import { isKeyword as isAstKeyword, isKeyword } from './ast/lexer';
+import { isType } from './ast';
 
 const tokenTypes = [
 	'namespace', 'type', 'class', 'enum', 'interface', 'struct', 'typeParameter',
@@ -215,9 +216,9 @@ export function buildSemanticTokens(
 
 		if (t.kind === 'id') {
 			// Types must not be colored as keywords; classify types first
-			if (defs.types.has(t.value)) { push(t, idx('type')); continue; }
+			if (isType(t.value)) { push(t, idx('type')); continue; }
 			// Keywords should win regardless of following tokens (e.g., 'if('), but exclude types
-			if (defs.keywords.has(t.value) || isAstKeyword(t.value)) { push(t, idx('keyword')); continue; }
+			if (isKeyword(t.value) || isAstKeyword(t.value)) { push(t, idx('keyword')); continue; }
 			// Declarations: classify only when the token is exactly the declaration identifier, not merely inside its range
 			if (analysis) {
 				const decl = analysis.symbolAt(t.start);

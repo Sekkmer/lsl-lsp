@@ -1,4 +1,4 @@
-client-vscode/common/lsl-defs.json
+client-vscode/common/lsl_definitions.yaml
 /.github/prompts/
 node_modules/
 out/

@@ -13,7 +13,7 @@ const KEYWORDS = [
 	'void', 'event'
 ] as const;
 type Keyword = typeof KEYWORDS[number];
-const KEYWORD_SET = new Set(KEYWORDS) as ReadonlySet<Keyword>;
+export const KEYWORD_SET = new Set(KEYWORDS) as ReadonlySet<Keyword>;
 export function isKeyword(value: string): value is Keyword {
 	return KEYWORD_SET.has(value as Keyword);
 }

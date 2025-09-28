@@ -25,7 +25,7 @@ describe('e2e fixtures', () => {
 		expect(errorDiags.length).toBe(0);
 	});
 	it('big.lsl produces stable outputs', async () => {
-		const defs = await loadDefs(path.join(__dirname, '..', '..', 'common', 'lsl-defs.json'));
+		const defs = await loadDefs(path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
 		const code = await readFixture('e2e/big.lsl');
 		const doc = docFrom(code, 'file:///proj/big.lsl');
 		const { analysis } = runPipeline(doc, defs, {
@@ -43,7 +43,7 @@ describe('e2e fixtures', () => {
 		expect(errorOrWarn.length).toBe(0);
 	});
 	it('base.lsl compiles cleanly and provides Sign/Verify/XorValue', async () => {
-		const defs = await loadDefs(path.join(__dirname, '..', '..', 'common', 'lsl-defs.json'));
+		const defs = await loadDefs(path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
 		const code = await readFixture('e2e/base.lsl');
 		const doc = docFrom(code, 'file:///proj/base.lsl');
 		const { analysis } = runPipeline(doc, defs, { includePaths: [path.join(__dirname, 'fixtures', 'e2e')] });
@@ -56,7 +56,7 @@ describe('e2e fixtures', () => {
 		expect(errorOrWarn.length).toBe(0);
 	});
 	it('derive.lsl includes base and uses its API without errors', async () => {
-		const defs = await loadDefs(path.join(__dirname, '..', '..', 'common', 'lsl-defs.json'));
+		const defs = await loadDefs(path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
 		const code = await readFixture('e2e/derive.lsl');
 		const doc = docFrom(code, 'file:///proj/derive.lsl');
 		const { pre, analysis } = runPipeline(doc, defs, { includePaths: [path.join(__dirname, 'fixtures', 'e2e')] });

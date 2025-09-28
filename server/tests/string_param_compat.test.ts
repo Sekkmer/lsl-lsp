@@ -4,7 +4,7 @@ import { loadDefs } from '../src/defs';
 import path from 'node:path';
 import { runPipeline } from './testUtils';
 
-const defsPath = path.join(__dirname, '..', '..', 'common', 'lsl-defs.json');
+const defsPath = path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 describe('string parameter implicit conversions', () => {
 	it('accepts integer/float/key where string is expected', async () => {

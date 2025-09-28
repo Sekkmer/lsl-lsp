@@ -1,4 +1,5 @@
-import { KEYWORDS, type Token, TokenStream } from './tokens';
+import { isKeyword } from '../ast/lexer';
+import { type Token, TokenStream } from './tokens';
 
 // Standalone tokenizer: consumes whitespace and line continuations, emits
 // comments and directives as tokens, but does NOT expand or evaluate macros.
@@ -116,7 +117,7 @@ export class Tokenizer {
 				let tEnd = k; while (tEnd < this.n && isNoise(this.text[tEnd]!)) tEnd++;
 				const word = this.text.slice(j, k);
 				this.i = tEnd;
-				return this.mk(KEYWORDS.has(word) ? 'keyword' : 'id', word, s, tEnd);
+				return this.mk(isKeyword(word) ? 'keyword' : 'id', word, s, tEnd);
 			}
 		}
 

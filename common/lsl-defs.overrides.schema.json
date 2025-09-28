@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/sekkmer/lsl-lsp/overrides-schema.json",
+  "title": "LSL Definition Overrides",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "constants": {
+      "$ref": "#/definitions/entityOverrideMap"
+    },
+    "functions": {
+      "$ref": "#/definitions/functionOverrideMap"
+    },
+    "events": {
+      "$ref": "#/definitions/entityOverrideMap"
+    }
+  },
+  "required": ["constants", "functions", "events"],
+  "definitions": {
+    "entityOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "doc": {
+          "type": ["string", "null", "boolean"],
+          "description": "Override or suppress description text. Use null/false to remove documentation."
+        },
+        "wiki": {
+          "type": ["string", "null", "boolean"],
+          "description": "Override or disable the auto-generated wiki link."
+        },
+        "deprecated": {
+          "type": "boolean",
+          "description": "Force the deprecated flag on or off."
+        }
+      }
+    },
+    "entityOverrideMap": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": {
+        "$ref": "#/definitions/entityOverride"
+      }
+    },
+    "paramOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Replace the generated parameter name."
+        },
+        "type": {
+          "type": "string",
+          "description": "Override the parameter type."
+        },
+        "doc": {
+          "type": ["string", "null", "boolean"],
+          "description": "Override or suppress parameter documentation."
+        },
+        "default": {
+          "description": "Provide or remove a default value."
+        }
+      }
+    },
+    "functionOverride": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/entityOverride"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "params": {
+              "type": "object",
+              "default": {},
+              "additionalProperties": {
+                "$ref": "#/definitions/paramOverride"
+              },
+              "description": "Per-parameter overrides keyed by numeric index or parameter name."
+            },
+            "energy": {
+              "type": ["number", "null"],
+              "description": "Override the function's energy cost; null removes the field."
+            },
+            "sleep": {
+              "type": ["number", "null"],
+              "description": "Override the function's sleep duration; null removes the field."
+            },
+            "experience": {
+              "type": ["boolean", "null"],
+              "description": "Set or clear the experience requirement flag."
+            }
+          }
+        }
+      ]
+    },
+    "functionOverrideMap": {
+      "type": "object",
+      "default": {},
+      "additionalProperties": {
+        "$ref": "#/definitions/functionOverride"
+      }
+    }
+  }
+}

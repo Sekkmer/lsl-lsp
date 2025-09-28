@@ -1,0 +1,77 @@
+version: test
+constants:
+  - name: 'TRUE'
+    type: integer
+    value: 1
+  - name: 'FALSE'
+    type: integer
+    value: 0
+  - name: NULL_KEY
+    type: key
+  - name: STRING_TRIM
+    type: integer
+events:
+  - name: state_entry
+    params: []
+  - name: touch_start
+    params:
+      - name: total_number
+        type: integer
+        doc: Number of detected touches.
+  - name: http_response
+    params:
+      - name: id
+        type: key
+      - name: status
+        type: integer
+      - name: metadata
+        type: list
+      - name: body
+        type: string
+  - name: listen
+    params:
+      - name: channel
+        type: integer
+      - name: name
+        type: string
+      - name: id
+        type: key
+      - name: message
+        type: string
+functions:
+  - name: llSay
+    returns: void
+    params:
+      - name: channel
+        type: integer
+        doc: The chat channel. 0 is public chat.
+      - name: msg
+        type: string
+        doc: The message to say.
+    energy: 10
+    sleep: 0.1
+    experience: true
+  - name: llOwnerSay
+    returns: void
+    params:
+      - name: msg
+        type: string
+  - name: llGetSubString
+    returns: string
+    params:
+      - name: src
+        type: string
+      - name: start
+        type: integer
+      - name: end
+        type: integer
+  - name: llGetOwner
+    returns: key
+    params: []
+  - name: llStringTrim
+    returns: string
+    params:
+      - name: src
+        type: string
+      - name: opts
+        type: integer
