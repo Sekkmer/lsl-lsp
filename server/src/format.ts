@@ -210,9 +210,18 @@ function formatCore(text: string, disabledRanges: { start: number; end: number }
 				let j = i;
 				while (j < text.length && (text[j] === ' ' || text[j] === '\t')) j++;
 				if (j < text.length && text[j] !== '\n' && text[j] !== '\r') {
-					out += '\n';
-					pendingIndent = true;
-					i = j;
+					const isLineComment = text[j] === '/' && text[j + 1] === '/';
+					const isBlockComment = text[j] === '/' && text[j + 1] === '*';
+					if (isLineComment || isBlockComment) {
+						let trim = out.length - 1;
+						while (trim >= 0 && (out[trim] === ' ' || out[trim] === '\t')) trim--;
+						out = out.slice(0, trim + 1) + ' ';
+						i = j;
+					} else {
+						out += '\n';
+						pendingIndent = true;
+						i = j;
+					}
 				}
 			}
 			_lastNonWs = ';';
@@ -228,9 +237,10 @@ function formatCore(text: string, disabledRanges: { start: number; end: number }
 					else if (text[i+1] === c) { op = c + c; i += 2; }
 					else if (text[i+1] === '=') { op = c + '='; i += 2; }
 					else { op = c; i += 1; }
+					while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++;
 				} else if (ch === '=') {
 					// '=' or '==' or compound assignment like +=, -=, *=, etc.
-					if (text[i+1] === '=') { op = '=='; i += 2; }
+					if (text[i+1] === '=') { op = '=='; i += 2; while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++; }
 					else {
 						// Look behind in output for an operator to merge with '=' (e.g., '+', '-', '*', '/', '%', '&', '|', '^', '<<', '>>')
 						let k = out.length - 1;
@@ -261,6 +271,7 @@ function formatCore(text: string, disabledRanges: { start: number; end: number }
 						while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++;
 					}
 				}
+				while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++;
 				// emit with spaces around combined operator
 				let k2 = out.length - 1; while (k2 >= 0 && (out[k2] === ' ' || out[k2] === '\t')) k2--;
 				out = out.slice(0, k2 + 1);

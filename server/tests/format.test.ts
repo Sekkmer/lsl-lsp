@@ -97,4 +97,19 @@ describe('formatter basics', () => {
 		// Ensure no stray space separates + and =
 		expect(out).not.toMatch(/\+\s+=/);
 	});
+
+	it('does not accumulate extra spaces inside for headers across runs', () => {
+		const src = 'default {\nfor (i = 0; i <= numPrims; i++) {\n}\n}\n';
+		const once = fmt(src);
+		const twice = fmt(once);
+		expect(once).toContain('for (i = 0; i <= numPrims; i++)');
+		expect(twice).toBe(once);
+		expect(twice).not.toMatch(/<=\s{2,}numPrims/);
+	});
+
+	it('keeps trailing line comments on the same line as statements', () => {
+		const src = 'default {\ninteger thing = 0; // This is a comment\n}\n';
+		const out = fmt(src);
+		expect(out).toContain('integer thing = 0; // This is a comment');
+	});
 });
