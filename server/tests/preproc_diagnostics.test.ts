@@ -41,4 +41,18 @@ describe('preprocessor diagnostics', () => {
 		const msgs = messages(pre);
 		expect(msgs.some(m => /Unmatched conditional block/i.test(m))).toBe(true);
 	});
+
+	it('allows bitwise operators in #if expressions', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom(
+			'#define DBG_DEBUG 1\n' +
+			'#define DEBUGLEVEL DBG_DEBUG\n' +
+			'#if ((DEBUGLEVEL) & DBG_DEBUG) == DBG_DEBUG\n' +
+			'int X;\n' +
+			'#endif\n'
+		);
+		const { pre } = runPipeline(doc, defs);
+		const msgs = messages(pre);
+		expect(msgs.some(m => /Malformed #if expression/i.test(m))).toBe(false);
+	});
 });

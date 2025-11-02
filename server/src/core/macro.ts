@@ -593,13 +593,13 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 	// Tokenizer
 	const toks: Tok[] = [];
 	let i = 0;
-	const twoOps = new Set(['&&', '||', '==', '!=', '<=', '>=']);
+	const twoOps = new Set(['&&', '||', '==', '!=', '<=', '>=', '<<', '>>']);
 	while (i < s.length) {
 		const ch = s[i]!;
 		if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') { i++; continue; }
 		const two = s.slice(i, i + 2);
 		if (twoOps.has(two)) { toks.push({ kind: 'op', value: two }); i += 2; continue; }
-		if ('+-*/%<>!'.includes(ch)) { toks.push({ kind: 'op', value: ch }); i++; continue; }
+		if ('+-*/%<>!&|^~'.includes(ch)) { toks.push({ kind: 'op', value: ch }); i++; continue; }
 		if (ch === '(') { toks.push({ kind: 'lparen' }); i++; continue; }
 		if (ch === ')') { toks.push({ kind: 'rparen' }); i++; continue; }
 		if (/[0-9]/.test(ch)) {
@@ -670,7 +670,7 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 		}
 		if (t.kind === 'lparen') {
 			take();
-			const v = parseOr();
+			const v = parseLogOr();
 			if (peek() && peek()!.kind === 'rparen') take();
 			return v;
 		}
@@ -679,12 +679,13 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 
 	function parseUnary(): number {
 		const t = peek();
-		if (t && t.kind === 'op' && (t.value === '!' || t.value === '+' || t.value === '-')) {
+		if (t && t.kind === 'op' && (t.value === '!' || t.value === '+' || t.value === '-' || t.value === '~')) {
 			take();
 			const v = parseUnary();
 			if (t.value === '!') return truthy(v) ? 0 : 1;
 			if (t.value === '+') return +v;
-			return -v;
+			if (t.value === '-') return -v;
+			return ~v;
 		}
 		return parsePrimary();
 	}
@@ -694,7 +695,9 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 		while (peekOp() && ['*', '/', '%'].includes(peekOp()!)) {
 			const op = takeOp()!;
 			const r = parseUnary();
-			if (op === '*') v = v * r; else if (op === '/') v = Math.trunc(v / r); else v = v % r;
+			if (op === '*') v = v * r;
+			else if (op === '/') v = Math.trunc(v / r);
+			else v = v % r;
 		}
 		return v;
 	}
@@ -709,11 +712,22 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 		return v;
 	}
 
-	function parseRel(): number {
+	function parseShift(): number {
 		let v = parseAdd();
-		while (peekOp() && ['<', '>', '<=', '>='].includes(peekOp()!)) {
+		while (peekOp() && (peekOp() === '<<' || peekOp() === '>>')) {
 			const op = takeOp()!;
 			const r = parseAdd();
+			if (op === '<<') v = v << r;
+			else v = v >> r;
+		}
+		return v;
+	}
+
+	function parseRel(): number {
+		let v = parseShift();
+		while (peekOp() && ['<', '>', '<=', '>='].includes(peekOp()!)) {
+			const op = takeOp()!;
+			const r = parseShift();
 			if (op === '<') v = v < r ? 1 : 0;
 			else if (op === '>') v = v > r ? 1 : 0;
 			else if (op === '<=') v = v <= r ? 1 : 0;
@@ -732,27 +746,57 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 		return v;
 	}
 
-	function parseAnd(): number {
+	function parseBitAnd(): number {
 		let v = parseEq();
-		while (peekOp() === '&&') {
+		while (peekOp() === '&') {
 			takeOp();
 			const r = parseEq();
+			v = (v & r);
+		}
+		return v;
+	}
+
+	function parseBitXor(): number {
+		let v = parseBitAnd();
+		while (peekOp() === '^') {
+			takeOp();
+			const r = parseBitAnd();
+			v = v ^ r;
+		}
+		return v;
+	}
+
+	function parseBitOr(): number {
+		let v = parseBitXor();
+		while (peekOp() === '|') {
+			takeOp();
+			const r = parseBitXor();
+			v = v | r;
+		}
+		return v;
+	}
+
+	function parseLogAnd(): number {
+		let v = parseBitOr();
+		while (peekOp() === '&&') {
+			takeOp();
+			const r = parseBitOr();
 			v = truthy(v) && truthy(r) ? 1 : 0;
 		}
 		return v;
 	}
 
-	function parseOr(): number {
-		let v = parseAnd();
+	function parseLogOr(): number {
+		let v = parseLogAnd();
 		while (peekOp() === '||') {
 			takeOp();
-			const r = parseAnd();
+			const r = parseLogAnd();
 			v = truthy(v) || truthy(r) ? 1 : 0;
 		}
 		return v;
 	}
 
-	const result = parseOr();
+	const result = parseLogOr();
 	return truthy(result);
 }
 
@@ -776,13 +820,13 @@ function validateIfExpr(expr: string): boolean {
 	if (!s) return false;
 	const toks: Tok[] = [];
 	let i = 0;
-	const twoOps = new Set(['&&', '||', '==', '!=', '<=', '>=']);
+	const twoOps = new Set(['&&', '||', '==', '!=', '<=', '>=', '<<', '>>']);
 	while (i < s.length) {
 		const ch = s[i]!;
 		if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') { i++; continue; }
 		const two = s.slice(i, i + 2);
 		if (twoOps.has(two)) { toks.push({ kind: 'op', value: two }); i += 2; continue; }
-		if ('+-*/%<>!'.includes(ch)) { toks.push({ kind: 'op', value: ch }); i++; continue; }
+		if ('+-*/%<>!&|^~'.includes(ch)) { toks.push({ kind: 'op', value: ch }); i++; continue; }
 		if (ch === '(') { toks.push({ kind: 'lparen' }); i++; continue; }
 		if (ch === ')') { toks.push({ kind: 'rparen' }); i++; continue; }
 		if (/[0-9]/.test(ch)) { let j = i + 1; while (j < s.length && /[0-9]/.test(s[j]!)) j++; toks.push({ kind: 'num', value: 0 }); i = j; continue; }
@@ -807,12 +851,20 @@ function validateIfExpr(expr: string): boolean {
 		if (t.kind === 'lparen') { take(); const v = parseOr(); if (!peek() || peek()!.kind !== 'rparen') { ok = false; return v; } take(); return v; }
 		ok = false; return 0;
 	}
-	function parseUnary(): number { const t = peek(); if (t && t.kind === 'op' && (t.value === '!' || t.value === '+' || t.value === '-')) { take(); return parseUnary(); } return parsePrimary(); }
+	function parseUnary(): number {
+		const t = peek();
+		if (t && t.kind === 'op' && (t.value === '!' || t.value === '+' || t.value === '-' || t.value === '~')) { take(); return parseUnary(); }
+		return parsePrimary();
+	}
 	function parseMul(): number { let v = parseUnary(); while (peek() && peek()!.kind === 'op' && ['*', '/', '%'].includes((peek() as { kind: 'op'; value: string }).value)) { take(); v = parseUnary(); } return v; }
 	function parseAdd(): number { let v = parseMul(); while (peek() && peek()!.kind === 'op' && ['+', '-'].includes((peek() as { kind: 'op'; value: string }).value)) { take(); v = parseMul(); } return v; }
-	function parseRel(): number { let v = parseAdd(); while (peek() && peek()!.kind === 'op' && ['<', '>', '<=', '>='].includes((peek() as { kind: 'op'; value: string }).value)) { take(); v = parseAdd(); } return v; }
+	function parseShift(): number { let v = parseAdd(); while (peek() && peek()!.kind === 'op' && ['<<', '>>'].includes((peek() as { kind: 'op'; value: string }).value)) { take(); v = parseAdd(); } return v; }
+	function parseRel(): number { let v = parseShift(); while (peek() && peek()!.kind === 'op' && ['<', '>', '<=', '>='].includes((peek() as { kind: 'op'; value: string }).value)) { take(); v = parseShift(); } return v; }
 	function parseEq(): number { let v = parseRel(); while (peek() && peek()!.kind === 'op' && ['==', '!='].includes((peek() as { kind: 'op'; value: string }).value)) { take(); v = parseRel(); } return v; }
-	function parseAnd(): number { let v = parseEq(); while (peek() && peek()!.kind === 'op' && (peek() as { kind: 'op'; value: string }).value === '&&') { take(); v = parseEq(); } return v; }
+	function parseBitAnd(): number { let v = parseEq(); while (peek() && peek()!.kind === 'op' && (peek() as { kind: 'op'; value: string }).value === '&') { take(); v = parseEq(); } return v; }
+	function parseBitXor(): number { let v = parseBitAnd(); while (peek() && peek()!.kind === 'op' && (peek() as { kind: 'op'; value: string }).value === '^') { take(); v = parseBitAnd(); } return v; }
+	function parseBitOr(): number { let v = parseBitXor(); while (peek() && peek()!.kind === 'op' && (peek() as { kind: 'op'; value: string }).value === '|') { take(); v = parseBitXor(); } return v; }
+	function parseAnd(): number { let v = parseBitOr(); while (peek() && peek()!.kind === 'op' && (peek() as { kind: 'op'; value: string }).value === '&&') { take(); v = parseBitOr(); } return v; }
 	function parseOr(): number { let v = parseAnd(); while (peek() && peek()!.kind === 'op' && (peek() as { kind: 'op'; value: string }).value === '||') { take(); v = parseAnd(); } return v; }
 	parseOr();
 	if (!ok) return false;
