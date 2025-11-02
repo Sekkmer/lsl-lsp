@@ -159,4 +159,22 @@ default {
 		const msgs = analysis.diagnostics.map(d => d.message);
 		expect(msgs.some(m => m.includes('Operator * type mismatch'))).toBe(false);
 	});
+
+	it('allows rotation multiplication and compound assignment', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+	state_entry() {
+		rotation r1 = <0,0,0,1>;
+		rotation r2 = <0,0,0,1>;
+		rotation r3 = r1 * r2;
+		r1 *= r2;
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///ops_rot_mul.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.some(m => m.includes('Operator * type mismatch'))).toBe(false);
+	});
 });

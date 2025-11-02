@@ -150,7 +150,8 @@ export function validateOperatorsFromAst(
 						const isNumericBoth = num(lt) && num(rt);
 						const isVectorScale = (lt === 'vector' && num(rt)) || (num(lt) && rt === 'vector');
 						const isVectorRotate = (lt === 'vector' && rt === 'rotation');
-						if (isVectorDot || isNumericBoth || isVectorScale || isVectorRotate) {
+						const isRotationCompose = lt === 'rotation' && rt === 'rotation';
+						if (isVectorDot || isNumericBoth || isVectorScale || isVectorRotate || isRotationCompose) {
 							// ok
 						} else if (lt !== 'any' && rt !== 'any') {
 							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator * type mismatch: ${lt} * ${rt}`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Information });
