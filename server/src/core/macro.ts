@@ -36,6 +36,21 @@ interface FileSegCacheEntry {
 	version: number; // simple bump / mtime placeholder (caller supplies)
 }
 
+const NOISE_CHARS = new Set(['#', '$', '?', '\\', '"', '\'']);
+const isNoiseChar = (ch: string | undefined) => !!ch && NOISE_CHARS.has(ch);
+const lstripNoise = (text: string): string => {
+	let idx = 0;
+	while (idx < text.length && isNoiseChar(text[idx]!)) idx++;
+	return text.slice(idx);
+};
+const stripNoise = (text: string): string => {
+	let start = 0;
+	let end = text.length;
+	while (start < end && isNoiseChar(text[start]!)) start++;
+	while (end > start && isNoiseChar(text[end - 1]!)) end--;
+	return text.slice(start, end);
+};
+
 // Simple in-memory cache: fileId -> cache entry. The caller (pipeline) can clear or bump version.
 const fileSegCache = new Map<string, FileSegCacheEntry>();
 
@@ -235,7 +250,9 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 	};
 	const collectIfUndef = (expr: string, span: {start:number; end:number}) => {
 		// naive scan of identifiers; ignore those following defined or part of defined(IDENT)
-		const ids = Array.from(expr.matchAll(/\b([A-Za-z_][A-Za-z0-9_]*)\b/g)).map(m=>m[1]!);
+		const ids = Array.from(expr.matchAll(/[#$?"'\\]*[A-Za-z_][A-Za-z0-9_]*[#$?"'\\]*/g))
+			.map(m => stripNoise(m[0]!))
+			.filter(Boolean);
 		for (let i=0;i<ids.length;i++) {
 			const id = ids[i]!;
 			if (id === 'defined') { i++; continue; }
@@ -332,14 +349,17 @@ function parseDirectiveKind(raw: string): DirKind | null {
 	if (head === 'elif') return { kind: 'elif', expr: rest };
 	if (head === 'else') return { kind: 'else' };
 	if (head === 'endif') return { kind: 'endif' };
-	if (head === 'ifdef') { const name = rest.split(/\s+/)[0] || ''; return { kind: 'ifdef', name }; }
-	if (head === 'ifndef') { const name = rest.split(/\s+/)[0] || ''; return { kind: 'ifndef', name }; }
-	if (head === 'undef') { const name = rest.split(/\s+/)[0] || ''; return { kind: 'undef', name }; }
+	if (head === 'ifdef') { const raw = rest.split(/\s+/)[0] || ''; const name = stripNoise(raw); return { kind: 'ifdef', name }; }
+	if (head === 'ifndef') { const raw = rest.split(/\s+/)[0] || ''; const name = stripNoise(raw); return { kind: 'ifndef', name }; }
+	if (head === 'undef') { const raw = rest.split(/\s+/)[0] || ''; const name = stripNoise(raw); return { kind: 'undef', name }; }
 	if (head === 'include') { const target = parseIncludeTarget(rest) || ''; return { kind: 'include', target }; }
 	if (head === 'define') {
-		const mm = /^([A-Za-z_]\w*)(\s*\(([^)]*)\))?(?:\s+([\s\S]*))?$/.exec(rest);
+		const leadingStripped = lstripNoise(rest);
+		if (!leadingStripped) return null;
+		const mm = /^([A-Za-z_]\w*)(\s*\(([^)]*)\))?(?:\s+([\s\S]*))?$/.exec(leadingStripped);
 		if (mm) {
-			const name = mm[1]!;
+			const name = stripNoise(mm[1]!);
+			if (!name) return null;
 			if (mm[2]) {
 				const params = (mm[3] || '').trim();
 				// Preserve embedded newlines across continuations; trim right only

@@ -25,7 +25,7 @@
 			"patterns": [
 				{
 					"name": "meta.preprocessor.define.lsl",
-					"begin": "\\G\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?:\\(\\s*[^)]*\\))?",
+					"begin": "\\G\\s*([#?$A-Za-z_][#?$A-Za-z0-9_]*)\\s*(?:\\(\\s*[^)]*\\))?",
 					"beginCaptures": { "1": { "name": "entity.name.constant.macro.lsl" } },
 					"end": "$",
 					"patterns": [

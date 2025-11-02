@@ -63,6 +63,15 @@ describe('TextMate grammar structural checks', () => {
 		expect(matches.some(m => m.includes('__VA_OPT__'))).toBe(true);
 	});
 
+	it('macro define pattern accepts noise-prefixed macro names', () => {
+		const g = loadGrammar();
+		const def = findRuleByName(g.patterns, 'meta.preprocessor.define.lsl');
+		expect(def?.begin).toBeTypeOf('string');
+		const begin = def!.begin!;
+		expect(begin).toContain('[#?$A-Za-z_]');
+		expect(begin).toContain('[#?$A-Za-z0-9_]');
+	});
+
 	it('#if/#elif condition pattern highlights defined() and operators', () => {
 		const g = loadGrammar();
 		const ifp = findRuleByName(g.patterns, 'meta.preprocessor.if.lsl');

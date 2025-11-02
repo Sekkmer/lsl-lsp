@@ -22,4 +22,16 @@ describe('identifier noise normalization', () => {
 		const hasVar = analysis.decls.some(d => d.kind === 'var' && d.name === 'version');
 		expect(hasVar).toBe(true);
 	});
+
+	it('allows preprocessor macros with noise-prefixed names', async () => {
+		const defs = await loadTestDefs();
+		const src = '#define $DEBUG(msg) llOwnerSay(msg)\n#define #TRACE(msg) llOwnerSay(msg)\n#define ?WARN(msg) llOwnerSay(msg)\n\ndefault {\n	state_entry() {\n		$DEBUG("a");\n		#TRACE("b");\n		?WARN("c");\n	}\n}\n';
+		const { analysis, pre } = runPipeline(docFrom(src), defs);
+		const unknowns = analysis.diagnostics.filter(d => d.code === 'LSL001');
+		expect(unknowns.length).toBe(0);
+		// Macro table should contain normalized entries for each noise-prefixed define
+		expect(Object.prototype.hasOwnProperty.call(pre.macros, 'DEBUG')).toBe(true);
+		expect(Object.prototype.hasOwnProperty.call(pre.macros, 'TRACE')).toBe(true);
+		expect(Object.prototype.hasOwnProperty.call(pre.macros, 'WARN')).toBe(true);
+	});
 });
