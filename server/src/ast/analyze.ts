@@ -89,6 +89,13 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const fallbackFuncs = new Set<string>();
 	const fallbackGlobals = new Set<string>();
 	const fallbackMacros = new Set<string>();
+	const mustUseFunctions = new Set<string>();
+	for (const [name, overloads] of defs.funcs) {
+		if (overloads && overloads.some(f => f?.mustUse)) {
+			mustUseFunctions.add(name);
+		}
+	}
+	const isMustUseFunction = (name: string): boolean => mustUseFunctions.has(name);
 	// Usage tracking for unused param/local diagnostics
 	type UsageContext = { usedParamNames: Set<string>; usedLocalNames: Set<string>; paramDecls: Decl[]; localDecls: Decl[] };
 	const usageStack: UsageContext[] = [];
@@ -201,7 +208,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		return null;
 	}
 
-	function walkExpr(e: Expr | null, scope: Scope, typeScope: TypeScope) {
+	function walkExpr(e: Expr | null, scope: Scope, typeScope: TypeScope, valueUsed = true) {
 		if (!e) return;
 		switch (e.kind) {
 			case 'StringLiteral':
@@ -247,6 +254,14 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					// Very rough arg range split: use argument spans
 					const argRanges = e.args.map(a => spanToRange(doc, a.span));
 					const calleeName = e.callee.name;
+					if (!valueUsed && isMustUseFunction(calleeName)) {
+						diagnostics.push({
+							code: LSL_DIAGCODES.MUST_USE_RESULT,
+							message: `Result of ${calleeName}() must be used`,
+							range: spanToRange(doc, e.span),
+							severity: DiagnosticSeverity.Warning,
+						});
+					}
 					calls.push({ name: calleeName, args: e.args.length, range: { start, end }, argRanges });
 					addRef(calleeName, spanToRange(doc, e.callee.span), scope);
 					const known = resolveInScope(calleeName, scope)
@@ -265,18 +280,18 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 						});
 					}
 				} else {
-					walkExpr(e.callee, scope, typeScope);
+					walkExpr(e.callee, scope, typeScope, true);
 				}
-				e.args.forEach(a => walkExpr(a, scope, typeScope));
+				e.args.forEach(a => walkExpr(a, scope, typeScope, true));
 				break;
 			}
-			case 'Binary': walkExpr(e.left, scope, typeScope); walkExpr(e.right, scope, typeScope); break;
-			case 'Unary': walkExpr(e.argument, scope, typeScope); break;
-			case 'Member': walkExpr(e.object, scope, typeScope); break;
-			case 'Cast': walkExpr(e.argument, scope, typeScope); break;
-			case 'ListLiteral': e.elements.forEach((x: Expr) => walkExpr(x, scope, typeScope)); break;
-			case 'VectorLiteral': e.elements.forEach((x: Expr) => walkExpr(x, scope, typeScope)); break;
-			case 'Paren': walkExpr(e.expression, scope, typeScope); break;
+			case 'Binary': walkExpr(e.left, scope, typeScope, true); walkExpr(e.right, scope, typeScope, true); break;
+			case 'Unary': walkExpr(e.argument, scope, typeScope, true); break;
+			case 'Member': walkExpr(e.object, scope, typeScope, true); break;
+			case 'Cast': walkExpr(e.argument, scope, typeScope, valueUsed); break;
+			case 'ListLiteral': e.elements.forEach((x: Expr) => walkExpr(x, scope, typeScope, true)); break;
+			case 'VectorLiteral': e.elements.forEach((x: Expr) => walkExpr(x, scope, typeScope, true)); break;
+			case 'Paren': walkExpr(e.expression, scope, typeScope, valueUsed); break;
 			default:
 				AssertNever(e as never, 'Unhandled Expr kind in analyzeAst.walkExpr');
 				break;
@@ -586,7 +601,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				}
 				break;
 			}
-			case 'ExprStmt': walkExpr(stmt.expression, scope, typeScope); validateExpr(stmt.expression, typeScope); break;
+			case 'ExprStmt': walkExpr(stmt.expression, scope, typeScope, false); validateExpr(stmt.expression, typeScope); break;
 			case 'EmptyStmt': break;
 			case 'ErrorStmt': break;
 			case 'LabelStmt': break;
@@ -646,12 +661,12 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				break;
 			}
 			case 'ForStmt': {
-				if (stmt.init) { walkExpr(stmt.init, scope, typeScope); validateExpr(stmt.init, typeScope); }
+				if (stmt.init) { walkExpr(stmt.init, scope, typeScope, false); validateExpr(stmt.init, typeScope); }
 				if (stmt.condition) {
 					walkExpr(stmt.condition, scope, typeScope);
 					validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
 				}
-				if (stmt.update) { walkExpr(stmt.update, scope, typeScope); validateExpr(stmt.update, typeScope); }
+				if (stmt.update) { walkExpr(stmt.update, scope, typeScope, false); validateExpr(stmt.update, typeScope); }
 				visitStmt(stmt.body, scope, typeScope);
 				break;
 			}

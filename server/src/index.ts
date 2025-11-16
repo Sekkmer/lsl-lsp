@@ -66,7 +66,8 @@ const settings = {
 		unknownIdentifier: true,
 		unusedVariable: true,
 		wrongArity: true,
-		unknownConstant: true
+		unknownConstant: true,
+		mustUseResult: true,
 	}
 };
 
@@ -409,6 +410,7 @@ async function validateTextDocument(doc: TextDocument) {
 		if (!settings.diag.unusedVariable && (d.code === LSL_DIAGCODES.UNUSED_VAR || d.code === LSL_DIAGCODES.UNUSED_LOCAL || d.code === LSL_DIAGCODES.UNUSED_PARAM)) continue;
 		if (!settings.diag.wrongArity && d.code === LSL_DIAGCODES.WRONG_ARITY) continue;
 		if (!settings.diag.unknownConstant && d.code === LSL_DIAGCODES.UNKNOWN_CONST) continue;
+		if (!settings.diag.mustUseResult && d.code === LSL_DIAGCODES.MUST_USE_RESULT) continue;
 
 		diags.push({
 			range: d.range,

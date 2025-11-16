@@ -94,6 +94,10 @@
             "experience": {
               "type": ["boolean", "null"],
               "description": "Set or clear the experience requirement flag."
+            },
+            "mustUse": {
+              "type": ["boolean", "null"],
+              "description": "Force the mustUse flag on, off, or remove it."
             }
           }
         }

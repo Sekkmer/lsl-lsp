@@ -108,6 +108,9 @@
 					"wiki": {
 						"type": "string"
 					},
+					"mustUse": {
+						"type": "boolean"
+					},
 					"energy": {
 						"type": "number"
 					},

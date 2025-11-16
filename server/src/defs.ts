@@ -7,7 +7,7 @@ import schema from '../../common/lslDefSchema.json';
 import draft7Meta from 'ajv/dist/refs/json-schema-draft-07.json';
 
 export interface DefParam { name: string; type: string; doc?: string; default?: string | number | boolean | null };
-export interface DefFunction { name: string; returns: string; params: DefParam[]; doc?: string; deprecated?: boolean; overloads?: DefFunction[]; wiki?: string; energy?: number; sleep?: number; experience?: boolean; }
+export interface DefFunction { name: string; returns: string; params: DefParam[]; doc?: string; deprecated?: boolean; overloads?: DefFunction[]; wiki?: string; energy?: number; sleep?: number; experience?: boolean; mustUse?: boolean; }
 export interface DefEvent { name: string; params: DefParam[]; doc?: string; wiki?: string; }
 export interface DefConst { name: string; type: string; value?: string | number | boolean | null; doc?: string; deprecated?: boolean; wiki?: string; }
 export interface DefFile {
@@ -55,6 +55,8 @@ interface OfficialFunctionEntry extends OfficialCommonFields {
 	energy?: unknown;
 	sleep?: unknown;
 	experience?: unknown;
+	['must-use']?: unknown;
+	pure?: unknown;
 }
 interface OfficialEventEntry extends OfficialCommonFields {
 	arguments?: OfficialParamEntry[];
@@ -89,6 +91,7 @@ interface FunctionOverride extends OverrideEntry {
 	energy?: number | null;
 	sleep?: number | null;
 	experience?: boolean | null;
+	mustUse?: boolean | null;
 }
 interface OverridesFile {
 	version?: number;
@@ -100,6 +103,34 @@ interface Overrides {
 	constants: Record<string, OverrideEntry>;
 	functions: Record<string, FunctionOverride>;
 	events: Record<string, OverrideEntry>;
+}
+
+type MaybeDefFunction = Record<string, unknown> & { overloads?: MaybeDefFunction[] };
+
+function coerceMustUseFlag(entry: unknown): void {
+	if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+	const fn = entry as MaybeDefFunction & { ['must-use']?: unknown; mustUse?: unknown };
+	if (Object.prototype.hasOwnProperty.call(fn, 'must-use')) {
+		const raw = fn['must-use'];
+		if (raw === true || raw === false) {
+			if (!Object.prototype.hasOwnProperty.call(fn, 'mustUse')) {
+				fn.mustUse = raw;
+			}
+		}
+		delete fn['must-use'];
+	}
+	const overloads = fn.overloads;
+	if (Array.isArray(overloads)) {
+		overloads.forEach(coerceMustUseFlag);
+	}
+}
+
+function normalizeDefFileMustUse(defFile: unknown): void {
+	if (!defFile || typeof defFile !== 'object') return;
+	const record = defFile as Record<string, unknown>;
+	const functions = record.functions;
+	if (!Array.isArray(functions)) return;
+	functions.forEach(coerceMustUseFlag);
 }
 
 function sanitizeDoc(doc?: unknown): string | undefined {
@@ -195,6 +226,15 @@ function applyFunctionOverride(target: DefFunction, override?: FunctionOverride)
 				next = { ...next, experience: false };
 			} else if (exp === null) {
 				const { experience: _omit, ...rest } = next;
+				next = rest;
+			}
+		}
+		if (Object.prototype.hasOwnProperty.call(override, 'mustUse')) {
+			const mustUse = override.mustUse;
+			if (mustUse === true) next = { ...next, mustUse: true };
+			else if (mustUse === false) next = { ...next, mustUse: false };
+			else if (mustUse === null) {
+				const { mustUse: _omit, ...rest } = next;
 				next = rest;
 			}
 		}
@@ -313,6 +353,7 @@ function toDefFileFromOfficial(defs: OfficialDefinitions, overrides: Overrides):
 		const energy = parseNumber(info?.energy);
 		const sleep = parseNumber(info?.sleep);
 		const experience = typeof info?.experience === 'boolean' ? info.experience : info?.experience === 1 || info?.experience === '1' || info?.experience === 'true';
+		const mustUse = info?.['must-use'] === true || info?.pure === true;
 		const base: DefFunction = {
 			name,
 			returns: normalizeOfficialType(info?.return),
@@ -323,6 +364,7 @@ function toDefFileFromOfficial(defs: OfficialDefinitions, overrides: Overrides):
 			...(Number.isFinite(energy) ? { energy: energy as number } : {}),
 			...(Number.isFinite(sleep) ? { sleep: sleep as number } : {}),
 			...(experience ? { experience: true } : {}),
+			...(mustUse ? { mustUse: true } : {}),
 		};
 		const overridden = applyFunctionOverride(base, overrides.functions[name]);
 		functions.push(overridden);
@@ -409,6 +451,7 @@ export async function loadDefs(defPath: string): Promise<Defs> {
 		const overrides = await loadOverridesFor(resolvedPath);
 		return validateAndCreate(toDefFileFromOfficial(obj, overrides));
 	}
+	normalizeDefFileMustUse(obj);
 	return validateAndCreate(obj as DefFile);
 }
 

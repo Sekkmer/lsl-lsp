@@ -68,6 +68,7 @@ functions:
   - name: llGetOwner
     returns: key
     params: []
+    must-use: true
   - name: llStringTrim
     returns: string
     params:
