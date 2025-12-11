@@ -263,14 +263,14 @@ export function validateOperatorsFromAst(
 							for (const params of sameArity) {
 								let ok = true;
 								for (let k = 0; k < params.length; k++) {
-									if (!argTypeMatches(params[k]!, argTypes[k]!)) { ok = false; break; }
+									if (!argTypeMatches(params[k]!, argTypes[k]!, e.args[k])) { ok = false; break; }
 								}
 								if (ok) { matched = true; break; }
 							}
 							if (!matched) {
 								const params = sameArity[0]!;
 								for (let k = 0; k < params.length; k++) {
-									if (!argTypeMatches(params[k]!, argTypes[k]!)) {
+									if (!argTypeMatches(params[k]!, argTypes[k]!, e.args[k])) {
 										diagnostics.push({
 											code: LSL_DIAGCODES.WRONG_TYPE,
 											message: `Argument ${k + 1} of "${name}" expects ${params[k]}, got ${argTypes[k]}`,
@@ -428,9 +428,13 @@ export function validateOperatorsFromAst(
 		}
 	}
 	function num(t: SimpleType) { return t === 'integer' || t === 'float'; }
-	function argTypeMatches(expected: SimpleType, got: SimpleType): boolean {
+	function argTypeMatches(expected: SimpleType, got: SimpleType, expr?: Expr | null): boolean {
 		if (expected === 'any' || got === 'any') return true;
 		if (expected === got) return true;
+		// Allow implicit pass of string literal UUIDs to key parameters
+		if (expected === 'key' && got === 'string' && expr && expr.kind === 'StringLiteral') {
+			if (looksLikeKeyString(expr.value)) return true;
+		}
 		// Allow weak numeric coercions similar to LSL
 		if (expected === 'integer' && got === 'float') return true;
 		if (expected === 'float' && got === 'integer') return true;
