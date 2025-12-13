@@ -8,20 +8,22 @@ import path from 'node:path';
 import { URI } from 'vscode-uri';
 
 export function documentSymbols(a: Analysis): DocumentSymbol[] {
+	const safeName = (name?: string | null): string | null => {
+		if (!name) return null;
+		const n = name.trim();
+		return n.length ? n : null;
+	};
+	const formatParams = (params?: { name: string; type?: string }[]) => (params || []).map(p => safeName(p.name) ?? '?').join(', ');
+	const fallbackName = (kind: string) => `(${kind})`;
+
 	const states: Map<string, DocumentSymbol> = new Map();
 	const top: DocumentSymbol[] = [];
 
 	// First pass: create state symbols
 	for (const d of a.decls) {
 		if (d.kind === 'state') {
-			const sym = DocumentSymbol.create(
-				d.name,
-				undefined,
-				SymbolKind.Namespace,
-				d.range,
-				d.range,
-				[]
-			);
+			const nm = safeName(d.name) ?? fallbackName('state');
+			const sym = DocumentSymbol.create(nm, undefined, SymbolKind.Namespace, d.range, d.range, []);
 			states.set(d.name, sym);
 			top.push(sym);
 		}
@@ -34,7 +36,8 @@ export function documentSymbols(a: Analysis): DocumentSymbol[] {
 			continue;
 		}
 		if (d.kind === 'event') {
-			const name = `${d.name}(${(d.params || []).map(p => p.name).join(', ')})`;
+			const nm = safeName(d.name) ?? fallbackName('event');
+			const name = `${nm}(${formatParams(d.params)})`;
 			const ev = DocumentSymbol.create(name, undefined, SymbolKind.Event, d.range, d.range);
 			if (lastState) {
 				(lastState.children ||= []).push(ev);
@@ -48,7 +51,9 @@ export function documentSymbols(a: Analysis): DocumentSymbol[] {
 	for (const d of a.decls) {
 		if (d.kind === 'state' || d.kind === 'event') continue;
 		const kind = d.kind === 'func' ? SymbolKind.Function : (d.kind === 'param' ? SymbolKind.Variable : SymbolKind.Variable);
-		const name = d.kind === 'func' ? `${d.name}(${(d.params || []).map(p => p.name).join(', ')})` : d.name;
+		const nm = safeName(d.name);
+		if (!nm) continue; // skip symbols without a usable name to avoid client errors
+		const name = d.kind === 'func' ? `${nm}(${formatParams(d.params)})` : nm;
 		top.push(DocumentSymbol.create(name, d.type ? d.type : undefined, kind, d.range, d.range));
 	}
 	return top;
