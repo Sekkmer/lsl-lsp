@@ -2,7 +2,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity } from 'vscode-languageserver/node';
 import { Expr } from './ast';
 import { inferExprTypeFromAst, isZeroLiteral, type SimpleType } from './ast/infer';
-import { Diag, LSL_DIAGCODES } from './analysisTypes';
+import { Diag, DiagCode, LSL_DIAGCODES } from './analysisTypes';
 import { AssertNever } from './utils';
 
 function mk(doc: TextDocument, start: number, end: number) {
@@ -270,17 +270,21 @@ export function validateOperatorsFromAst(
 						const sameArity = cands.filter(p => p.length === argTypes.length);
 						if (sameArity.length > 0) {
 							let matched = false;
+							let matchedWarns: { message: string; code?: DiagCode; idx: number }[] = [];
 							for (const params of sameArity) {
 								let ok = true;
+								const warns: { message: string; code?: DiagCode; idx: number }[] = [];
 								for (let k = 0; k < params.length; k++) {
-									if (!argTypeMatches(params[k]!, argTypes[k]!, e.args[k])) { ok = false; break; }
+									const res = argTypeMatches(params[k]!, argTypes[k]!, e.args[k]);
+									if (!res.ok) { ok = false; break; }
+									if (res.warn) warns.push({ ...res.warn, idx: k });
 								}
-								if (ok) { matched = true; break; }
+								if (ok) { matched = true; matchedWarns = warns; break; }
 							}
 							if (!matched) {
 								const params = sameArity[0]!;
 								for (let k = 0; k < params.length; k++) {
-									if (!argTypeMatches(params[k]!, argTypes[k]!, e.args[k])) {
+									if (!argTypeMatches(params[k]!, argTypes[k]!, e.args[k]).ok) {
 										diagnostics.push({
 											code: LSL_DIAGCODES.WRONG_TYPE,
 											message: `Argument ${k + 1} of "${name}" expects ${params[k]}, got ${argTypes[k]}`,
@@ -289,6 +293,17 @@ export function validateOperatorsFromAst(
 										});
 										break;
 									}
+								}
+							} else if (matchedWarns.length) {
+								for (const w of matchedWarns) {
+									const argExpr = e.args[w.idx];
+									const range = argExpr ? mk(doc, argExpr.span.start, argExpr.span.end) : mk(doc, e.span.start, e.span.end);
+									diagnostics.push({
+										code: (w.code as DiagCode) || LSL_DIAGCODES.WRONG_TYPE,
+										message: w.message,
+										range,
+										severity: DiagnosticSeverity.Warning,
+									});
 								}
 							}
 						} else {
@@ -438,19 +453,21 @@ export function validateOperatorsFromAst(
 		}
 	}
 	function num(t: SimpleType) { return t === 'integer' || t === 'float'; }
-	function argTypeMatches(expected: SimpleType, got: SimpleType, expr?: Expr | null): boolean {
-		if (expected === 'any' || got === 'any') return true;
-		if (expected === got) return true;
-		// Allow implicit pass of string literal UUIDs to key parameters
-		if (expected === 'key' && got === 'string' && expr && expr.kind === 'StringLiteral') {
-			if (looksLikeKeyString(expr.value)) return true;
+	type ArgMatch = { ok: boolean; warn?: { message: string; code?: DiagCode } };
+	function argTypeMatches(expected: SimpleType, got: SimpleType, expr?: Expr | null): ArgMatch {
+		if (expected === 'any' || got === 'any') return { ok: true };
+		if (expected === got) return { ok: true };
+		// Allow implicit string->key conversion: no warning for UUID literals, warning otherwise
+		if (expected === 'key' && got === 'string') {
+			if (expr && expr.kind === 'StringLiteral' && looksLikeKeyString(expr.value)) return { ok: true };
+			return { ok: true, warn: { message: 'Implicit string-to-key conversion', code: LSL_DIAGCODES.IMPLICIT_STRING_TO_KEY } };
 		}
 		// Allow weak numeric coercions similar to LSL
-		if (expected === 'integer' && got === 'float') return true;
-		if (expected === 'float' && got === 'integer') return true;
+		if (expected === 'integer' && got === 'float') return { ok: true };
+		if (expected === 'float' && got === 'integer') return { ok: true };
 		// LSL implicitly stringifies many values when a string is expected
-		if (expected === 'string' && (got === 'integer' || got === 'float' || got === 'key')) return true;
-		return false;
+		if (expected === 'string' && (got === 'integer' || got === 'float' || got === 'key')) return { ok: true };
+		return { ok: false };
 	}
 	function isAssignable(n: Expr): boolean {
 		switch (n.kind) {

@@ -5,7 +5,7 @@ import { loadTestDefs } from './loadDefs.testutil';
 const UUID = '00000000-0000-0000-0000-000000000000';
 
 describe('string literal UUID to key', () => {
-	it('accepts UUID-like string literal for key parameter', async () => {
+	it('allows UUID-like string literal for key parameter without warning', async () => {
 		const defs = await loadTestDefs();
 		const code = `
 integer foo(key _k) { return 0; }
@@ -18,11 +18,11 @@ default {
 `;
 		const doc = docFrom(code);
 		const { analysis } = runPipeline(doc, defs);
-		const wrongType = analysis.diagnostics.find(d => d.code === 'LSL011');
-		expect(wrongType).toBeFalsy();
+		const warning = analysis.diagnostics.find(d => d.code === 'LSL013');
+		expect(warning).toBeFalsy();
 	});
 
-	it('rejects non-UUID string literal for key parameter', async () => {
+	it('allows non-UUID string literal for key parameter but still warns', async () => {
 		const defs = await loadTestDefs();
 		const code = `
 integer foo(key _k) { return 0; }
@@ -35,10 +35,9 @@ default {
 `;
 		const doc = docFrom(code);
 		const { analysis } = runPipeline(doc, defs);
-		const wrongTypeMessages = analysis.diagnostics
-			.filter(d => d.code === 'LSL011')
-			.map(d => d.message)
-			.join('\n');
-		expect(wrongTypeMessages).toMatch(/expects key.*got string/);
+		const warnings = analysis.diagnostics.filter(d => d.code === 'LSL013');
+		expect(warnings.length).toBeGreaterThan(0);
+		const wrongType = analysis.diagnostics.find(d => d.code === 'LSL011');
+		expect(wrongType).toBeFalsy();
 	});
 });
