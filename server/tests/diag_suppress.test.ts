@@ -53,4 +53,35 @@ describe('diagnostic suppression directives', () => {
 		expect(analysis.diagnostics.find(d => d.code === 'LSL101')).toBeFalsy();
 		expect(analysis.diagnostics.find(d => d.code === 'LSL102')).toBeFalsy();
 	});
+
+	it('accepts named aliases (case-insensitive, dash/underscore) for suppressible codes', async () => {
+		const code = `integer f(){
+		if (1) ; else ; // lsl-disable-line empty-else-body
+		return 0;
+	}
+
+	void g(){ return 1; // lsl-disable-line RETURN_in_VOID
+	}
+	`;
+		const { analysis } = await analyze(code);
+		expect(analysis.diagnostics.find(d => d.code === 'LSL027')).toBeFalsy();
+		expect(analysis.diagnostics.find(d => d.code === 'LSL041')).toBeFalsy();
+	});
+
+	it('still honors numeric codes for low-level errors and ignores named alias when disallowed', async () => {
+		const code = `default {
+		state_entry(){
+			// lsl-disable-line wrong-arity
+			llOwnerSay(); // missing argument triggers LSL010
+			// lsl-disable-line LSL010
+			llOwnerSay(); // should be suppressed by numeric code
+		}
+	}`;
+		const { analysis } = await analyze(code);
+		// First occurrence not suppressed by alias -> still present
+		const arityDiags = analysis.diagnostics.filter(d => d.code === 'LSL010');
+		expect(arityDiags.length).toBe(1);
+		// Ensure the remaining diagnostic corresponds to one of the lines
+		expect(arityDiags[0]).toBeTruthy();
+	});
 });

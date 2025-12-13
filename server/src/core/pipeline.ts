@@ -4,6 +4,7 @@ import type { Token } from './tokens';
 import { Tokenizer } from './tokenizer';
 import { type MacroDefines, type IncludeResolver, preprocessAndExpandNew, MacroConditionalProcessor } from './macro';
 import type { ConditionalGroup } from './preproc';
+import { normalizeDiagCode } from '../analysisTypes';
 
 // Maintain previous macro snapshot for delta detection between successive preprocessForAst calls
 const _prevMacroSnapshot: { macros: Record<string, unknown> } = { macros: {} };
@@ -98,14 +99,13 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	const blocks: { start: number; end: number; codes: Set<string> | null }[] = [];
 	// Helper to parse codes list after directive keyword tokens inside a comment string.
 	function parseCodes(seg: string): Set<string> | null {
-		// seg like "LSL001, LSL002" or "" => null (meaning all)
+		// seg like "LSL001, return-in-void" or "" => null (meaning all)
 		if (!seg.trim()) return null;
 		const codes = new Set<string>();
 		for (const part of seg.split(/[\s,]+/)) {
-			const p = part.trim();
-			if (!p) continue;
-			// Basic validation: uppercase letters+digits length >= 5? Accept anything starting with LSL
-			codes.add(p);
+			const normalized = normalizeDiagCode(part);
+			if (!normalized) continue;
+			codes.add(normalized);
 		}
 		return codes.size ? codes : null;
 	}

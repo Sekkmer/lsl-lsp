@@ -34,6 +34,32 @@ export const LSL_DIAGCODES = {
 } as const;
 export type DiagCode = typeof LSL_DIAGCODES[keyof typeof LSL_DIAGCODES];
 
+const DIAG_VALUE_SET = new Set<string>(Object.values(LSL_DIAGCODES));
+
+// Build name->code mapping from the enum to avoid duplication. Hard-error codes (< LSL010) only keep numeric form.
+const DIAG_NAME_MAP: Record<string, DiagCode> = (() => {
+	const map: Record<string, DiagCode> = {};
+	for (const [enumName, code] of Object.entries(LSL_DIAGCODES)) {
+		const m = /^LSL(\d+)/i.exec(code);
+		const num = m ? parseInt(m[1]!, 10) : 999;
+		// Skip friendly-name aliases for very-low codes (treated as hard errors), but numeric still works
+		if (Number.isFinite(num) && num < 10) continue;
+		const canon = enumName.toLowerCase().replace(/_/g, '-');
+		map[canon] = code as DiagCode;
+	}
+	return map;
+})();
+
+export function normalizeDiagCode(raw: string | null | undefined): DiagCode | null {
+	if (!raw) return null;
+	const trimmed = raw.trim();
+	if (!trimmed) return null;
+	const upper = trimmed.toUpperCase();
+	if (DIAG_VALUE_SET.has(upper)) return upper as DiagCode;
+	const canon = trimmed.toLowerCase().replace(/[-_]/g, '-');
+	return DIAG_NAME_MAP[canon] ?? null;
+}
+
 export interface Diag { range: Range; message: string; severity?: DiagnosticSeverity; code: DiagCode; }
 export interface SymbolRef { name: string; range: Range; }
 export interface Decl {
