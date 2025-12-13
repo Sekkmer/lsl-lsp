@@ -170,7 +170,17 @@ export function validateOperatorsFromAst(
 					case '<=':
 					case '>':
 					case '>=': {
-						// Logical and relational operators: no additional diagnostics here
+						// Relational operators expect numeric operands
+						const leftNonNum = lt !== 'any' && !num(lt);
+						const rightNonNum = rt !== 'any' && !num(rt);
+						if (leftNonNum || rightNonNum) {
+							diagnostics.push({
+								code: LSL_DIAGCODES.WRONG_TYPE,
+								message: `Operator ${e.op} expects numeric operands`,
+								range: mk(doc, e.span.start, e.span.end),
+								severity: DiagnosticSeverity.Error,
+							});
+						}
 						break;
 					}
 					default:
