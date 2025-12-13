@@ -96,6 +96,12 @@
 					"default": false,
 					"description": "Enable verbose LSL extension logging in the Output panel (LSL Debug)."
 				},
+				"lsl.diagnostics.disable": {
+					"type": "array",
+					"items": { "type": "string" },
+					"default": [],
+					"markdownDescription": "Diagnostic codes or friendly names to suppress globally. Accepts values like `LSL101`, `unused-param`, `return_in_void`. Names are case-insensitive; dash/underscore interchangeable."
+				},
 				"lsl.trace": {
 					"type": "string",
 					"enum": ["off", "messages", "verbose"],

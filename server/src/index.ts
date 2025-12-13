@@ -35,6 +35,7 @@ import { isType } from './ast';
 import { Defs, loadDefs } from './defs';
 import type { PreprocResult } from './core/preproc';
 import { Analysis, LSL_DIAGCODES } from './analysisTypes';
+import { filterDiagnostics, parseDisabledDiagList } from './diagSettings';
 import { lex } from './lexer';
 import { semanticTokensLegend, buildSemanticTokens } from './semtok';
 import { lslCompletions, resolveCompletion, lslSignatureHelp } from './completions';
@@ -70,6 +71,21 @@ const settings = {
 		mustUseResult: true,
 	}
 };
+
+let disabledDiagCodes = new Set<import('./analysisTypes').DiagCode>();
+
+function setsEqual<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
+	if (a.size !== b.size) return false;
+	for (const v of a) if (!b.has(v)) return false;
+	return true;
+}
+
+function updateDisabledDiagnostics(raw: unknown): boolean {
+	const next = parseDisabledDiagList(raw);
+	if (setsEqual(disabledDiagCodes, next)) return false;
+	disabledDiagCodes = next;
+	return true;
+}
 
 // -------------------------------------------------
 // Lightweight per-document pipeline cache + indexes
@@ -215,6 +231,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 	baselineMacros = { ...settings.macros }; // capture baseline after init options
 	settings.logFile = initOpts.logFile || '';
 	settings.debug = !!initOpts.debug;
+	updateDisabledDiagnostics(initOpts.diagnostics?.disable);
 
 	// Merge workspace folder(s) into includePaths by default
 	try {
@@ -359,6 +376,7 @@ connection.onDidChangeConfiguration(async change => {
 		settings.format.braceStyle = newSettings.format.braceStyle ?? settings.format.braceStyle;
 	}
 	if (typeof newSettings.debugLogging === 'boolean') settings.debug = newSettings.debugLogging;
+	const disabledChanged = updateDisabledDiagnostics(newSettings.diagnostics?.disable);
 	// If include paths changed, clear include symbols cache and revalidate docs
 	const changed = (() => {
 		const a = prevIncludePaths, b = settings.includePaths || [];
@@ -366,7 +384,7 @@ connection.onDidChangeConfiguration(async change => {
 		for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
 		return false;
 	})();
-	if (changed) {
+	if (changed || disabledChanged) {
 		pipelineCache.clear();
 		includeToDocs.clear();
 		await revalidateAllOpenDocs();
@@ -405,7 +423,7 @@ async function validateTextDocument(doc: TextDocument) {
 		});
 	}
 
-	for (const d of analysis.diagnostics) {
+	for (const d of filterDiagnostics(analysis.diagnostics, disabledDiagCodes)) {
 		if (!settings.diag.unknownIdentifier && d.code === LSL_DIAGCODES.UNKNOWN_IDENTIFIER) continue;
 		if (!settings.diag.unusedVariable && (d.code === LSL_DIAGCODES.UNUSED_VAR || d.code === LSL_DIAGCODES.UNUSED_LOCAL || d.code === LSL_DIAGCODES.UNUSED_PARAM)) continue;
 		if (!settings.diag.wrongArity && d.code === LSL_DIAGCODES.WRONG_ARITY) continue;

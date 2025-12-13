@@ -217,6 +217,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			includePaths: resolveIncludePaths(cfg.get('includePaths')),
 			macros: cfg.get('macros'),
 			logFile,
+			diagnostics: { disable: cfg.get('diagnostics.disable') },
 			debug: debugEnabled
 		},
 		traceOutputChannel: traceChannel,
