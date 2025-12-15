@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { validateOperatorsFromAst } from '../src/op_validate_ast';
-import { Expr, spanFrom, type UnOp } from '../src/ast';
+import { Expr, spanFrom, type UnOp } from '../src/ast/types';
 import { LSL_DIAGCODES, type Diag } from '../src/parser';
 import { SimpleType } from '../src/ast/infer';
 
