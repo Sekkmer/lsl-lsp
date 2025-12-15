@@ -1,7 +1,7 @@
 /*
 	LSL lexer with basic macro expansion and comment tracking for AST parser
 */
-import { TYPES } from './index';
+import { TYPES } from './types';
 import { TokenStream, type Token } from '../core/tokens';
 import { builtinMacroForLexer } from '../builtins';
 

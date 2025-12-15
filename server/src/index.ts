@@ -31,7 +31,7 @@ import { URI } from 'vscode-uri';
 import { prepareRename as navPrepareRename, computeRenameEdits, findAllReferences } from './navigation';
 import { parseScriptFromText } from './ast/parser';
 import { analyzeAst } from './ast/analyze';
-import { isType } from './ast';
+import { isType } from './ast/types';
 import { Defs, loadDefs } from './defs';
 import type { PreprocResult } from './core/preproc';
 import { Analysis, LSL_DIAGCODES } from './analysisTypes';
@@ -98,7 +98,7 @@ type PipelineCache = {
 	tokens: ReturnType<typeof lex>;
 	analysis: Analysis;
 	// AST script used by the analysis pipeline
-	ast?: import('./ast').Script;
+	ast?: import('./ast/types').Script;
 	sem?: SemanticTokens & { resultId?: string };
 	// Track macros-only includes to avoid unnecessary reindex work
 	macrosOnlyIncludes?: string[];
@@ -197,7 +197,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 		conditionalGroups: full.conditionalGroups,
 	};
 	const tokens = lex(doc, pre.disabledRanges);
-	const ast: import('./ast').Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, includePaths: settings.includePaths, pre: full });
+	const ast: import('./ast/types').Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, includePaths: settings.includePaths, pre: full });
 	const analysis: Analysis = analyzeAst(doc, ast, defs, pre);
 	const entry: PipelineCache = { version: currentVersion, textHash: currentTextHash, pre, tokens, analysis, ast, macrosOnlyIncludes, configHash: currentHash };
 	pipelineCache.set(key, entry);

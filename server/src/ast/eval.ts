@@ -1,4 +1,4 @@
-import type { Expr, Stmt, Type } from './index';
+import type { Expr, Stmt, Type } from './types';
 import { AssertNever } from '../utils';
 import * as runtime from './runtime';
 

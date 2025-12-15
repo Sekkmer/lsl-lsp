@@ -9,7 +9,7 @@ import type { Analysis, Decl } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import path from 'node:path';
 import fs from 'node:fs';
-import { TYPES } from './ast';
+import { TYPES } from './ast/types';
 import { KEYWORD_SET } from './ast/lexer';
 
 export function lslCompletions(

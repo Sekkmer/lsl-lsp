@@ -6,7 +6,7 @@ import type { PreprocResult } from './core/preproc';
 import { Analysis } from './analysisTypes';
 import type { Decl } from './analysisTypes';
 import { isKeyword as isAstKeyword, isKeyword } from './ast/lexer';
-import { isType } from './ast';
+import { isType } from './ast/types';
 
 const tokenTypes = [
 	'namespace', 'type', 'class', 'enum', 'interface', 'struct', 'typeParameter',

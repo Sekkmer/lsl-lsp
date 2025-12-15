@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { Analysis } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import { isKeyword } from './ast/lexer';
-import { isType } from './ast';
+import { isType } from './ast/types';
 
 // Simple in-memory cache for include file contents to avoid repeated sync reads during hover bursts
 const includeFileCache = new Map<string, string>();

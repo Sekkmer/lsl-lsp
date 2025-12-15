@@ -1,4 +1,4 @@
-import { Expr, Type } from './index';
+import { Expr, Type } from './types';
 import { AssertNever } from '../utils';
 
 // Include 'void' so inference can represent void-returning calls distinctly

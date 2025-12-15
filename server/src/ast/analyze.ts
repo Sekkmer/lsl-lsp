@@ -2,7 +2,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range } from 'vscode-languageserver/node';
 import type { Defs } from '../defs';
 import type { PreprocResult } from '../core/preproc';
-import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, Stmt } from './index';
+import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, Stmt } from './types';
 import { validateOperatorsFromAst } from '../op_validate_ast';
 import type { SimpleType } from './infer';
 import { inferExprTypeFromAst } from './infer';

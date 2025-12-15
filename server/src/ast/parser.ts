@@ -3,8 +3,8 @@
 	It uses the preprocessor to get macro tables and disabled ranges, then tokenizes
 	the active code, attaches leading comments as `comment` on decl nodes.
 */
-import type { Expr, Stmt, Script, Function as FnNode, State, Event, Type, Span, Diagnostic } from './index';
-import { isType, spanFrom } from './index';
+import type { Expr, Stmt, Script, Function as FnNode, State, Event, Type, Span, Diagnostic } from './types';
+import { isType, spanFrom } from './types';
 import { Lexer } from './lexer';
 import type { Token } from '../core/tokens';
 import { preprocessForAst } from '../core/pipeline';
@@ -234,7 +234,7 @@ class Parser {
 	parseScript(): Script {
 		const start = this.peek().span.start;
 		type FnWithOrigin = FnNode & { originFile?: string };
-		type GlobalWithOrigin = import('./index').GlobalVar & { originFile?: string };
+		type GlobalWithOrigin = import('./types').GlobalVar & { originFile?: string };
 		const functions = new Map<string, FnWithOrigin>();
 		const states = new Map<string, State>();
 		const globals = new Map<string, GlobalWithOrigin>();
@@ -1069,7 +1069,7 @@ class Parser {
 	private parseAssign(stopOps?: Set<string>): Expr {
 		const left = this.parseBinary(1, stopOps);
 		if (this.peek().kind === 'op' && ['=', '+=', '-=', '*=', '/=', '%='].includes(this.peek().value)) {
-			const op = this.next().value as import('./index').BinOp;
+			const op = this.next().value as import('./types').BinOp;
 			const right = this.parseAssign(stopOps);
 			return { span: spanFrom(left.span.start, right.span.end), kind: 'Binary', op, left, right };
 		}
@@ -1110,7 +1110,7 @@ class Parser {
 			const prec = this.prec(look.value);
 			if (prec === 0 || prec < minPrec) break;
 			// consume operator
-			const op = this.next().value as import('./index').BinOp;
+			const op = this.next().value as import('./types').BinOp;
 			// Left-associative for all binary operators handled here
 			const nextMinPrec = prec + 1;
 			const right = this.parseBinary(nextMinPrec, stopOps);
@@ -1122,7 +1122,7 @@ class Parser {
 	private parseUnary(): Expr {
 		const t = this.peek();
 		if (t.kind === 'op' && ['!', '~', '++', '--', '+', '-'].includes(t.value)) {
-			const op = this.next().value as import('./index').UnOp;
+			const op = this.next().value as import('./types').UnOp;
 			const arg = this.parseUnary();
 			return { span: spanFrom(t.span.start, arg.span.end), kind: 'Unary', op, argument: arg };
 		}
