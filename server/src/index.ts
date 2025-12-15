@@ -34,7 +34,7 @@ import { analyzeAst } from './ast/analyze';
 import { isType } from './ast/types';
 import { Defs, loadDefs } from './defs';
 import type { PreprocResult } from './core/preproc';
-import { Analysis, LSL_DIAGCODES } from './analysisTypes';
+import { Analysis, LSL_DIAGCODES, diagCodeFriendly } from './analysisTypes';
 import { filterDiagnostics, parseDisabledDiagList } from './diagSettings';
 import { lex } from './lexer';
 import { semanticTokensLegend, buildSemanticTokens } from './semtok';
@@ -430,12 +430,13 @@ async function validateTextDocument(doc: TextDocument) {
 		if (!settings.diag.unknownConstant && d.code === LSL_DIAGCODES.UNKNOWN_CONST) continue;
 		if (!settings.diag.mustUseResult && d.code === LSL_DIAGCODES.MUST_USE_RESULT) continue;
 
+		const friendly = diagCodeFriendly(d.code);
 		diags.push({
 			range: d.range,
 			severity: d.severity ?? DiagnosticSeverity.Warning,
-			message: d.message,
+			message: friendly ? `${d.message} [${d.code}]` : d.message,
 			source: 'lsl-lsp',
-			code: d.code
+			code: friendly ?? d.code
 		});
 	}
 	try {

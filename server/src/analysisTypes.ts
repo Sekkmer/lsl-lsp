@@ -50,6 +50,14 @@ const DIAG_NAME_MAP: Record<string, DiagCode> = (() => {
 	return map;
 })();
 
+const CODE_FRIENDLY_MAP: Record<DiagCode, string> = (() => {
+	const map = {} as Record<DiagCode, string>;
+	for (const [friendly, code] of Object.entries(DIAG_NAME_MAP)) {
+		map[code] = friendly;
+	}
+	return map;
+})();
+
 export function normalizeDiagCode(raw: string | null | undefined): DiagCode | null {
 	if (!raw) return null;
 	const trimmed = raw.trim();
@@ -58,6 +66,10 @@ export function normalizeDiagCode(raw: string | null | undefined): DiagCode | nu
 	if (DIAG_VALUE_SET.has(upper)) return upper as DiagCode;
 	const canon = trimmed.toLowerCase().replace(/[-_]/g, '-');
 	return DIAG_NAME_MAP[canon] ?? null;
+}
+
+export function diagCodeFriendly(code: DiagCode): string | null {
+	return CODE_FRIENDLY_MAP[code] ?? null;
 }
 
 export interface Diag { range: Range; message: string; severity?: DiagnosticSeverity; code: DiagCode; }

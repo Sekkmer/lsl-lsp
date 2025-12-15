@@ -61,6 +61,23 @@
 - `lsl.enableSemanticTokens`: Toggle semantic tokens
 - `lsl.trace`: LSP protocol trace level (`off`, `messages`, `verbose`)
 
+### Diagnostics and suppression
+
+- Identifiers: use either the friendly dash-separated name (e.g., `wrong-arity`, `dead-code`, `unused-param`) or the numeric `LSL###` code. Hover shows both; either form works for suppression.
+- Inline suppression directives (omit list to disable all diagnostics for that scope):
+	- `// lsl-disable-line wrong-arity`
+	- `// lsl-disable-next-line unused-param, duplicate-decl`
+	- `// lsl-disable dead-code` (opens a block until `// lsl-enable`)
+	- `// lsl-enable` (ends a block)
+- Global disable list: set `lsl.diagnostics.disable` in settings (string or array). Examples:
+
+```json
+{
+	"lsl.diagnostics.disable": ["wrong-arity", "unused-param"],
+	"lsl.diagnostics.disable": "LSL010, LSL102"
+}
+```
+
 ### Customize readonly colors (semantic tokens)
 
 The server marks parameters as readonly and variables as readonly when they’re effectively immutable. Whether this shows as a different color depends on your theme. You can enforce or tweak colors via VS Code settings:
