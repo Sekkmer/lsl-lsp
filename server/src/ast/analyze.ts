@@ -2,7 +2,7 @@ import { TextDocument } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity, Range } from 'vscode-languageserver/node';
 import type { Defs } from '../defs';
 import type { PreprocResult } from '../core/preproc';
-import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, Stmt } from './types';
+import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, Stmt, Type } from './types';
 import { validateOperatorsFromAst } from '../op_validate_ast';
 import type { SimpleType } from './infer';
 import { inferExprTypeFromAst } from './infer';
@@ -13,7 +13,7 @@ import { LSL_DIAGCODES } from '../analysisTypes';
 import type { DiagCode } from '../analysisTypes';
 import { isKeyword } from './lexer';
 import { Token } from '../core/tokens';
-import { Env, evalExpr } from './eval';
+import { Env, evalExpr, type EvalOptions } from './eval';
 import type { Value } from './runtime';
 import { isAssignmentCompatible } from './compat';
 
@@ -151,8 +151,15 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			default: return null;
 		}
 	};
+	const evalFunctionReturnTypes = new Map<string, Type | 'void'>();
+	const ANALYSIS_EVAL_OPTIONS: EvalOptions = {
+		maxNodes: 500,
+		maxDepth: 64,
+		maxLoopIters: 128,
+		allowRuntimeCalls: true,
+	};
 	const constantEnv = (() => {
-		const env = new Env();
+		const env = new Env(new Map(), evalFunctionReturnTypes);
 		const toValue = (type: string | undefined, raw: unknown): Value | null => {
 			const t = normalizeType(type || 'integer');
 			if (t === 'integer') {
@@ -182,6 +189,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	})();
 	const valueEnvStack: Env[] = [constantEnv.child()];
 	const currentValueEnv = () => valueEnvStack[valueEnvStack.length - 1] ?? constantEnv;
+	const evalLocalConstant = (expr: Expr | null, env: Env = currentValueEnv()): Value =>
+		evalExpr(expr, env, ANALYSIS_EVAL_OPTIONS);
 
 	function conditionNodeCount(expr: Expr | null, limit: number): number {
 		if (!expr) return 0;
@@ -209,7 +218,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	function evalCondition(expr: Expr | null, env: Env = currentValueEnv()): boolean | null {
 		if (!expr) return null;
 		if (conditionNodeCount(expr, CONST_COND_MAX_NODES) > CONST_COND_MAX_NODES) return null;
-		const v = evalExpr(expr, env);
+		const v = evalLocalConstant(expr, env);
 		return truthyValue(v);
 	}
 	// Usage tracking for unused param/local diagnostics
@@ -730,7 +739,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (expr.kind === 'Binary' && assignmentOps.has(expr.op)) {
 			if (expr.left.kind === 'Identifier') {
 				if (expr.op === '=') {
-					const rhsVal = evalExpr(expr.right, currentValueEnv());
+					const rhsVal = evalLocalConstant(expr.right);
 					currentValueEnv().setVar(expr.left.name, rhsVal);
 				} else {
 					const t = normalizeType(inferTypeOf(expr.left, typeScope));
@@ -854,7 +863,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					walkExpr(stmt.initializer, scope, typeScope);
 					validateExpr(stmt.initializer, typeScope);
 					validateInitializerType(type, stmt.initializer, typeScope);
-					currentValueEnv().setVar(name, evalExpr(stmt.initializer, currentValueEnv()));
+					currentValueEnv().setVar(name, evalLocalConstant(stmt.initializer));
 				} else {
 					const dv = zeroValueForType(type);
 					if (dv) currentValueEnv().setVar(name, dv);
@@ -979,7 +988,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	for (const [name, overloads] of defs.funcs) {
 		for (const f of overloads) {
 			if (f && f.returns) {
-				functionReturnTypes.set(name, toSimpleType(f.returns));
+				const rt = toSimpleType(f.returns);
+				functionReturnTypes.set(name, rt);
+				if (rt === 'void' || isLslType(rt)) evalFunctionReturnTypes.set(name, rt);
 			}
 			const params = (f.params || []).map(p => toSimpleType(p.type || 'any'));
 			const prev = callSignatures.get(name) || []; prev.push(params); callSignatures.set(name, prev);
@@ -995,6 +1006,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		// Return type
 		const r = toSimpleType(f.returnType || 'void');
 		functionReturnTypes.set(name, r);
+		if (r === 'void' || isLslType(r)) evalFunctionReturnTypes.set(name, r);
 		// no separate void set needed; we record 'void' in functionReturnTypes
 	}
 

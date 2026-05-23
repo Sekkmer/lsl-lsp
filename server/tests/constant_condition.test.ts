@@ -50,4 +50,52 @@ describe('constant condition diagnostics', () => {
 		expect(codes).not.toContain(LSL_DIAGCODES.ALWAYS_TRUE_CONDITION);
 		expect(codes).not.toContain(LSL_DIAGCODES.ALWAYS_FALSE_CONDITION);
 	});
+
+	it('folds deterministic built-in calls in conditions', async () => {
+		const defs = await loadTestDefs();
+		const code = `
+			default {
+				state_entry() {
+					if (llGetSubString("abcd", 1, 2) == "bc") { }
+				}
+			}
+		`;
+		const doc = docFrom(code, 'file:///const-builtin-call.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const codes = analysis.diagnostics.map(d => d.code);
+		expect(codes).toContain(LSL_DIAGCODES.ALWAYS_TRUE_CONDITION);
+	});
+
+	it('propagates deterministic built-in call folds through local variables', async () => {
+		const defs = await loadTestDefs();
+		const code = `
+			default {
+				state_entry() {
+					string s = llGetSubString("abcd", 1, 2);
+					if (s == "bc") { }
+				}
+			}
+		`;
+		const doc = docFrom(code, 'file:///const-builtin-local.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const codes = analysis.diagnostics.map(d => d.code);
+		expect(codes).toContain(LSL_DIAGCODES.ALWAYS_TRUE_CONDITION);
+	});
+
+	it('does not fold unknown runtime-returning built-ins as constants', async () => {
+		const defs = await loadTestDefs();
+		const code = `
+			default {
+				state_entry() {
+					key owner = llGetOwner();
+					if (owner == NULL_KEY) { }
+				}
+			}
+		`;
+		const doc = docFrom(code, 'file:///const-runtime-key.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const codes = analysis.diagnostics.map(d => d.code);
+		expect(codes).not.toContain(LSL_DIAGCODES.ALWAYS_TRUE_CONDITION);
+		expect(codes).not.toContain(LSL_DIAGCODES.ALWAYS_FALSE_CONDITION);
+	});
 });
