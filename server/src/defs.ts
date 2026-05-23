@@ -7,7 +7,7 @@ import schema from '../../common/lslDefSchema.json';
 import draft7Meta from 'ajv/dist/refs/json-schema-draft-07.json';
 
 export interface DefParam { name: string; type: string; doc?: string; default?: string | number | boolean | null };
-export interface DefFunction { name: string; returns: string; params: DefParam[]; doc?: string; deprecated?: boolean; overloads?: DefFunction[]; wiki?: string; energy?: number; sleep?: number; experience?: boolean; mustUse?: boolean; }
+export interface DefFunction { name: string; returns: string; params: DefParam[]; doc?: string; deprecated?: boolean; deprecatedMessage?: string; godMode?: boolean; overloads?: DefFunction[]; wiki?: string; energy?: number; sleep?: number; experience?: boolean; mustUse?: boolean; }
 export interface DefEvent { name: string; params: DefParam[]; doc?: string; wiki?: string; }
 export interface DefConst { name: string; type: string; value?: string | number | boolean | null; doc?: string; deprecated?: boolean; wiki?: string; }
 export interface DefFile {
@@ -55,6 +55,7 @@ interface OfficialFunctionEntry extends OfficialCommonFields {
 	energy?: unknown;
 	sleep?: unknown;
 	experience?: unknown;
+	['god-mode']?: unknown;
 	['must-use']?: unknown;
 	pure?: unknown;
 }
@@ -92,6 +93,8 @@ interface FunctionOverride extends OverrideEntry {
 	sleep?: number | null;
 	experience?: boolean | null;
 	mustUse?: boolean | null;
+	godMode?: boolean | null;
+	deprecatedMessage?: OverrideValue;
 }
 interface OverridesFile {
 	version?: number;
@@ -125,18 +128,45 @@ function coerceMustUseFlag(entry: unknown): void {
 	}
 }
 
+function normalizeFunctionEntry(entry: MaybeDefFunction): void {
+	coerceMustUseFlag(entry);
+	if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+	const fn = entry as MaybeDefFunction & { doc?: unknown; deprecated?: unknown; deprecatedMessage?: unknown; ['god-mode']?: unknown; godMode?: unknown; overloads?: MaybeDefFunction[] };
+	const doc = sanitizeDoc(fn.doc);
+	if (doc) fn.doc = doc;
+	const depMsg = extractDeprecatedMessage(typeof fn.doc === 'string' ? fn.doc : undefined);
+	if (depMsg) {
+		if (!fn.deprecatedMessage) fn.deprecatedMessage = depMsg;
+		if (!fn.deprecated) fn.deprecated = true;
+	}
+	if (fn['god-mode'] === true && !fn.godMode) {
+		fn.godMode = true;
+		delete fn['god-mode'];
+	}
+	const overloads = fn.overloads;
+	if (Array.isArray(overloads)) overloads.forEach(normalizeFunctionEntry);
+}
+
 function normalizeDefFileMustUse(defFile: unknown): void {
 	if (!defFile || typeof defFile !== 'object') return;
 	const record = defFile as Record<string, unknown>;
 	const functions = record.functions;
 	if (!Array.isArray(functions)) return;
-	functions.forEach(coerceMustUseFlag);
+	functions.forEach(normalizeFunctionEntry);
 }
 
 function sanitizeDoc(doc?: unknown): string | undefined {
 	if (typeof doc !== 'string') return undefined;
 	const text = doc.replace(/\s+/g, ' ').trim();
 	return text.length > 0 ? text : undefined;
+}
+
+function extractDeprecatedMessage(doc?: string): string | undefined {
+	if (!doc) return undefined;
+	const m = doc.match(/^\s*depr[i|e]?cated[:\-]?\s*(.*)$/i);
+	if (!m) return undefined;
+	const rest = (m[1] || '').trim();
+	return rest.length ? rest : undefined;
 }
 
 function normalizeOfficialType(type?: unknown): string {
@@ -235,6 +265,23 @@ function applyFunctionOverride(target: DefFunction, override?: FunctionOverride)
 			else if (mustUse === false) next = { ...next, mustUse: false };
 			else if (mustUse === null) {
 				const { mustUse: _omit, ...rest } = next;
+				next = rest;
+			}
+		}
+		if (Object.prototype.hasOwnProperty.call(override, 'godMode')) {
+			const gm = override.godMode;
+			if (gm === true) next = { ...next, godMode: true };
+			else if (gm === false) next = { ...next, godMode: false };
+			else if (gm === null) {
+				const { godMode: _omit, ...rest } = next;
+				next = rest;
+			}
+		}
+		if (Object.prototype.hasOwnProperty.call(override, 'deprecatedMessage')) {
+			const depMsg = override.deprecatedMessage;
+			if (typeof depMsg === 'string' && depMsg.trim()) next = { ...next, deprecatedMessage: depMsg.trim(), deprecated: true };
+			else if (depMsg === null || depMsg === false) {
+				const { deprecatedMessage: _omit, ...rest } = next;
 				next = rest;
 			}
 		}
@@ -354,12 +401,17 @@ function toDefFileFromOfficial(defs: OfficialDefinitions, overrides: Overrides):
 		const sleep = parseNumber(info?.sleep);
 		const experience = typeof info?.experience === 'boolean' ? info.experience : info?.experience === 1 || info?.experience === '1' || info?.experience === 'true';
 		const mustUse = info?.['must-use'] === true || info?.pure === true;
+		const godMode = info?.['god-mode'] === true;
+		const deprecatedMessage = extractDeprecatedMessage(doc);
+		const deprecatedFlag = info?.deprecated === true || !!deprecatedMessage;
 		const base: DefFunction = {
 			name,
 			returns: normalizeOfficialType(info?.return),
 			params,
 			...(doc ? { doc } : {}),
-			...(info?.deprecated ? { deprecated: true } : {}),
+			...(deprecatedFlag ? { deprecated: true } : {}),
+			...(deprecatedMessage ? { deprecatedMessage } : {}),
+			...(godMode ? { godMode: true } : {}),
 			wiki: defaultWiki(name),
 			...(Number.isFinite(energy) ? { energy: energy as number } : {}),
 			...(Number.isFinite(sleep) ? { sleep: sleep as number } : {}),

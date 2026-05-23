@@ -76,3 +76,16 @@ functions:
         type: string
       - name: opts
         type: integer
+
+  - name: llGodLikeRezObject
+    returns: void
+    params: []
+    godMode: true
+    doc: Requires god mode.
+
+  - name: llCloud
+    returns: float
+    params:
+      - name: pos
+        type: vector
+    doc: 'Deprecated: Use llSetLinkPrimitiveParamsFast instead.'

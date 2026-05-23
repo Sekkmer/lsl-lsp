@@ -89,16 +89,34 @@ function formatNumber(value: number): string {
 	return value.toFixed(3).replace(/\.0+$/g, '').replace(/(\.\d*?)0+$/, '$1');
 }
 
+function deprecatedMessageFrom(fn?: DefFunction): string | undefined {
+	if (!fn) return undefined;
+	if (fn.deprecatedMessage) return fn.deprecatedMessage;
+	if (typeof fn.doc === 'string') {
+		const m = fn.doc.match(/^\s*depr[i|e]?cated[:\-]?\s*(.*)$/i);
+		if (m) {
+			const rest = (m[1] || '').trim();
+			if (rest) return rest;
+		}
+	}
+	return undefined;
+}
+
 function appendFunctionMeta(parts: string[], functions: DefFunction[]): void {
 	if (!functions || functions.length === 0) return;
 	const energyEntry = functions.find(f => typeof f.energy === 'number');
 	const sleepEntry = functions.find(f => typeof f.sleep === 'number');
 	const experience = functions.some(f => f.experience === true);
+	const godMode = functions.some(f => f.godMode === true);
+	const deprecatedEntry = functions.find(f => f.deprecated);
+	const deprecatedMsg = deprecatedMessageFrom(deprecatedEntry);
 	const metaSegments: string[] = [];
 	if (energyEntry && typeof energyEntry.energy === 'number') metaSegments.push(`Energy: ${formatNumber(energyEntry.energy)}`);
 	if (sleepEntry && typeof sleepEntry.sleep === 'number') metaSegments.push(`Sleep: ${formatNumber(sleepEntry.sleep)}s`);
 	if (metaSegments.length) parts.push('', `**Cost:** ${metaSegments.join(' · ')}`);
 	if (experience) parts.push('', '_Experience-only_');
+	if (godMode) parts.push('', '_Requires god mode_');
+	if (deprecatedEntry) parts.push('', `_Deprecated${deprecatedMsg ? `: ${deprecatedMsg}` : ''}_`);
 }
 
 export function lslHover(doc: TextDocument, params: { position: Position }, defs: Defs, analysis?: Analysis, pre?: PreprocResult): Hover | null {

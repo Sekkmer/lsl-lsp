@@ -90,10 +90,29 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const fallbackGlobals = new Set<string>();
 	const fallbackMacros = new Set<string>();
 	const mustUseFunctions = new Set<string>();
+	const functionMeta = new Map<string, { godMode: boolean; deprecated: boolean; deprecatedMessage?: string }>();
+	const extractDeprecatedMessage = (doc?: string): string | undefined => {
+		if (!doc) return undefined;
+		const m = doc.match(/^\s*depr[i|e]?cated[:\-]?\s*(.*)$/i);
+		if (!m) return undefined;
+		const rest = (m[1] || '').trim();
+		return rest.length ? rest : undefined;
+	};
 	for (const [name, overloads] of defs.funcs) {
 		if (overloads && overloads.some(f => f?.mustUse)) {
 			mustUseFunctions.add(name);
 		}
+		let godMode = false;
+		let deprecated = false;
+		let deprecatedMessage: string | undefined;
+		for (const f of overloads || []) {
+			if (f?.godMode) godMode = true;
+			if (f?.deprecated) {
+				deprecated = true;
+				if (!deprecatedMessage) deprecatedMessage = f.deprecatedMessage || extractDeprecatedMessage(f.doc);
+			}
+		}
+		if (godMode || deprecated) functionMeta.set(name, { godMode, deprecated, deprecatedMessage });
 	}
 	const isMustUseFunction = (name: string): boolean => mustUseFunctions.has(name);
 	// Usage tracking for unused param/local diagnostics
@@ -277,6 +296,24 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 							message: `Unknown identifier ${calleeName}`,
 							range: spanToRange(doc, e.callee.span),
 							severity: DiagnosticSeverity.Error,
+						});
+					}
+					const meta = functionMeta.get(calleeName);
+					if (meta?.godMode) {
+						diagnostics.push({
+							code: LSL_DIAGCODES.GOD_MODE_REQUIRED,
+							message: `Function ${calleeName} requires god mode`,
+							range: spanToRange(doc, e.callee.span),
+							severity: DiagnosticSeverity.Error,
+						});
+					}
+					if (meta?.deprecated) {
+						const detail = meta.deprecatedMessage ? `: ${meta.deprecatedMessage}` : '';
+						diagnostics.push({
+							code: LSL_DIAGCODES.DEPRECATED_CALL,
+							message: `Function ${calleeName} is deprecated${detail}`,
+							range: spanToRange(doc, e.callee.span),
+							severity: DiagnosticSeverity.Warning,
 						});
 					}
 				} else {

@@ -105,11 +105,17 @@
 					"returns": {
 						"type": "string"
 					},
+					"godMode": {
+						"type": "boolean"
+					},
 					"wiki": {
 						"type": "string"
 					},
 					"mustUse": {
 						"type": "boolean"
+					},
+					"deprecatedMessage": {
+						"type": "string"
 					},
 					"energy": {
 						"type": "number"
