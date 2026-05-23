@@ -1,29 +1,40 @@
-# LSL Language Server + VS Code Extension
+# LSL LSP
 
-A monorepo for LSL (Linden Scripting Language) tooling:
-- A language server with parsing, diagnostics, hovers, signature help, semantic tokens, and navigation.
-- A VS Code client extension that wires the server into the editor.
-- Tooling that copies the official [secondlife/lsl-definitions](https://github.com/secondlife/lsl-definitions) YAML into the bundles consumed by the server/tests.
+LSL (Linden Scripting Language) language tooling for VS Code.
 
-## Workspaces
-- `server/` – Language Server (TypeScript, LSP). Emits diagnostics like arity/type/state checks and provides editor features.
-- `client-vscode/` – VS Code extension that starts the server and contributes language configuration + grammar.
-- `third_party/lsl-definitions/` – Git submodule pointing at the official LSL definitions repository.
+## Repository Layout
 
-Local schemas and override metadata live in `common/`. Runtime LSL definitions come from the upstream `third_party/lsl-definitions/lsl_definitions.yaml` submodule.
+- `server/`: TypeScript language server with preprocessing, parsing, analysis, diagnostics, hover, completions, signature help, semantic tokens, formatting, and navigation.
+- `client-vscode/`: VS Code extension that bundles and starts the server.
+- `third_party/lsl-definitions/`: Git submodule for the official [secondlife/lsl-definitions](https://github.com/secondlife/lsl-definitions) YAML used by the server, tests, and extension bundle.
+- `common/`: Local schema and override metadata used while loading official definitions.
+
+The runtime definition source is `third_party/lsl-definitions/lsl_definitions.yaml`. Server builds copy it to `server/out/lsl_definitions.yaml`; extension packaging includes the built server output.
+
+## Requirements
+
+- Node 22+
+- pnpm
+- Git submodules initialized with `git submodule update --init --recursive`
 
 ## Dev quickstart
+
+- Install dependencies: `pnpm install`
 - Build all: `pnpm build`
 - Watch during dev: `pnpm watch`
-- Lint/format (tabs): `pnpm lint:fix`
+- Lint: `pnpm lint`
+- Format/lint fix: `pnpm lint:fix`
 - Run server tests: `pnpm -C server test`
+- Build VS Code package: `pnpm -C client-vscode package`
 
-### Definitions data flow
+## Definitions
 
-1. Initialise submodules after cloning: `git submodule update --init --recursive`.
-2. Server builds copy the upstream YAML into `server/out/`; extension packaging bundles the built server output.
+The server accepts official YAML definitions or the older JSON/YAML shape. If no custom path is configured, it resolves definitions from the built server output and then falls back to the official submodule. Definition metadata such as deprecated calls, god-mode requirements, must-use results, sleep/energy/experience flags, docs, links, and overrides is loaded into diagnostics and hovers where applicable.
 
-Requirements: Node 22+, pnpm.
+## Release Notes
+
+Release-facing notes live in [client-vscode/CHANGELOG.md](client-vscode/CHANGELOG.md).
 
 ## Notes
-This repo was vibe-coded with GPT-5 using GitHub Copilot in VS Code.
+
+Developed with assistance from GPT-5.5 and GitHub Copilot in VS Code.

@@ -1,11 +1,11 @@
 # LSL LSP
 
- A Visual Studio Code extension providing rich, AST‑based support for LSL (Linden Scripting Language):
+A Visual Studio Code extension providing rich, AST‑based support for LSL (Linden Scripting Language):
 
 - Language Server features: diagnostics, hover, completion, go to definition, find all references, rename symbol, document symbols, and semantic tokens.
 - Preprocessor awareness: `#include`, `#if`/`#elif`/`#endif`, macros (built‑ins like `__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`, varargs with `__VA_ARGS__`/`__VA_OPT__`, `#` stringification and `##` token pasting), and disabled ranges.
 - Formatter: full document, range, and on-type formatting.
-- Syntax highlighting (semantic tokens) aligned with the parser’s understanding.
+- Syntax highlighting and semantic tokens aligned with the parser’s understanding.
 
 ## Features
 
@@ -15,6 +15,7 @@
 	- `#include` path suggestions from workspace folder(s) and configured include paths
 - Rich hovers with documentation
 	- Functions and events show signatures, parameter docs, and a direct "Wiki" link
+	- Deprecated calls, god-mode requirements, sleep/energy/experience metadata, and must-use return values are surfaced from the bundled definitions when available
 	- User‑defined functions show JSDoc‑style comments (`/** ... */`) placed immediately above the declaration
 	- Constants show inferred value (with hex for integers) and docs
 	- Includes show resolution info and a summary of available symbols
@@ -36,6 +37,7 @@
 	- Consistent brace/semicolon/newline handling
 - Diagnostics (server‑side analysis)
 	- AST‑based checks for common LSL issues: arity/return mismatches, unused/duplicate declarations, dead code, and precise operator/type rules
+	- Constant conditions are evaluated for common literal and constant-expression cases with bounded folding
 	- Unary operators: numeric `+`/`-`; integer `!`/`~`
 	- Postfix `++/--`: require assignable integer variables
 	- Bitwise and shifts: integer operands
@@ -44,7 +46,8 @@
 	- Conditions: warns on suspicious assignment inside `if/while/for` conditions
 	- Indexing operator `[]`: flagged as unsupported in LSL
 	- List equality advisory: `list == list` compares length only (comparisons to `[]` treated as emptiness checks)
-	- Function calls: parameter types validated (string parameters accept integer/float/key)
+	- Function calls: parameter types validated (string parameters accept integer/float/key; key parameters accept UUID-like strings and the empty string as `NULL_KEY`-style shorthand)
+	- Definition metadata: deprecated calls, god-mode-required calls, and must-use result checks
 	- Diagnostics can be selectively suppressed where needed
 	- Includes checks for invalid state declarations/changes and for empty event/function bodies or empty if/else branches
 - Semantic tokens
@@ -53,12 +56,13 @@
 
 ## Configuration
 
-- `lsl.definitionsPath`: Custom path to definitions JSON/YAML (bundled defaults if empty)
+- `lsl.definitionsPath`: Custom path to definitions JSON/YAML. Leave empty to use the bundled official definitions.
 - `lsl.includePaths`: Additional search paths for `#include`.
 	- The workspace folder(s) are always searched by default. In multi-root workspaces, all roots are included.
 	- Resolution order: the current file’s directory, then workspace roots, then any paths listed in `lsl.includePaths`.
 - `lsl.macros`: Project-wide predefined macros for conditionals
 - `lsl.enableSemanticTokens`: Toggle semantic tokens
+- `lsl.diagnostics.disable`: Diagnostic codes or friendly names to disable globally
 - `lsl.trace`: LSP protocol trace level (`off`, `messages`, `verbose`)
 
 ### Diagnostics and suppression
