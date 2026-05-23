@@ -13,6 +13,8 @@ import { LSL_DIAGCODES } from '../analysisTypes';
 import type { DiagCode } from '../analysisTypes';
 import { isKeyword } from './lexer';
 import { Token } from '../core/tokens';
+import { Env, evalExpr } from './eval';
+import type { Value } from './runtime';
 
 // Scope now carries a lightweight kind tag to distinguish event/function contexts
 type Scope = { parent?: Scope; vars: Map<string, Decl>; kind?: 'event' | 'func' | 'state' | 'global' | 'block' };
@@ -85,6 +87,10 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	// Global (file) scope for variables/functions/states
 	const globalScope: Scope = { vars: new Map(), kind: 'global' };
 	const globalTypeScope: TypeScope = pushTypeScope();
+	// Seed type information for built-in constants so member validation sees their shapes.
+	for (const c of defs.consts.values()) {
+		if (c?.type) addType(globalTypeScope, c.name, c.type);
+	}
 	// Fallback symbol sets (used when scanning expanded tokens for include-provided decls)
 	const fallbackFuncs = new Set<string>();
 	const fallbackGlobals = new Set<string>();
@@ -115,6 +121,94 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (godMode || deprecated) functionMeta.set(name, { godMode, deprecated, deprecatedMessage });
 	}
 	const isMustUseFunction = (name: string): boolean => mustUseFunctions.has(name);
+
+	const CONST_COND_MAX_NODES = 200;
+	const parseVectorish = (raw: unknown): { vec: [number, number, number]; rot?: [number, number, number, number] } | null => {
+		if (typeof raw !== 'string') return null;
+		const m = /^<\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,>]+)\s*(?:,\s*([^,>]+)\s*)?>$/.exec(raw.trim());
+		if (!m) return null;
+		const toNum = (s: string) => Number(s.trim());
+		const a = toNum(m[1]!); const b = toNum(m[2]!); const c = toNum(m[3]!);
+		if (![a, b, c].every(Number.isFinite)) return null;
+		if (m[4] !== undefined) {
+			const d = toNum(m[4]!);
+			if (!Number.isFinite(d)) return null;
+			return { vec: [a, b, c], rot: [a, b, c, d] };
+		}
+		return { vec: [a, b, c] };
+	};
+	const zeroValueForType = (type: string): Value | null => {
+		switch (normalizeType(type)) {
+			case 'integer': return { kind: 'value', type: 'integer', value: 0 };
+			case 'float': return { kind: 'value', type: 'float', value: 0 };
+			case 'string': return { kind: 'value', type: 'string', value: '' };
+			case 'key': return { kind: 'value', type: 'key', value: '' } as Value;
+			case 'vector': return { kind: 'value', type: 'vector', value: [0, 0, 0] } as Value;
+			case 'rotation': return { kind: 'value', type: 'rotation', value: [0, 0, 0, 1] } as Value;
+			case 'list': return { kind: 'value', type: 'list', value: [] } as Value;
+			default: return null;
+		}
+	};
+	const constantEnv = (() => {
+		const env = new Env();
+		const toValue = (type: string | undefined, raw: unknown): Value | null => {
+			const t = normalizeType(type || 'integer');
+			if (t === 'integer') {
+				const n = typeof raw === 'number' ? raw : (typeof raw === 'string' ? Number(raw) : NaN);
+				return Number.isFinite(n) ? { kind: 'value', type: 'integer', value: Math.trunc(n) } : null;
+			}
+			if (t === 'float') {
+				const n = typeof raw === 'number' ? raw : (typeof raw === 'string' ? Number(raw) : NaN);
+				return Number.isFinite(n) ? { kind: 'value', type: 'float', value: n } : null;
+			}
+			if (t === 'string' && typeof raw === 'string') return { kind: 'value', type: 'string', value: raw };
+			if ((t === 'vector' || t === 'rotation') && raw !== undefined) {
+				const parsed = parseVectorish(raw);
+				if (parsed) {
+					if (t === 'rotation' && parsed.rot) return { kind: 'value', type: 'rotation', value: parsed.rot } as Value;
+					return { kind: 'value', type: 'vector', value: parsed.vec } as Value;
+				}
+			}
+			return null;
+		};
+		for (const c of defs.consts.values()) {
+			const v = toValue(c.type, (c as any).value ?? (c as any).val ?? undefined);
+			if (v) env.setVar(c.name, v);
+		}
+		return env;
+	})();
+	const valueEnvStack: Env[] = [constantEnv.child()];
+	const currentValueEnv = () => valueEnvStack[valueEnvStack.length - 1] ?? constantEnv;
+
+	function conditionNodeCount(expr: Expr | null, limit: number): number {
+		if (!expr) return 0;
+		let count = 1;
+		switch (expr.kind) {
+			case 'Unary': count += conditionNodeCount(expr.argument, limit); break;
+			case 'Binary': count += conditionNodeCount(expr.left, limit) + conditionNodeCount(expr.right, limit); break;
+			case 'Cast': count += conditionNodeCount(expr.argument, limit); break;
+			case 'Paren': count += conditionNodeCount(expr.expression, limit); break;
+			case 'Call': count += conditionNodeCount(expr.callee, limit); for (const a of expr.args) count += conditionNodeCount(a, limit); break;
+			case 'Member': count += conditionNodeCount(expr.object, limit); break;
+			case 'VectorLiteral': for (const e of expr.elements) count += conditionNodeCount(e, limit); break;
+			case 'ListLiteral': for (const e of expr.elements) count += conditionNodeCount(e, limit); break;
+			default: break;
+		}
+		return count > limit ? limit + 1 : count;
+	}
+
+	const truthyValue = (v: Value): boolean | null => {
+		if (v.kind !== 'value') return null;
+		if (v.type === 'integer' || v.type === 'float') return Math.trunc(v.value) !== 0;
+		return null;
+	};
+
+	function evalCondition(expr: Expr | null, env: Env = currentValueEnv()): boolean | null {
+		if (!expr) return null;
+		if (conditionNodeCount(expr, CONST_COND_MAX_NODES) > CONST_COND_MAX_NODES) return null;
+		const v = evalExpr(expr, env);
+		return truthyValue(v);
+	}
 	// Usage tracking for unused param/local diagnostics
 	type UsageContext = { usedParamNames: Set<string>; usedLocalNames: Set<string>; paramDecls: Decl[]; localDecls: Decl[] };
 	const usageStack: UsageContext[] = [];
@@ -338,6 +432,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	function pushScope(s: Scope, kind?: Scope['kind']): Scope { return { parent: s, vars: new Map(), kind }; }
 
 	function visitFunction(fn: AstFunction) {
+		valueEnvStack.push(currentValueEnv().child());
 		const scope = pushScope(globalScope, 'func');
 		const ts = pushTypeScope(globalTypeScope);
 		const returnType = (fn.returnType ?? 'void') as string;
@@ -479,6 +574,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				else diagnostics.push({ code: LSL_DIAGCODES.UNUSED_LOCAL, message: `Unused local variable "${ld.name}"`, range: ld.range, severity: DiagnosticSeverity.Hint });
 			}
 		}
+		valueEnvStack.pop();
 		usageStack.pop();
 		currentLabels = savedLabels;
 	}
@@ -504,6 +600,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		// Duplicate event names within the same state
 		const evNames = new Set<string>();
 		for (const ev of st.events) {
+			valueEnvStack.push(currentValueEnv().child());
 			if (evNames.has(ev.name)) {
 				diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Duplicate declaration of event ${ev.name}`, range: spanToRange(doc, ev.span), severity: DiagnosticSeverity.Error });
 			} else evNames.add(ev.name);
@@ -602,12 +699,77 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 			usageStack.pop();
 			currentLabels = savedLabels;
+			valueEnvStack.pop();
 		}
 	}
 
 	function validateExpr(expr: Expr | null, typeScope: TypeScope) {
 		if (!expr) return;
 		validateOperatorsFromAst(doc, [expr], diagnostics, typeScope.view, functionReturnTypes, callSignatures);
+	}
+
+	const assignmentOps = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
+	function updateValueEnvFromExpr(expr: Expr | null, typeScope: TypeScope) {
+		if (!expr) return;
+		if (expr.kind === 'Binary' && assignmentOps.has(expr.op)) {
+			if (expr.left.kind === 'Identifier') {
+				if (expr.op === '=') {
+					const rhsVal = evalExpr(expr.right, currentValueEnv());
+					currentValueEnv().setVar(expr.left.name, rhsVal);
+				} else {
+					const t = normalizeType(inferTypeOf(expr.left, typeScope));
+					currentValueEnv().setVar(expr.left.name, { kind: 'unknown', type: t } as Value);
+				}
+			}
+		}
+		if (expr.kind === 'Unary' && (expr.op === '++' || expr.op === '--')) {
+			const arg = expr.argument;
+			if (arg.kind === 'Identifier') {
+				const t = normalizeType(inferTypeOf(arg, typeScope));
+				currentValueEnv().setVar(arg.name, { kind: 'unknown', type: t } as Value);
+			}
+		}
+	}
+
+	function collectIdentifiers(expr: Expr | null, acc: Set<string> = new Set()): Set<string> {
+		if (!expr) return acc;
+		switch (expr.kind) {
+			case 'Identifier': acc.add(expr.name); break;
+			case 'Unary': collectIdentifiers(expr.argument, acc); break;
+			case 'Binary': collectIdentifiers(expr.left, acc); collectIdentifiers(expr.right, acc); break;
+			case 'Call': collectIdentifiers(expr.callee, acc); for (const a of expr.args) collectIdentifiers(a, acc); break;
+			case 'Member': collectIdentifiers(expr.object, acc); break;
+			case 'Cast': collectIdentifiers(expr.argument, acc); break;
+			case 'Paren': collectIdentifiers(expr.expression, acc); break;
+			case 'ListLiteral': for (const e of expr.elements) collectIdentifiers(e, acc); break;
+			case 'VectorLiteral': for (const e of expr.elements) collectIdentifiers(e, acc); break;
+			default: break;
+		}
+		return acc;
+	}
+
+	function collectMutatedIdentifiers(expr: Expr | null, acc: Set<string> = new Set()): Set<string> {
+		if (!expr) return acc;
+		switch (expr.kind) {
+			case 'Binary': {
+				if (assignmentOps.has(expr.op) && expr.left.kind === 'Identifier') acc.add(expr.left.name);
+				collectMutatedIdentifiers(expr.left, acc); collectMutatedIdentifiers(expr.right, acc);
+				break;
+			}
+			case 'Unary': {
+				if ((expr.op === '++' || expr.op === '--') && expr.argument.kind === 'Identifier') acc.add(expr.argument.name);
+				collectMutatedIdentifiers(expr.argument, acc);
+				break;
+			}
+			case 'Call': collectMutatedIdentifiers(expr.callee, acc); for (const a of expr.args) collectMutatedIdentifiers(a, acc); break;
+			case 'Member': collectMutatedIdentifiers(expr.object, acc); break;
+			case 'Cast': collectMutatedIdentifiers(expr.argument, acc); break;
+			case 'Paren': collectMutatedIdentifiers(expr.expression, acc); break;
+			case 'ListLiteral': for (const e of expr.elements) collectMutatedIdentifiers(e, acc); break;
+			case 'VectorLiteral': for (const e of expr.elements) collectMutatedIdentifiers(e, acc); break;
+			default: break;
+		}
+		return acc;
 	}
 
 	function visitStmt(stmt: Stmt | null, scope: Scope, typeScope: TypeScope) {
@@ -638,7 +800,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				}
 				break;
 			}
-			case 'ExprStmt': walkExpr(stmt.expression, scope, typeScope, false); validateExpr(stmt.expression, typeScope); break;
+			case 'ExprStmt': walkExpr(stmt.expression, scope, typeScope, false); validateExpr(stmt.expression, typeScope); updateValueEnvFromExpr(stmt.expression, typeScope); break;
 			case 'EmptyStmt': break;
 			case 'ErrorStmt': break;
 			case 'LabelStmt': break;
@@ -672,7 +834,14 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				// Track local decl for unused checks when inside a body
 				const top = usageStack[usageStack.length - 1];
 				if (top) top.localDecls.push(d);
-				if (stmt.initializer) { walkExpr(stmt.initializer, scope, typeScope); validateExpr(stmt.initializer, typeScope); }
+				if (stmt.initializer) {
+					walkExpr(stmt.initializer, scope, typeScope);
+					validateExpr(stmt.initializer, typeScope);
+					currentValueEnv().setVar(name, evalExpr(stmt.initializer, currentValueEnv()));
+				} else {
+					const dv = zeroValueForType(type);
+					if (dv) currentValueEnv().setVar(name, dv);
+				}
 				addType(typeScope, name, type);
 				break;
 			}
@@ -681,6 +850,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				walkExpr(stmt.condition, scope, typeScope);
 				// Validate condition with suspicious-assignment flag; other expressions validated normally
 				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
+				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
+					const truth = evalCondition(stmt.condition);
+					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
+					else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
+				}
 				visitStmt(stmt.then, scope, typeScope);
 				if (stmt.else) visitStmt(stmt.else, scope, typeScope);
 				break;
@@ -688,6 +862,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			case 'WhileStmt': {
 				walkExpr(stmt.condition, scope, typeScope);
 				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
+				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
+					const truth = evalCondition(stmt.condition);
+					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Loop condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
+					else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Loop condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
+				}
 				visitStmt(stmt.body, scope, typeScope);
 				break;
 			}
@@ -695,15 +874,30 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				visitStmt(stmt.body, scope, typeScope);
 				walkExpr(stmt.condition, scope, typeScope);
 				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
+				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
+					const truth = evalCondition(stmt.condition);
+					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Loop condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
+					else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Loop condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
+				}
 				break;
 			}
 			case 'ForStmt': {
-				if (stmt.init) { walkExpr(stmt.init, scope, typeScope, false); validateExpr(stmt.init, typeScope); }
+				if (stmt.init) { walkExpr(stmt.init, scope, typeScope, false); validateExpr(stmt.init, typeScope); updateValueEnvFromExpr(stmt.init, typeScope); }
 				if (stmt.condition) {
 					walkExpr(stmt.condition, scope, typeScope);
 					validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
+					const condIds = collectIdentifiers(stmt.condition);
+					const mutatedInit = collectMutatedIdentifiers(stmt.init ?? null);
+					const mutatedUpdate = collectMutatedIdentifiers(stmt.update ?? null);
+					const mutatedCondition = collectMutatedIdentifiers(stmt.condition ?? null);
+					const mutatesLoop = [...condIds].some(n => mutatedInit.has(n) || mutatedUpdate.has(n) || mutatedCondition.has(n));
+					if (!mutatesLoop) {
+						const truth = evalCondition(stmt.condition);
+						if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Loop condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
+						else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Loop condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
+					}
 				}
-				if (stmt.update) { walkExpr(stmt.update, scope, typeScope, false); validateExpr(stmt.update, typeScope); }
+				if (stmt.update) { walkExpr(stmt.update, scope, typeScope, false); validateExpr(stmt.update, typeScope); updateValueEnvFromExpr(stmt.update, typeScope); }
 				visitStmt(stmt.body, scope, typeScope);
 				break;
 			}
@@ -811,6 +1005,10 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (g.initializer) {
 			walkExpr(g.initializer, globalScope, globalTypeScope);
 			validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures);
+			currentValueEnv().setVar(name, evalExpr(g.initializer, currentValueEnv()));
+		} else {
+			const dv = zeroValueForType(g.varType);
+			if (dv) currentValueEnv().setVar(name, dv);
 		}
 	}
 
