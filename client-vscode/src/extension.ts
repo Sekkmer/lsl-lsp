@@ -151,27 +151,19 @@ export async function activate(context: vscode.ExtensionContext) {
 		if (p && firstWs) p = p.replace('${workspaceFolder}', firstWs);
 		// Make absolute if needed
 		if (p && !path.isAbsolute(p)) p = firstWs ? path.join(firstWs, p) : path.join(context.extensionUri.fsPath, p);
-		// If not provided or file missing, try workspace/common bundles YAML
+		// If not provided or file missing, try built server definition bundles.
 		const repoRootFromExt = path.resolve(context.extensionUri.fsPath, '..');
 		if (!p || !requireExists(p)) {
 			if (firstWs) {
-				const wsCommon = resolveCandidates(firstWs, 'common');
-				if (wsCommon) return wsCommon;
 				const wsServer = resolveCandidates(firstWs, 'server', 'out');
 				if (wsServer) return wsServer;
 			}
-			// When running the extension from its folder (Run Extension), also try the sibling repo common
-			const siblingCommon = resolveCandidates(repoRootFromExt, 'common');
-			if (siblingCommon) return siblingCommon;
+			// When running the extension from its folder (Run Extension), also try the sibling repo server output.
 			const siblingServer = resolveCandidates(repoRootFromExt, 'server', 'out');
 			if (siblingServer) return siblingServer;
-			// Fall back to extension-bundled common
-			const extCommon = resolveCandidates(context.extensionUri.fsPath, 'common');
-			if (extCommon) return extCommon;
+			// Fall back to the extension-bundled server output.
 			const extServer = resolveCandidates(context.extensionUri.fsPath, 'server', 'out');
 			if (extServer) return extServer;
-			const repoCrawlerJson = path.join(repoRootFromExt, 'crawler', 'out', 'lsl-defs.json');
-			if (requireExists(repoCrawlerJson)) return repoCrawlerJson;
 		}
 		return p;
 	}

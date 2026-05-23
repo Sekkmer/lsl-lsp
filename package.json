@@ -12,8 +12,7 @@
 		"watch": "pnpm -r watch",
 		"lint": "pnpm -r lint",
 		"lint:fix": "pnpm -r lint:fix",
-		"test": "pnpm -r test",
-		"defs:build": "node scripts/build-defs.mjs"
+		"test": "pnpm -r test"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",

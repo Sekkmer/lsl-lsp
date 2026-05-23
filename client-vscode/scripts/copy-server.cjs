@@ -21,11 +21,6 @@ function main() {
 	const serverOut = path.join(repoRoot, 'server', 'out');
 	const destServer = path.resolve(process.cwd(), 'server', 'out');
 	copyDir(serverOut, destServer);
-
-	const commonSrc = path.join(repoRoot, 'common', 'lsl_definitions.yaml');
-	const commonDestDir = path.resolve(process.cwd(), 'common');
-	fs.mkdirSync(commonDestDir, { recursive: true });
-	if (fs.existsSync(commonSrc)) fs.copyFileSync(commonSrc, path.join(commonDestDir, 'lsl_definitions.yaml'));
 }
 
 main();

@@ -122,11 +122,9 @@ The client bundles a TypeScript language server. On activation, it starts the se
 
 Under the hood, the server uses an AST‑based pipeline (preprocess → parse → analyze) to understand your code and perform precise type and operator checks.
 
-Data powering function/event/constant docs is built from a merged dataset:
-- Second Life Viewer LLSD (keywords_lsl_default.xml): signatures, parameter names, return types
-- SL Wiki pages: human‑friendly descriptions and wiki links for quick reference
+Data powering function/event/constant docs comes from the official `secondlife/lsl-definitions` YAML bundled with the server/extension.
 
-Hovers display a "Wiki" link when available; a sensible fallback link is provided otherwise. JSDoc comments above your own functions are shown inline.
+Hovers display documentation and links from the bundled definitions when available. JSDoc comments above your own functions are shown inline.
 
 ## Known limitations
 

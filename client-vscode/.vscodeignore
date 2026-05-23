@@ -4,7 +4,6 @@
 # Include only built extension runtime and assets
 !out/**
 !server/out/**
-!common/lsl_definitions.yaml
 !media/**
 !syntaxes/**
 !language-configuration.json
@@ -18,7 +17,6 @@
 src/**
 server/src/**
 server/tests/**
-common/*.schema.json
 scripts/**
 .vscode/**
 .git/**

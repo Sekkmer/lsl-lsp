@@ -72,7 +72,7 @@
 				"lsl.definitionsPath": {
 					"type": "string",
 					"default": "",
-					"description": "Path to LSL definition file (JSON/YAML). Leave empty to use the bundled third_party/lsl_definitions.yaml."
+					"description": "Path to LSL definition file (JSON/YAML). Leave empty to use the bundled official definitions."
 				},
 				"lsl.includePaths": {
 					"type": "array",
@@ -126,8 +126,8 @@
 		"bundle": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --outfile=out/extension.js --sourcemap",
 		"bundle:server": "esbuild ../server/src/index.ts --bundle --platform=node --target=node18 --outfile=server/out/index.js --sourcemap",
 		"vscode:prepublish": "pnpm -C ../server build && node scripts/copy-server.cjs && pnpm run bundle:server && pnpm run bundle",
-		"package": "pnpm exec vsce package --no-dependencies && node scripts/cleanup-after-package.cjs",
-		"publish": "pnpm exec vsce publish && node scripts/cleanup-after-package.cjs",
+		"package": "pnpm exec vsce package --no-dependencies",
+		"publish": "pnpm exec vsce publish",
 		"watch": "tsc -w -p tsconfig.json",
 		"lint": "eslint src",
 		"lint:fix": "eslint src --fix"
