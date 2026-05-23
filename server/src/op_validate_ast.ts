@@ -4,6 +4,7 @@ import { Expr } from './ast/types';
 import { inferExprTypeFromAst, isZeroLiteral, type SimpleType } from './ast/infer';
 import { Diag, DiagCode, LSL_DIAGCODES } from './analysisTypes';
 import { AssertNever } from './utils';
+import { isKnownKeyString } from './ast/key';
 
 function mk(doc: TextDocument, start: number, end: number) {
 	return { start: doc.positionAt(start), end: doc.positionAt(end) };
@@ -507,6 +508,5 @@ function looksLikeVectorOrRotationString(s: string, target: 'vector' | 'rotation
 }
 
 function looksLikeKeyString(s: string): boolean {
-	// UUID format 8-4-4-4-12 hex
-	return /^\s*[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\s*$/.test(s);
+	return isKnownKeyString(s);
 }

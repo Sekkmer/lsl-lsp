@@ -1,6 +1,7 @@
 import type { Expr, Stmt, Type } from './types';
 import { AssertNever } from '../utils';
 import * as runtime from './runtime';
+import { keyValueFromString } from './key';
 
 // Value model for evaluation
 export type Unknown<T extends runtime.LSLType = runtime.LSLType> = runtime.Unknown<T>;
@@ -35,6 +36,9 @@ const isNumberValue = (v: Value): v is Extract<Value, { kind: 'value', type: 'in
 
 const isStringValue = (v: Value): v is Extract<Value, { kind: 'value', type: 'string', value: string }> =>
 	v.kind === 'value' && v.type === 'string';
+
+const isKeyValue = (v: Value): v is Extract<Value, { kind: 'value', type: 'key', value: string }> =>
+	v.kind === 'value' && v.type === 'key';
 
 const num = (v: Value): number | null => (isNumberValue(v) ? v.value : null);
 
@@ -128,6 +132,7 @@ function castStringToFloat(s: string): number | null {
 
 function stringValue(v: Value): string | null {
 	if (isStringValue(v)) return v.value;
+	if (isKeyValue(v)) return v.value;
 	if (isNumberValue(v)) return numberToLSLString(v.type, v.value);
 	return null;
 }
@@ -218,7 +223,16 @@ export function evalExpr(expr: Expr | null, env: Env = new Env()): Value {
 				return s === null ? runtime.unknown('string') : { kind: 'value', type: 'string', value: s };
 			}
 
-			// key, list, vector, rotation, etc. -> unknown shaped accordingly
+			if (expr.type === 'key') {
+				if (isKeyValue(inner)) return inner;
+				if (isStringValue(inner)) {
+					const key = keyValueFromString(inner.value);
+					return key === null ? runtime.unknown('key') : { kind: 'value', type: 'key', value: key };
+				}
+				return runtime.unknown('key');
+			}
+
+			// list, vector, rotation, etc. -> unknown shaped accordingly
 			return asTypeUnknown(expr.type);
 		}
 
