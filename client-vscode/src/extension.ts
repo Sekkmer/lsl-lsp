@@ -210,19 +210,23 @@ export async function activate(context: vscode.ExtensionContext) {
 	const logFile = path.join(logDir, 'lsl-lsp-server.log');
 	try { fs.appendFileSync(logFile, `\n=== LSL LSP launch ${new Date().toISOString()} ===\n`); } catch (e) { log('[LSL] Failed to touch log file', logFile, e); }
 
+	function getServerSettings() {
+		const currentCfg = vscode.workspace.getConfiguration('lsl');
+		return {
+			definitionsPath: resolveDefinitionsPath(currentCfg.get('definitionsPath')),
+			includePaths: resolveIncludePaths(currentCfg.get('includePaths')),
+			macros: currentCfg.get('macros'),
+			logFile,
+			diagnostics: { disable: currentCfg.get('diagnostics.disable') },
+			debug: !!currentCfg.get<boolean>('debugLogging')
+		};
+	}
+
 	const clientOptions: LanguageClientOptions = {
 		documentSelector: [{ language: 'lsl' }],
-		initializationOptions: {
-			definitionsPath: resolveDefinitionsPath(cfg.get('definitionsPath')),
-			includePaths: resolveIncludePaths(cfg.get('includePaths')),
-			macros: cfg.get('macros'),
-			logFile,
-			diagnostics: { disable: cfg.get('diagnostics.disable') },
-			debug: debugEnabled
-		},
+		initializationOptions: getServerSettings(),
 		traceOutputChannel: traceChannel,
 		synchronize: {
-			configurationSection: 'lsl',
 			fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{lsl,lsli,lslp}')
 		}
 	};
@@ -287,6 +291,12 @@ export async function activate(context: vscode.ExtensionContext) {
 		for (const ed of vscode.window.visibleTextEditors) {
 			if (ed.document === ev.document) applyDisabledDecorationsForEditor(ed);
 		}
+	}));
+	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async ev => {
+		if (!ev.affectsConfiguration('lsl') || client.state !== State.Running) return;
+		await client.sendNotification('workspace/didChangeConfiguration', {
+			settings: { lsl: getServerSettings() }
+		});
 	}));
 
 	await client.start();
