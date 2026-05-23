@@ -93,7 +93,7 @@ function deprecatedMessageFrom(fn?: DefFunction): string | undefined {
 	if (!fn) return undefined;
 	if (fn.deprecatedMessage) return fn.deprecatedMessage;
 	if (typeof fn.doc === 'string') {
-		const m = fn.doc.match(/^\s*depr[i|e]?cated[:\-]?\s*(.*)$/i);
+		const m = fn.doc.match(/^\s*depr[ie]?cated[:-]?\s*(.*)$/i);
 		if (m) {
 			const rest = (m[1] || '').trim();
 			if (rest) return rest;

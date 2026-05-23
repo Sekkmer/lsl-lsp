@@ -163,7 +163,7 @@ function sanitizeDoc(doc?: unknown): string | undefined {
 
 function extractDeprecatedMessage(doc?: string): string | undefined {
 	if (!doc) return undefined;
-	const m = doc.match(/^\s*depr[i|e]?cated[:\-]?\s*(.*)$/i);
+	const m = doc.match(/^\s*depr[ie]?cated[:-]?\s*(.*)$/i);
 	if (!m) return undefined;
 	const rest = (m[1] || '').trim();
 	return rest.length ? rest : undefined;

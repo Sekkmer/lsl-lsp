@@ -99,7 +99,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const functionMeta = new Map<string, { godMode: boolean; deprecated: boolean; deprecatedMessage?: string }>();
 	const extractDeprecatedMessage = (doc?: string): string | undefined => {
 		if (!doc) return undefined;
-		const m = doc.match(/^\s*depr[i|e]?cated[:\-]?\s*(.*)$/i);
+		const m = doc.match(/^\s*depr[ie]?cated[:-]?\s*(.*)$/i);
 		if (!m) return undefined;
 		const rest = (m[1] || '').trim();
 		return rest.length ? rest : undefined;
@@ -172,7 +172,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			return null;
 		};
 		for (const c of defs.consts.values()) {
-			const v = toValue(c.type, (c as any).value ?? (c as any).val ?? undefined);
+			const legacyConst = c as typeof c & { val?: unknown };
+			const v = toValue(c.type, legacyConst.value ?? legacyConst.val ?? undefined);
 			if (v) env.setVar(c.name, v);
 		}
 		return env;
