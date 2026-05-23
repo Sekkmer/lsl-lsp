@@ -87,6 +87,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	// Global (file) scope for variables/functions/states
 	const globalScope: Scope = { vars: new Map(), kind: 'global' };
 	const globalTypeScope: TypeScope = pushTypeScope();
+	const constantNames = new Set(defs.consts.keys());
 	// Seed type information for built-in constants so member validation sees their shapes.
 	for (const c of defs.consts.values()) {
 		if (c?.type) addType(globalTypeScope, c.name, c.type);
@@ -706,7 +707,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 
 	function validateExpr(expr: Expr | null, typeScope: TypeScope) {
 		if (!expr) return;
-		validateOperatorsFromAst(doc, [expr], diagnostics, typeScope.view, functionReturnTypes, callSignatures);
+		validateOperatorsFromAst(doc, [expr], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { constantNames });
 	}
 
 	const assignmentOps = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
@@ -850,7 +851,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			case 'IfStmt': {
 				walkExpr(stmt.condition, scope, typeScope);
 				// Validate condition with suspicious-assignment flag; other expressions validated normally
-				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
+				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
 				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
 					const truth = evalCondition(stmt.condition);
 					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
@@ -862,7 +863,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 			case 'WhileStmt': {
 				walkExpr(stmt.condition, scope, typeScope);
-				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
+				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
 				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
 					const truth = evalCondition(stmt.condition);
 					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Loop condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
@@ -874,7 +875,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			case 'DoWhileStmt': {
 				visitStmt(stmt.body, scope, typeScope);
 				walkExpr(stmt.condition, scope, typeScope);
-				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
+				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
 				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
 					const truth = evalCondition(stmt.condition);
 					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Loop condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
@@ -886,7 +887,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				if (stmt.init) { walkExpr(stmt.init, scope, typeScope, false); validateExpr(stmt.init, typeScope); updateValueEnvFromExpr(stmt.init, typeScope); }
 				if (stmt.condition) {
 					walkExpr(stmt.condition, scope, typeScope);
-					validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true });
+					validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
 					const condIds = collectIdentifiers(stmt.condition);
 					const mutatedInit = collectMutatedIdentifiers(stmt.init ?? null);
 					const mutatedUpdate = collectMutatedIdentifiers(stmt.update ?? null);
@@ -1005,7 +1006,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		addType(globalTypeScope, name, g.varType);
 		if (g.initializer) {
 			walkExpr(g.initializer, globalScope, globalTypeScope);
-			validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures);
+			validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures, { constantNames });
 			currentValueEnv().setVar(name, evalExpr(g.initializer, currentValueEnv()));
 		} else {
 			const dv = zeroValueForType(g.varType);

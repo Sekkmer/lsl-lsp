@@ -57,7 +57,7 @@ export function inferExprTypeFromAst(
 			if (isNumeric(lt) && isNumeric(rt)) return lt === 'float' || rt === 'float' ? 'float' : 'integer';
 			if (expr.op[0] === '+') {
 				if (lt === 'list' || rt === 'list') return 'list';
-				if (lt === 'string' || rt === 'string') return 'string';
+				if (lt === 'string' && rt === 'string') return 'string';
 				if (lt === 'vector' && rt === 'vector') return 'vector';
 				if (lt === 'rotation' && rt === 'rotation') return 'rotation';
 				return 'any';
@@ -73,13 +73,14 @@ export function inferExprTypeFromAst(
 			}
 			if (expr.op[0] === '*') {
 				if (lt === 'vector' && rt === 'vector') return 'float';
-				if ((lt === 'vector' || lt === 'rotation') && isNumeric(rt)) return lt;
-				if (isNumeric(lt) && (rt === 'vector' || rt === 'rotation')) return rt;
+				if (lt === 'vector' && isNumeric(rt)) return 'vector';
+				if (isNumeric(lt) && rt === 'vector') return 'vector';
 				if (lt === 'vector' && rt === 'rotation') return 'vector';
+				if (lt === 'rotation' && rt === 'rotation') return 'rotation';
 				return 'any';
 			}
 			if (expr.op[0] === '/') {
-				if ((lt === 'vector' || lt === 'rotation') && isNumeric(rt)) return lt;
+				if (lt === 'vector' && isNumeric(rt)) return 'vector';
 				if (lt === 'vector' && rt === 'rotation') return 'vector';
 				return 'any';
 			}

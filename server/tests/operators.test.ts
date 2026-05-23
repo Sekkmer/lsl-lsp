@@ -3,6 +3,10 @@ import { docFrom } from './testUtils';
 import { loadDefs } from '../src/defs';
 import path from 'node:path';
 import { runPipeline } from './testUtils';
+import { DiagnosticSeverity } from 'vscode-languageserver/node';
+import { parseScriptFromText } from '../src/ast/parser';
+import { inferExprTypeFromAst } from '../src/ast/infer';
+import type { SimpleType } from '../src/ast/infer';
 
 const defsPath = path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
@@ -79,15 +83,22 @@ integer XorValue(string input) {
 		const defs = await loadDefs(defsPath);
 		const code = `
 list L = [] + [1]; // ok
+list A = [] + "x"; // scalar append: ok
+list B = [] + ["x"]; // explicit concat: ok
 string s = "a" + "b"; // ok
+string si = "a" + 1; // bad
+string is = 1 + "a"; // bad
 float f = 1 + 2.0; // ok
 vector v = <1,2,3> + <4,5,6>; // ok
 integer bad = <1,2,3> + 1; // bad
 `;
 		const doc = docFrom(code, 'file:///ops4.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
-		const msgs = analysis.diagnostics.map(d => d.message);
-		expect(msgs.some(m => m.includes('Operator + type mismatch'))).toBe(true);
+		expect(analysis.diagnostics.some(d => d.message.includes('appends'))).toBe(false);
+		const typeErrors = analysis.diagnostics.filter(d => d.message.includes('Operator + type mismatch'));
+		expect(typeErrors.some(d => d.message.includes('string + integer') && d.severity === DiagnosticSeverity.Error)).toBe(true);
+		expect(typeErrors.some(d => d.message.includes('integer + string') && d.severity === DiagnosticSeverity.Error)).toBe(true);
+		expect(typeErrors.some(d => d.message.includes('vector + integer') && d.severity === DiagnosticSeverity.Error)).toBe(true);
 	});
 
 	it('casts in addition resolve to string correctly', async () => {
@@ -140,7 +151,7 @@ default {
 		expect(msgs.some(m => m.includes('Operator + type mismatch'))).toBe(false);
 	});
 
-	it('vector * float yields vector; vector * rotation yields vector', async () => {
+	it('vector/rotation SL-proven arithmetic combinations', async () => {
 		const defs = await loadDefs(defsPath);
 		const code = `
 default {
@@ -151,13 +162,26 @@ default {
 		vector a = v * s; // scale: ok
 		vector b = s * v; // commutative scale: ok
 		vector c = v * r; // rotate: ok
+		vector d = v / s; // scale: ok
+		vector e = v / r; // inverse rotate: ok
+		rotation f = r + r; // component add: ok
+		rotation g = r - r; // component subtract: ok
+		vector bad1 = r * v; // bad: order matters
+		rotation bad2 = r / s; // bad
+		rotation bad3 = r * s; // bad
+		rotation bad4 = s * r; // bad
 	}
 }
 `;
 		const doc = docFrom(code, 'file:///ops_vec_mul.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
-		const msgs = analysis.diagnostics.map(d => d.message);
-		expect(msgs.some(m => m.includes('Operator * type mismatch'))).toBe(false);
+		const msgs = analysis.diagnostics.map(d => `${d.message} @${d.severity}`);
+		expect(msgs.some(m => m.includes('vector * rotation'))).toBe(false);
+		expect(msgs.some(m => m.includes('vector / rotation'))).toBe(false);
+		expect(msgs.some(m => m.includes('rotation * vector') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
+		expect(msgs.some(m => m.includes('rotation / float') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
+		expect(msgs.some(m => m.includes('rotation * float') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
+		expect(msgs.some(m => m.includes('float * rotation') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
 	});
 
 	it('allows rotation multiplication and compound assignment', async () => {
@@ -176,5 +200,50 @@ default {
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		const msgs = analysis.diagnostics.map(d => d.message);
 		expect(msgs.some(m => m.includes('Operator * type mismatch'))).toBe(false);
+	});
+
+	it('rejects string bitwise and string increment as SL compile errors', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+	state_entry() {
+		integer x = "1" | "2";
+		string s = "1";
+		s++;
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///ops_string_bad.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => `${d.message} @${d.severity}`);
+		expect(msgs.some(m => m.includes('Operator | expects integer operands') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
+		expect(msgs.some(m => m.includes('Operator ++ expects an integer variable') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
+	});
+
+	it('infers known result types for SL-proven operator combinations', () => {
+		const script = parseScriptFromText(`
+list listAppend = [] + "x";
+string stringConcat = "a" + "b";
+vector vectorDivScalar = <2,4,6> / 2.0;
+vector vectorDivRotation = <1,2,3> / <0,0,0,1>;
+vector vectorModVector = <1,0,0> % <0,1,0>;
+rotation rotationSub = <2,4,6,8> - <1,1,1,1>;
+vector vectorTimesRotation = <1,2,3> * <0,0,0,1>;
+rotation rotationTimesRotation = <0,0,0,1> * <0,0,0,1>;
+string stringInt = "a" + 1;
+rotation rotationDivScalar = <2,4,6,8> / 2.0;
+`);
+		const globals = new Map<string, SimpleType>();
+		const inferGlobal = (name: string) => inferExprTypeFromAst(script.globals.get(name)?.initializer ?? null, globals);
+		expect(inferGlobal('listAppend')).toBe('list');
+		expect(inferGlobal('stringConcat')).toBe('string');
+		expect(inferGlobal('vectorDivScalar')).toBe('vector');
+		expect(inferGlobal('vectorDivRotation')).toBe('vector');
+		expect(inferGlobal('vectorModVector')).toBe('vector');
+		expect(inferGlobal('rotationSub')).toBe('rotation');
+		expect(inferGlobal('vectorTimesRotation')).toBe('vector');
+		expect(inferGlobal('rotationTimesRotation')).toBe('rotation');
+		expect(inferGlobal('stringInt')).toBe('any');
+		expect(inferGlobal('rotationDivScalar')).toBe('any');
 	});
 });

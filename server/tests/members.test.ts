@@ -42,4 +42,25 @@ float e = r.w; // invalid
 		expect(msgs.some(m => m.includes('Unknown member') && m.includes('".z"'))).toBe(false);
 		expect(msgs.some(m => m.includes('Unknown member') && m.includes('".s"'))).toBe(false);
 	});
+
+	it('only allows component access on variables/components, not values or constants', async () => {
+		const defs = await loadDefs(path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
+		const code = `
+vector makeVector() { return <1,2,3>; }
+default {
+	state_entry() {
+		vector v = <1,2,3>;
+		float ok = v.x;
+		float callBase = makeVector().x;
+		float literalBase = <1,2,3>.x;
+		float constantBase = ZERO_VECTOR.x;
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///proj/members_value_base.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const memberBaseErrors = analysis.diagnostics.filter(d => d.message.includes('Member access is only allowed on vector/rotation variables or components'));
+		expect(memberBaseErrors.length).toBe(3);
+		expect(analysis.diagnostics.some(d => d.message.includes('Unknown member') && d.message.includes('ok'))).toBe(false);
+	});
 });

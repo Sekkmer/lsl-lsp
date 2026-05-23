@@ -17,8 +17,13 @@ export function validateOperatorsFromAst(
 	symbolTypes: Map<string, SimpleType>,
 	functionReturnTypes?: Map<string, SimpleType>,
 	callSignatures?: Map<string, SimpleType[][]>,
-	opts?: { flagSuspiciousAssignment?: boolean },
+	opts?: { flagSuspiciousAssignment?: boolean; constantNames?: ReadonlySet<string> },
 ) {
+	const unwrapParen = (expr: Expr): Expr => {
+		let cur = expr;
+		while (cur.kind === 'Paren') cur = cur.expression;
+		return cur;
+	};
 	for (const e of exprs) walk(e);
 
 	// Helper: report when an expression with inferred type 'void' is used as a value
@@ -97,6 +102,20 @@ export function validateOperatorsFromAst(
 					}
 					case '/':
 					case '/=': {
+						const isNumericBoth = num(lt) && num(rt);
+						const isVectorDivScalar = lt === 'vector' && num(rt);
+						const isVectorDivRotation = lt === 'vector' && rt === 'rotation' && op !== '/=';
+						if (!isNumericBoth && !isVectorDivScalar && !isVectorDivRotation) {
+							if (lt !== 'any' && rt !== 'any') {
+								diagnostics.push({
+									code: LSL_DIAGCODES.WRONG_TYPE,
+									message: `Operator / type mismatch: ${lt} / ${rt}`,
+									range: mk(doc, e.span.start, e.span.end),
+									severity: DiagnosticSeverity.Error,
+								});
+							}
+							break;
+						}
 						if (isZeroLiteral(e.right)) {
 							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: 'Division by zero', range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Information });
 						}
@@ -112,7 +131,7 @@ export function validateOperatorsFromAst(
 						// Always emit when not a valid combination; prior logic suppressed when bothAny
 						// which caused test to miss mismatch (one side inferred 'any').
 						if (!bothInt && !bothVec) {
-							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: 'Operator % expects integer%integer or vector%vector', range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Information });
+							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: 'Operator % expects integer%integer or vector%vector', range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Error });
 						}
 						break;
 					}
@@ -125,18 +144,18 @@ export function validateOperatorsFromAst(
 						const leftKnownNonInt = (lt !== 'any') && (lt !== 'integer');
 						const rightKnownNonInt = (rt !== 'any') && (rt !== 'integer');
 						if (leftKnownNonInt || rightKnownNonInt) {
-							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator ${e.op} expects integer operands`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Information });
+							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator ${e.op} expects integer operands`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Error });
 						}
 						break;
 					}
 					case '+':
 					case '+=': {
 						if (lt === 'list' || rt === 'list') {
-							// ok
+							// ok: list + list concatenates; list + value appends one element
 						} else if ((lt === 'string' && rt === 'string') || (num(lt) && num(rt)) || (lt === 'vector' && rt === 'vector') || (lt === 'rotation' && rt === 'rotation')) {
 							// ok
 						} else if (lt !== 'any' && rt !== 'any') {
-							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator + type mismatch: ${lt} + ${rt}`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Information });
+							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator + type mismatch: ${lt} + ${rt}`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Error });
 						}
 						break;
 					}
@@ -146,7 +165,7 @@ export function validateOperatorsFromAst(
 						// - vector * vector (dot product) [not for *=]
 						// - number * number (integer/float)
 						// - vector * number, number * vector (scaling)
-						// - vector * rotation (rotate vector)
+						// - vector * rotation (rotate vector); rotation * vector is a compile error
 						const isVectorDot = (lt === 'vector' && rt === 'vector' && op !== '*=');
 						const isNumericBoth = num(lt) && num(rt);
 						const isVectorScale = (lt === 'vector' && num(rt)) || (num(lt) && rt === 'vector');
@@ -155,14 +174,17 @@ export function validateOperatorsFromAst(
 						if (isVectorDot || isNumericBoth || isVectorScale || isVectorRotate || isRotationCompose) {
 							// ok
 						} else if (lt !== 'any' && rt !== 'any') {
-							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator * type mismatch: ${lt} * ${rt}`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Information });
+							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator * type mismatch: ${lt} * ${rt}`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Error });
 						}
 						break;
 					}
 					case '-':
 					case '-=': {
-						// Subtraction: numeric only, but we don't currently emit diagnostics beyond other numeric checks
-						// (Handled elsewhere by type inference if needed)
+						if ((num(lt) && num(rt)) || (lt === 'vector' && rt === 'vector') || (lt === 'rotation' && rt === 'rotation')) {
+							// ok
+						} else if (lt !== 'any' && rt !== 'any') {
+							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: `Operator - type mismatch: ${lt} - ${rt}`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Error });
+						}
 						break;
 					}
 					case '&&':
@@ -241,7 +263,7 @@ export function validateOperatorsFromAst(
 								code: LSL_DIAGCODES.WRONG_TYPE,
 								message: `Operator ${op} expects an integer variable`,
 								range: mk(doc, e.span.start, e.span.end),
-								severity: DiagnosticSeverity.Information,
+								severity: DiagnosticSeverity.Error,
 							});
 						}
 						break;
@@ -425,6 +447,18 @@ export function validateOperatorsFromAst(
 			}
 			case 'Member': {
 				walk(e.object);
+				const base = unwrapParen(e.object);
+				const memberBaseOk =
+					base.kind === 'Member' ||
+					(base.kind === 'Identifier' && !opts?.constantNames?.has(base.name));
+				if (!memberBaseOk) {
+					diagnostics.push({
+						code: LSL_DIAGCODES.SYNTAX,
+						message: 'Member access is only allowed on vector/rotation variables or components',
+						range: mk(doc, e.span.start, e.span.end),
+						severity: DiagnosticSeverity.Error,
+					});
+				}
 				const type = inferExprTypeFromAst(e.object, symbolTypes, functionReturnTypes);
 				if (type !== 'any' && type !== 'vector' && type !== 'rotation') {
 					diagnostics.push({
@@ -437,11 +471,11 @@ export function validateOperatorsFromAst(
 				// Validate known component names for vector/rotation
 				if (type === 'vector') {
 					const ok = e.property === 'x' || e.property === 'y' || e.property === 'z';
-					if (!ok) diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER, message: `Unknown member ".${e.property}" for vector`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Warning });
+					if (!ok) diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER, message: `Unknown member ".${e.property}" for vector`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Error });
 				}
 				if (type === 'rotation') {
 					const ok = e.property === 'x' || e.property === 'y' || e.property === 'z' || e.property === 's';
-					if (!ok) diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER, message: `Unknown member ".${e.property}" for rotation`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Warning });
+					if (!ok) diagnostics.push({ code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER, message: `Unknown member ".${e.property}" for rotation`, range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Error });
 				}
 				break;
 			}
