@@ -8,7 +8,7 @@ import { parseScriptFromText } from '../src/ast/parser';
 import { inferExprTypeFromAst } from '../src/ast/infer';
 import type { SimpleType } from '../src/ast/infer';
 
-const defsPath = path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
+const defsPath = path.join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 describe('operator/type checks', () => {
 	it('division/modulus by zero', async () => {

@@ -4,12 +4,12 @@ LSL (Linden Scripting Language) language tooling for VS Code.
 
 ## Repository Layout
 
-- `server/`: TypeScript language server with preprocessing, parsing, analysis, diagnostics, hover, completions, signature help, semantic tokens, formatting, and navigation.
-- `client-vscode/`: VS Code extension that bundles and starts the server.
+- `packages/server/`: TypeScript language server with preprocessing, parsing, analysis, diagnostics, hover, completions, signature help, semantic tokens, formatting, and navigation.
+- `packages/client-vscode/`: VS Code extension that bundles and starts the server.
 - `third_party/lsl-definitions/`: Git submodule for the official [secondlife/lsl-definitions](https://github.com/secondlife/lsl-definitions) YAML used by the server, tests, and extension bundle.
 - `common/`: Local schema and override metadata used while loading official definitions.
 
-The runtime definition source is `third_party/lsl-definitions/lsl_definitions.yaml`. Server builds copy it to `server/out/lsl_definitions.yaml`; extension packaging includes the built server output.
+The runtime definition source is `third_party/lsl-definitions/lsl_definitions.yaml`. Server builds copy it to `packages/server/out/lsl_definitions.yaml`; extension packaging includes the built server output.
 
 ## Requirements
 
@@ -24,8 +24,8 @@ The runtime definition source is `third_party/lsl-definitions/lsl_definitions.ya
 - Watch during dev: `pnpm watch`
 - Lint: `pnpm lint`
 - Format/lint fix: `pnpm lint:fix`
-- Run server tests: `pnpm -C server test`
-- Build VS Code package: `pnpm -C client-vscode package`
+- Run server tests: `pnpm -C packages/server test`
+- Build VS Code package: `pnpm -C packages/client-vscode package`
 
 ## Definitions
 
@@ -33,7 +33,7 @@ The server accepts official YAML definitions or the older JSON/YAML shape. If no
 
 ## Release Notes
 
-Release-facing notes live in [client-vscode/CHANGELOG.md](client-vscode/CHANGELOG.md).
+Release-facing notes live in [packages/client-vscode/CHANGELOG.md](packages/client-vscode/CHANGELOG.md).
 
 ## Notes
 

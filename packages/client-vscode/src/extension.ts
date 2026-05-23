@@ -97,15 +97,20 @@ function applyDisabledDecorationsForEditor(editor: vscode.TextEditor) {
 export async function activate(context: vscode.ExtensionContext) {
 	// In dev, prefer a fixed repo server path relative to the extension folder,
 	// so it works even when VS Code opens a different workspace.
-	const extDir = context.extensionUri.fsPath; // .../client-vscode
-	const fixedRepoServer = path.join(path.resolve(extDir, '..'), 'server', 'out', 'index.js');
+	const extDir = context.extensionUri.fsPath; // .../packages/client-vscode
+	const packagesDir = path.resolve(extDir, '..');
+	const repoRootFromExtension = path.resolve(extDir, '..', '..');
+	const fixedRepoServer = path.join(packagesDir, 'server', 'out', 'index.js');
 	const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 	// Workspace-derived fallbacks (useful if running the extension from a packaged .vsix)
-	const primaryRepoServer = wsRoot ? path.join(wsRoot, 'server', 'out', 'index.js') : '';
+	const workspacePackagesServer = wsRoot ? path.join(wsRoot, 'packages', 'server', 'out', 'index.js') : '';
+	const workspaceServer = wsRoot ? path.join(wsRoot, 'server', 'out', 'index.js') : '';
 	const siblingRepoServer = wsRoot ? path.join(path.resolve(wsRoot, '..'), 'server', 'out', 'index.js') : '';
 	const candidateOrder = [fixedRepoServer,
 		// Prefer sibling when the workspace is the extension folder (client-vscode), otherwise prefer primary
-		...(wsRoot && path.basename(wsRoot) === 'client-vscode' ? [siblingRepoServer, primaryRepoServer] : [primaryRepoServer, siblingRepoServer])
+		...(wsRoot && path.basename(wsRoot) === 'client-vscode'
+			? [siblingRepoServer, workspacePackagesServer, workspaceServer]
+			: [workspacePackagesServer, workspaceServer, siblingRepoServer])
 	];
 	const devPath = candidateOrder.find(p => p && fs.existsSync(p)) || '';
 
@@ -152,15 +157,23 @@ export async function activate(context: vscode.ExtensionContext) {
 		// Make absolute if needed
 		if (p && !path.isAbsolute(p)) p = firstWs ? path.join(firstWs, p) : path.join(context.extensionUri.fsPath, p);
 		// If not provided or file missing, try built server definition bundles.
-		const repoRootFromExt = path.resolve(context.extensionUri.fsPath, '..');
+		const packagesRootFromExt = path.resolve(context.extensionUri.fsPath, '..');
+		const repoRootFromExt = path.resolve(context.extensionUri.fsPath, '..', '..');
 		if (!p || !requireExists(p)) {
 			if (firstWs) {
+				const wsPackagesServer = resolveCandidates(firstWs, 'packages', 'server', 'out');
+				if (wsPackagesServer) return wsPackagesServer;
 				const wsServer = resolveCandidates(firstWs, 'server', 'out');
 				if (wsServer) return wsServer;
 			}
-			// When running the extension from its folder (Run Extension), also try the sibling repo server output.
-			const siblingServer = resolveCandidates(repoRootFromExt, 'server', 'out');
-			if (siblingServer) return siblingServer;
+			// When running the extension from its folder (Run Extension), also try the sibling package server output.
+			const packageSiblingServer = resolveCandidates(packagesRootFromExt, 'server', 'out');
+			if (packageSiblingServer) return packageSiblingServer;
+			const repoPackageServer = resolveCandidates(repoRootFromExt, 'packages', 'server', 'out');
+			if (repoPackageServer) return repoPackageServer;
+			// Keep the old-layout fallback for local checkouts that have not moved yet.
+			const repoSiblingServer = resolveCandidates(repoRootFromExt, 'server', 'out');
+			if (repoSiblingServer) return repoSiblingServer;
 			// Fall back to the extension-bundled server output.
 			const extServer = resolveCandidates(context.extensionUri.fsPath, 'server', 'out');
 			if (extServer) return extServer;
@@ -195,8 +208,14 @@ export async function activate(context: vscode.ExtensionContext) {
 	status.show();
 	// Compute a stable log file path under the workspace (or temp)
 	const rootForLogs = fs.existsSync(fixedRepoServer)
-		? path.resolve(extDir, '..')
-		: (wsRoot ? (path.basename(wsRoot) === 'client-vscode' ? path.resolve(wsRoot, '..') : wsRoot) : undefined);
+		? repoRootFromExtension
+		: (wsRoot
+			? (path.basename(wsRoot) === 'client-vscode'
+				? path.resolve(wsRoot, '..', '..')
+				: path.basename(wsRoot) === 'packages'
+					? path.resolve(wsRoot, '..')
+					: wsRoot)
+			: undefined);
 	const logDir = rootForLogs ? path.join(rootForLogs, '.vscode') : require('node:os').tmpdir();
 	try { fs.mkdirSync(logDir, { recursive: true }); } catch (e) { log('[LSL] Failed to create log dir', logDir, e); }
 	const logFile = path.join(logDir, 'lsl-lsp-server.log');

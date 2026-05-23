@@ -13,7 +13,7 @@ function syntaxMsgs(diags: Diag[]) {
 
 describe('parser: macro-expanded calls with list args', () => {
 	it('does not emit LSL000 for nested call expanded from macro with list literal arg', async () => {
-		const defs = await loadDefs(join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
+		const defs = await loadDefs(join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
 		const code = [
 			'#define getjs llJsonGetValue',
 			'#define setjs llJsonSetValue',

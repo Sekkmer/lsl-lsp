@@ -31,22 +31,22 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build server
-        run: pnpm -C server build
+        run: pnpm -C packages/server build
 
       - name: Bundle server into client
-        run: pnpm -C client-vscode bundle:server
+        run: pnpm -C packages/client-vscode bundle:server
 
       - name: Build client bundle
-        run: pnpm -C client-vscode bundle
+        run: pnpm -C packages/client-vscode bundle
 
       - name: Package VSIX
-        run: pnpm -C client-vscode package
+        run: pnpm -C packages/client-vscode package
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: vscode-lsl-lsp-vsix
-          path: client-vscode/*.vsix
+          path: packages/client-vscode/*.vsix
 
       - name: Add run summary
         env:

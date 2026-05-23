@@ -85,7 +85,7 @@ default {
 	});
 
 	it('allows empty string for llMessageLinked ID argument without warning', async () => {
-		const defs = await loadDefs(join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
+		const defs = await loadDefs(join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
 		const code = `
 default {
 	state_entry() {

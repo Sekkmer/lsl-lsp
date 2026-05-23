@@ -1,3 +1,3 @@
 packages:
-  - server
-  - client-vscode
+  - packages/server
+  - packages/client-vscode

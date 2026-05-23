@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadDefs } from '../src/defs';
 
-const OFFICIAL_YAML_PATH = path.resolve(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
+const OFFICIAL_YAML_PATH = path.resolve(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 describe('loadDefs with official YAML source', () => {
 	it('loads core definitions', async () => {

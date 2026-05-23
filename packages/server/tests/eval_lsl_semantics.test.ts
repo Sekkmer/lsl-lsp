@@ -9,7 +9,7 @@ import { loadDefs } from '../src/defs';
 import { docFrom, runPipeline } from './testUtils';
 import { LSL_DIAGCODES } from '../src/analysisTypes';
 
-const defsPath = path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
+const defsPath = path.join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 function parseInitializer(type: Type, source: string): Expr {
 	const script = parseScriptFromText(`${type} probe = ${source};`, 'file:///eval-probe.lsl');

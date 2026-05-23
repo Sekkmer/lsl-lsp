@@ -4,7 +4,7 @@ import { loadTestDefs } from './loadDefs.testutil';
 import { loadDefs } from '../src/defs';
 import path from 'node:path';
 
-const officialDefsPath = path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
+const officialDefsPath = path.join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 describe('defs metadata: god-mode and deprecated', () => {
 	it('errors when calling a god-mode-only function', async () => {

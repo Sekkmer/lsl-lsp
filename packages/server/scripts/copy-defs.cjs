@@ -3,7 +3,7 @@
 /* globals console, __dirname */
 const fs = require('node:fs');
 const path = require('node:path');
-const src = path.resolve(__dirname, '../../third_party/lsl-definitions/lsl_definitions.yaml');
+const src = path.resolve(__dirname, '../../../third_party/lsl-definitions/lsl_definitions.yaml');
 const destDir = path.resolve(__dirname, '../out');
 const dest = path.join(destDir, 'lsl_definitions.yaml');
 try {

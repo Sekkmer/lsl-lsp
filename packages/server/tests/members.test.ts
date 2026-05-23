@@ -5,7 +5,7 @@ import { loadDefs } from '../src/defs';
 
 describe('vector/rotation members', () => {
 	it('vector allows .x/.y/.z, rejects .s', async () => {
-		const defs = await loadDefs(path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
+		const defs = await loadDefs(path.join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
 		const code = `
 vector v;
 float a = v.x;
@@ -23,7 +23,7 @@ float d = v.s; // invalid
 	});
 
 	it('rotation allows .x/.y/.z/.s, rejects others', async () => {
-		const defs = await loadDefs(path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
+		const defs = await loadDefs(path.join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
 		const code = `
 rotation r;
 float a = r.x;
@@ -44,7 +44,7 @@ float e = r.w; // invalid
 	});
 
 	it('only allows component access on variables/components, not values or constants', async () => {
-		const defs = await loadDefs(path.join(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
+		const defs = await loadDefs(path.join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
 		const code = `
 vector makeVector() { return <1,2,3>; }
 default {

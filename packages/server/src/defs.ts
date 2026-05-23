@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import Ajv2020 from 'ajv/dist/2020';
-import schema from '../../common/lslDefSchema.json';
+import schema from '../../../common/lslDefSchema.json';
 import draft7Meta from 'ajv/dist/refs/json-schema-draft-07.json';
 
 export interface DefParam { name: string; type: string; doc?: string; default?: string | number | boolean | null };
@@ -347,7 +347,7 @@ async function loadOverridesFor(defPath: string): Promise<Overrides> {
 	const dir = path.dirname(defPath);
 	candidates.push(path.resolve(dir, 'lsl-defs.overrides.json'));
 	candidates.push(path.resolve(dir, '..', 'lsl-defs.overrides.json'));
-	candidates.push(path.resolve(__dirname, '../../common/lsl-defs.overrides.json'));
+	candidates.push(path.resolve(__dirname, '../../../common/lsl-defs.overrides.json'));
 	const seen = new Set<string>();
 	for (const candidate of candidates) {
 		if (!candidate) continue;
@@ -480,7 +480,7 @@ export function normalizeType(t: string): string {
 }
 
 const BUILD_OUTPUT_YAML = path.resolve(__dirname, '..', 'out', 'lsl_definitions.yaml');
-const DEFAULT_OFFICIAL_YAML = path.resolve(__dirname, '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
+const DEFAULT_OFFICIAL_YAML = path.resolve(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 async function resolveDefinitionPath(defPath: string): Promise<{ raw: string; resolvedPath: string }> {
 	const requested = defPath?.trim();

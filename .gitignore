@@ -1,8 +1,7 @@
-client-vscode/common/lsl_definitions.yaml
 /.github/prompts/
 node_modules/
 out/
-/server/tests/tmp_includes/
+/packages/server/tests/tmp_includes/
 
 *.vsix
 *.log
