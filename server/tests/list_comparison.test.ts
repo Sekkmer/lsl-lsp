@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { DiagnosticSeverity } from 'vscode-languageserver/node';
 import { docFrom, runPipeline } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
 
@@ -19,6 +20,7 @@ integer f() {
 		const { analysis } = runPipeline(doc, defs);
 		const msg = analysis.diagnostics.find(d => d.message.includes('compares only length'));
 		expect(msg).toBeTruthy();
+		expect(msg?.severity).toBe(DiagnosticSeverity.Warning);
 	});
 
 	it('allows comparing a list to empty list literal []', async () => {

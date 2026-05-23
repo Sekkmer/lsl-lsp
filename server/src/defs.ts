@@ -46,7 +46,7 @@ const WIKI_BASE = 'https://wiki.secondlife.com/wiki/';
 type OfficialParamEntry = Record<string, { type?: string; tooltip?: string; description?: string }>;
 interface OfficialCommonFields {
 	tooltip?: string;
-	deprecated?: boolean;
+	deprecated?: unknown;
 	private?: boolean;
 }
 interface OfficialFunctionEntry extends OfficialCommonFields {
@@ -163,10 +163,29 @@ function sanitizeDoc(doc?: unknown): string | undefined {
 
 function extractDeprecatedMessage(doc?: string): string | undefined {
 	if (!doc) return undefined;
-	const m = doc.match(/^\s*depr[ie]?cated[:-]?\s*(.*)$/i);
+	const m = doc.match(/\bdepr[ie]?cated[:-]?\s*(.*)$/i);
 	if (!m) return undefined;
 	const rest = (m[1] || '').trim();
 	return rest.length ? rest : undefined;
+}
+
+function normalizeOfficialDeprecated(value: unknown, doc?: string): { deprecated: boolean; message?: string } {
+	const docMessage = extractDeprecatedMessage(doc);
+	if (value === true) return { deprecated: true, ...(docMessage ? { message: docMessage } : {}) };
+	if (typeof value === 'string') {
+		const trimmed = value.trim();
+		return { deprecated: true, ...(trimmed ? { message: trimmed } : docMessage ? { message: docMessage } : {}) };
+	}
+	if (value && typeof value === 'object' && !Array.isArray(value)) {
+		const rec = value as Record<string, unknown>;
+		const use = typeof rec.use === 'string' ? rec.use.trim() : '';
+		const reason = typeof rec.reason === 'string' ? rec.reason.trim() : '';
+		const message = use
+			? `Use ${use.replace(/^ll\./, 'll')} instead${reason ? `: ${reason}` : ''}.`
+			: reason || docMessage;
+		return { deprecated: true, ...(message ? { message } : {}) };
+	}
+	return docMessage ? { deprecated: true, message: docMessage } : { deprecated: false };
 }
 
 function normalizeOfficialType(type?: unknown): string {
@@ -374,7 +393,7 @@ function toDefFileFromOfficial(defs: OfficialDefinitions, overrides: Overrides):
 			...(value !== undefined ? { value } : {}),
 			...(doc ? { doc } : {}),
 			wiki: defaultWiki(name),
-			...(info?.deprecated ? { deprecated: true } : {}),
+			...(normalizeOfficialDeprecated(info?.deprecated, doc).deprecated ? { deprecated: true } : {}),
 		};
 		const overridden = applyEntryOverride(base, overrides.constants[name]);
 		constants.push(overridden);
@@ -402,15 +421,14 @@ function toDefFileFromOfficial(defs: OfficialDefinitions, overrides: Overrides):
 		const experience = typeof info?.experience === 'boolean' ? info.experience : info?.experience === 1 || info?.experience === '1' || info?.experience === 'true';
 		const mustUse = info?.['must-use'] === true || info?.pure === true;
 		const godMode = info?.['god-mode'] === true;
-		const deprecatedMessage = extractDeprecatedMessage(doc);
-		const deprecatedFlag = info?.deprecated === true || !!deprecatedMessage;
+		const deprecated = normalizeOfficialDeprecated(info?.deprecated, doc);
 		const base: DefFunction = {
 			name,
 			returns: normalizeOfficialType(info?.return),
 			params,
 			...(doc ? { doc } : {}),
-			...(deprecatedFlag ? { deprecated: true } : {}),
-			...(deprecatedMessage ? { deprecatedMessage } : {}),
+			...(deprecated.deprecated ? { deprecated: true } : {}),
+			...(deprecated.message ? { deprecatedMessage: deprecated.message } : {}),
 			...(godMode ? { godMode: true } : {}),
 			wiki: defaultWiki(name),
 			...(Number.isFinite(energy) ? { energy: energy as number } : {}),

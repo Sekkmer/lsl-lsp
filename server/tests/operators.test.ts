@@ -217,7 +217,118 @@ default {
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		const msgs = analysis.diagnostics.map(d => `${d.message} @${d.severity}`);
 		expect(msgs.some(m => m.includes('Operator | expects integer operands') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
-		expect(msgs.some(m => m.includes('Operator ++ expects an integer variable') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
+		expect(msgs.some(m => m.includes('Operator ++ expects a numeric variable') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
+	});
+
+	it('matches SL compiler equality compatibility', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+	state_entry() {
+		integer i = 1;
+		float f = 1.0;
+		string s = "00000000-0000-0000-0000-000000000000";
+		key k = NULL_KEY;
+		vector v = <1,2,3>;
+		rotation r = <0,0,0,1>;
+		list l = [1];
+		integer okNum = i == f;
+		integer okKey = s == k;
+		integer okVec = v == v;
+		integer okRot = r != r;
+		integer okList = l == [];
+		integer badString = i == s;
+		integer badList = l == i;
+		integer badVecRot = v == r;
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///ops_eq.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => `${d.message} @${d.severity}`);
+		expect(msgs.some(m => m.includes('integer == float'))).toBe(false);
+		expect(msgs.some(m => m.includes('string == key'))).toBe(false);
+		expect(msgs.some(m => m.includes('vector == vector'))).toBe(false);
+		expect(msgs.some(m => m.includes('rotation != rotation'))).toBe(false);
+		expect(msgs.some(m => m.includes('integer == string') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
+		expect(msgs.some(m => m.includes('list == integer') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
+		expect(msgs.some(m => m.includes('vector == rotation') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
+	});
+
+	it('matches SL compiler assignment compatibility', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+	state_entry() {
+		integer i = 1;
+		float f = 1.0;
+		string s = NULL_KEY;
+		key k = "00000000-0000-0000-0000-000000000000";
+		list l = [];
+		f = i; // ok
+		s = k; // ok
+		k = s; // ok
+		l += "x"; // ok list append
+		i = f; // bad
+		s = i; // bad
+		i += f; // bad: numeric result is float
+		integer badInit = f; // bad initializer
+		string badStringInit = i; // bad initializer
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///ops_assign_types.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => `${d.message} @${d.severity}`);
+		expect(msgs.some(m => m.includes('Cannot assign integer to float'))).toBe(false);
+		expect(msgs.some(m => m.includes('Cannot assign key to string'))).toBe(false);
+		expect(msgs.some(m => m.includes('Cannot assign string to key'))).toBe(false);
+		expect(msgs.some(m => m.includes('Cannot assign list to list'))).toBe(false);
+		expect(msgs.filter(m => m.includes('Cannot assign float to integer') && m.includes(String(DiagnosticSeverity.Error))).length).toBeGreaterThanOrEqual(3);
+		expect(msgs.filter(m => m.includes('Cannot assign integer to string') && m.includes(String(DiagnosticSeverity.Error))).length).toBeGreaterThanOrEqual(2);
+	});
+
+	it('requires integer operands for logical && and ||', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+	state_entry() {
+		integer i = 1;
+		float f = 1.0;
+		integer ok = i && i;
+		integer badAnd = i && f;
+		integer badOr = f || f;
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///ops_logic_types.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => `${d.message} @${d.severity}`);
+		expect(msgs.some(m => m.includes('integer && integer'))).toBe(false);
+		expect(msgs.filter(m => m.includes('expects integer operands') && m.includes(String(DiagnosticSeverity.Error))).length).toBeGreaterThanOrEqual(2);
+	});
+
+	it('allows SL-proven float increment and unary minus for vector/rotation', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+	state_entry() {
+		float f = 1.0;
+		vector v = <1,2,3>;
+		rotation r = <0,0,0,1>;
+		f++;
+		--f;
+		vector nv = -v;
+		rotation nr = -r;
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///ops_unary_sl.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.some(m => m.includes('Operator ++ expects a numeric variable'))).toBe(false);
+		expect(msgs.some(m => m.includes('Operator -- expects a numeric variable'))).toBe(false);
+		expect(msgs.some(m => m.includes('Unary operator - expects'))).toBe(false);
 	});
 
 	it('infers known result types for SL-proven operator combinations', () => {
@@ -230,10 +341,15 @@ vector vectorModVector = <1,0,0> % <0,1,0>;
 rotation rotationSub = <2,4,6,8> - <1,1,1,1>;
 vector vectorTimesRotation = <1,2,3> * <0,0,0,1>;
 rotation rotationTimesRotation = <0,0,0,1> * <0,0,0,1>;
+float f;
+float floatPostInc = f++;
+vector negVector = -<1,2,3>;
+rotation negRotation = -<0,0,0,1>;
 string stringInt = "a" + 1;
 rotation rotationDivScalar = <2,4,6,8> / 2.0;
 `);
 		const globals = new Map<string, SimpleType>();
+		globals.set('f', 'float');
 		const inferGlobal = (name: string) => inferExprTypeFromAst(script.globals.get(name)?.initializer ?? null, globals);
 		expect(inferGlobal('listAppend')).toBe('list');
 		expect(inferGlobal('stringConcat')).toBe('string');
@@ -243,6 +359,9 @@ rotation rotationDivScalar = <2,4,6,8> / 2.0;
 		expect(inferGlobal('rotationSub')).toBe('rotation');
 		expect(inferGlobal('vectorTimesRotation')).toBe('vector');
 		expect(inferGlobal('rotationTimesRotation')).toBe('rotation');
+		expect(inferGlobal('floatPostInc')).toBe('float');
+		expect(inferGlobal('negVector')).toBe('vector');
+		expect(inferGlobal('negRotation')).toBe('rotation');
 		expect(inferGlobal('stringInt')).toBe('any');
 		expect(inferGlobal('rotationDivScalar')).toBe('any');
 	});

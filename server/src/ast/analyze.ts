@@ -15,6 +15,7 @@ import { isKeyword } from './lexer';
 import { Token } from '../core/tokens';
 import { Env, evalExpr } from './eval';
 import type { Value } from './runtime';
+import { isAssignmentCompatible } from './compat';
 
 // Scope now carries a lightweight kind tag to distinguish event/function contexts
 type Scope = { parent?: Scope; vars: Map<string, Decl>; kind?: 'event' | 'func' | 'state' | 'global' | 'block' };
@@ -710,6 +711,19 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		validateOperatorsFromAst(doc, [expr], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { constantNames });
 	}
 
+	function validateInitializerType(targetType: string, initializer: Expr, typeScope: TypeScope) {
+		const target = toSimpleType(targetType);
+		const source = inferExprTypeFromAst(initializer, typeScope.view, functionReturnTypes);
+		if (!isAssignmentCompatible(target, source)) {
+			diagnostics.push({
+				code: LSL_DIAGCODES.WRONG_TYPE,
+				message: `Cannot assign ${source} to ${target}`,
+				range: spanToRange(doc, initializer.span),
+				severity: DiagnosticSeverity.Error,
+			});
+		}
+	}
+
 	const assignmentOps = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
 	function updateValueEnvFromExpr(expr: Expr | null, typeScope: TypeScope) {
 		if (!expr) return;
@@ -839,6 +853,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				if (stmt.initializer) {
 					walkExpr(stmt.initializer, scope, typeScope);
 					validateExpr(stmt.initializer, typeScope);
+					validateInitializerType(type, stmt.initializer, typeScope);
 					currentValueEnv().setVar(name, evalExpr(stmt.initializer, currentValueEnv()));
 				} else {
 					const dv = zeroValueForType(type);
@@ -1007,6 +1022,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (g.initializer) {
 			walkExpr(g.initializer, globalScope, globalTypeScope);
 			validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures, { constantNames });
+			validateInitializerType(g.varType, g.initializer, globalTypeScope);
 			currentValueEnv().setVar(name, evalExpr(g.initializer, currentValueEnv()));
 		} else {
 			const dv = zeroValueForType(g.varType);

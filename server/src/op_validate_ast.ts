@@ -5,6 +5,7 @@ import { inferExprTypeFromAst, isZeroLiteral, type SimpleType } from './ast/infe
 import { Diag, DiagCode, LSL_DIAGCODES } from './analysisTypes';
 import { AssertNever } from './utils';
 import { isKnownKeyString } from './ast/key';
+import { areEqualityComparable, isAssignmentCompatible } from './ast/compat';
 
 function mk(doc: TextDocument, start: number, end: number) {
 	return { start: doc.positionAt(start), end: doc.positionAt(end) };
@@ -77,6 +78,14 @@ export function validateOperatorsFromAst(
 								severity: DiagnosticSeverity.Information,
 							});
 						}
+						if (!isAssignmentCompatible(lt, rt)) {
+							diagnostics.push({
+								code: LSL_DIAGCODES.WRONG_TYPE,
+								message: `Cannot assign ${rt} to ${lt}`,
+								range: mk(doc, e.span.start, e.span.end),
+								severity: DiagnosticSeverity.Error,
+							});
+						}
 						break;
 					}
 					case '==':
@@ -87,14 +96,23 @@ export function validateOperatorsFromAst(
 						// Be robust: detect list operands either via inference, literal kind, or symbol type mapping
 						const leftIsList = lt === 'list' || e.left.kind === 'ListLiteral' || (e.left.kind === 'Identifier' && symbolTypes.get(e.left.name) === 'list');
 						const rightIsList = rt === 'list' || e.right.kind === 'ListLiteral' || (e.right.kind === 'Identifier' && symbolTypes.get(e.right.name) === 'list');
-						if ((leftIsList || leftEmpty) && (rightIsList || rightEmpty)) {
+						if (!areEqualityComparable(lt, rt, leftIsList || leftEmpty, rightIsList || rightEmpty)) {
+							if (lt !== 'any' && rt !== 'any') {
+								diagnostics.push({
+									code: LSL_DIAGCODES.WRONG_TYPE,
+									message: `Operator ${e.op} type mismatch: ${lt} ${e.op} ${rt}`,
+									range: mk(doc, e.span.start, e.span.end),
+									severity: DiagnosticSeverity.Error,
+								});
+							}
+						} else if ((leftIsList || leftEmpty) && (rightIsList || rightEmpty)) {
 							if (leftEmpty || rightEmpty) { /* allow */ }
 							else {
 								diagnostics.push({
 									code: LSL_DIAGCODES.LIST_COMPARISON_LENGTH_ONLY,
 									message: `Comparing lists with ${e.op} compares only length (not contents)`,
 									range: mk(doc, e.span.start, e.span.end),
-									severity: DiagnosticSeverity.Information,
+									severity: DiagnosticSeverity.Warning,
 								});
 							}
 						}
@@ -188,7 +206,19 @@ export function validateOperatorsFromAst(
 						break;
 					}
 					case '&&':
-					case '||':
+					case '||': {
+						const leftNonInt = lt !== 'any' && lt !== 'integer';
+						const rightNonInt = rt !== 'any' && rt !== 'integer';
+						if (leftNonInt || rightNonInt) {
+							diagnostics.push({
+								code: LSL_DIAGCODES.WRONG_TYPE,
+								message: `Operator ${e.op} expects integer operands`,
+								range: mk(doc, e.span.start, e.span.end),
+								severity: DiagnosticSeverity.Error,
+							});
+						}
+						break;
+					}
 					case '<':
 					case '<=':
 					case '>':
@@ -210,6 +240,17 @@ export function validateOperatorsFromAst(
 						AssertNever(op, '<unknown operator>');
 						break;
 				}
+				if (op === '+=' || op === '-=' || op === '*=' || op === '/=' || op === '%=') {
+					const resultType = inferExprTypeFromAst(e, symbolTypes, functionReturnTypes);
+					if (!isAssignmentCompatible(lt, resultType)) {
+						diagnostics.push({
+							code: LSL_DIAGCODES.WRONG_TYPE,
+							message: `Cannot assign ${resultType} to ${lt}`,
+							range: mk(doc, e.span.start, e.span.end),
+							severity: DiagnosticSeverity.Error,
+						});
+					}
+				}
 				// recurse
 				walk(e.left); walk(e.right);
 				break;
@@ -223,8 +264,8 @@ export function validateOperatorsFromAst(
 				switch (op) {
 					case '+':
 					case '-': {
-						// If argument type is known and not numeric, hint
-						if (argType !== 'any' && !isNum(argType)) {
+						const ok = isNum(argType) || (op === '-' && (argType === 'vector' || argType === 'rotation'));
+						if (argType !== 'any' && !ok) {
 							diagnostics.push({
 								code: LSL_DIAGCODES.WRONG_TYPE,
 								message: `Unary operator ${op} expects a numeric value`,
@@ -249,7 +290,7 @@ export function validateOperatorsFromAst(
 					}
 					case '++':
 					case '--': {
-						// ++/-- require an assignable variable and integer type when known
+						// ++/-- require an assignable numeric variable when known
 						if (!isAssignable(e.argument)) {
 							diagnostics.push({
 								code: LSL_DIAGCODES.INVALID_ASSIGN_LHS,
@@ -258,10 +299,10 @@ export function validateOperatorsFromAst(
 								severity: DiagnosticSeverity.Error,
 							});
 						}
-						if (argType !== 'any' && argType !== 'integer') {
+						if (argType !== 'any' && !isNum(argType)) {
 							diagnostics.push({
 								code: LSL_DIAGCODES.WRONG_TYPE,
-								message: `Operator ${op} expects an integer variable`,
+								message: `Operator ${op} expects a numeric variable`,
 								range: mk(doc, e.span.start, e.span.end),
 								severity: DiagnosticSeverity.Error,
 							});

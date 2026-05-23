@@ -27,10 +27,11 @@ export function inferExprTypeFromAst(
 		case 'Identifier': return symbolTypes.get(expr.name) ?? 'any';
 		case 'Cast': return expr.type;
 		case 'Unary': {
-			// Logical and bitwise nots yield integer; arithmetic +/- preserve numeric where possible; ++/-- yield integer
-			if (expr.op === '!' || expr.op === '~' || expr.op === '++' || expr.op === '--') return 'integer';
+			// Logical and bitwise nots yield integer; arithmetic +/- and ++/-- preserve known operand type where possible.
+			if (expr.op === '!' || expr.op === '~') return 'integer';
 			const t = inferExprTypeFromAst(expr.argument, symbolTypes, functionReturnTypes);
-			if ((expr.op === '+' || expr.op === '-') && isNumeric(t)) return t;
+			if (expr.op === '++' || expr.op === '--') return isNumeric(t) ? t : 'any';
+			if ((expr.op === '+' || expr.op === '-') && (isNumeric(t) || (expr.op === '-' && (t === 'vector' || t === 'rotation')))) return t;
 			return 'any';
 		}
 		case 'Call': {

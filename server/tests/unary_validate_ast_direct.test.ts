@@ -33,21 +33,24 @@ describe('validateOperatorsFromAst (direct AST) - unary operators', () => {
 		expect(msgs.some(m => m.includes('Unary operator ~ expects an integer value'))).toBe(true);
 	});
 
-	it('enforces ++ assignability and integer type', () => {
+	it('enforces ++ assignability and numeric type', () => {
 		const doc = mkDoc('');
 		const diagnostics: Diag[] = [];
 		const i = id('i');
+		const f = id('f');
 		const L = id('L');
 		const exprs: Expr[] = [
 			unary('++', paren(i)),	// ++(i) -> not assignable
+			unary('++', f),		 // ++f with f:float -> ok
 			unary('++', L),		 // ++L with L:list -> wrong type
 		];
 		const symbolTypes = new Map<string, SimpleType>();
 		symbolTypes.set('L', 'list');
 		symbolTypes.set('i', 'integer');
+		symbolTypes.set('f', 'float');
 		validateOperatorsFromAst(doc, exprs, diagnostics, symbolTypes);
 		const msgs = diagnostics.map(d => `${d.message} @${d.code}`);
 		expect(msgs.some(m => m.includes('Operand of ++ must be a variable') && m.includes(LSL_DIAGCODES.INVALID_ASSIGN_LHS))).toBe(true);
-		expect(msgs.some(m => m.includes('Operator ++ expects an integer variable') && m.includes(LSL_DIAGCODES.WRONG_TYPE))).toBe(true);
+		expect(msgs.some(m => m.includes('Operator ++ expects a numeric variable') && m.includes(LSL_DIAGCODES.WRONG_TYPE))).toBe(true);
 	});
 });
