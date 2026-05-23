@@ -75,12 +75,11 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 		if (!Object.prototype.hasOwnProperty.call(initialDefines, '__FILE__')) initialDefines['__FILE__'] = JSON.stringify(base);
 	}
 	// Provide a stable content-based version to invalidate segmentation cache when text changes.
-	let version = 0;
-	{
+	const version = (() => {
 		let h = 2166136261 >>> 0; // FNV-1a 32-bit
 		for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); }
-		version = h >>> 0;
-	}
+		return h >>> 0;
+	})();
 	// Provide __FILE__ lazily: allow builtin expansion later; no need to predefine for branch forcing because new preprocessor already records undefined identifiers.
 	const pre = preprocessAndExpandNew(opts.fromPath || '<memory>', version, rootTokens, initialDefines, resolver);
 	// Build diagnostic suppression directives & disabled ranges by scanning comments.

@@ -101,9 +101,9 @@ function formatCore(text: string, disabledRanges: { start: number; end: number }
 			const firstNonWs = j < text.length ? text[j] : '';
 			const isBlankLine = (j >= text.length) || firstNonWs === '\n' || firstNonWs === '\r';
 			const isContinuation = parenDepth > 0;
-			let units = 0;
-			if (indent.useTabs) units = tabs + Math.floor(spaces / indent.size);
-			else units = Math.floor((tabs * indent.size + spaces) / indent.size);
+			const units = indent.useTabs
+				? tabs + Math.floor(spaces / indent.size)
+				: Math.floor((tabs * indent.size + spaces) / indent.size);
 			const expectedDepth = firstNonWs === '}' ? Math.max(0, braceDepth - 1) : braceDepth;
 			let targetUnits = units;
 			if (!isBlankLine && !isContinuation && firstNonWs !== '') {
@@ -249,7 +249,7 @@ function formatCore(text: string, disabledRanges: { start: number; end: number }
 						if (k >= 0 && (out[k] === '<' || out[k] === '>')) {
 							const first = out[k];
 							let k2 = k - 1; while (k2 >= 0 && (out[k2] === ' ' || out[k2] === '\t')) k2--;
-							if (k2 >= 0 && out[k2] === first) { prefix = first + first; k = k2 - 0; }
+							if (k2 >= 0 && out[k2] === first) { prefix = first + first; }
 							else { prefix = first; }
 						} else if (k >= 0 && '+-*/%&|^'.includes(out[k]!)) {
 							prefix = out[k] as string;
@@ -401,8 +401,7 @@ function computeInitialStateBefore(text: string, disabled: { start: number; end:
 		i++;
 	}
 	// pendingIndent is true if at BOL
-	let pendingIndent = false;
-	if (endOffset === 0) pendingIndent = true; else pendingIndent = text[endOffset - 1] === '\n' || text[endOffset - 1] === '\r';
+	const pendingIndent = endOffset === 0 || text[endOffset - 1] === '\n' || text[endOffset - 1] === '\r';
 	return { braceDepth, parenDepth, forHeaderDepth, pendingIndent };
 }
 

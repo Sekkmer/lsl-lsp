@@ -423,10 +423,10 @@ function cleanJsDoc(raw: string): string {
 // Try to find an enclosing function call around the given offset and return the call name and argument index
 function findEnclosingCall(text: string, offset: number): { name: string; index: number } | null {
 	const n = text.length;
-	let i = offset;
 	// Walk backward to find matching '('
 	let depth = 0;
-	for (i = offset; i >= 0; i--) {
+	let i = offset;
+	for (; i >= 0; i--) {
 		const ch = text[i];
 		if (ch === ')') depth++;
 		else if (ch === '(') {
@@ -469,10 +469,10 @@ function findEnclosingCall(text: string, offset: number): { name: string; index:
 // find the declaring identifier before '(' and the index of the parameter by counting commas.
 function findEnclosingParamDecl(text: string, offset: number): { name: string; index: number } | null {
 	const n = text.length;
-	let i = offset;
 	// Walk backward to nearest '('
 	let depth = 0;
-	for (i = offset; i >= 0; i--) {
+	let i = offset;
+	for (; i >= 0; i--) {
 		const ch = text[i];
 		if (ch === ')') depth++;
 		else if (ch === '(') {

@@ -50,7 +50,7 @@ export class TokenStream {
 			this.lastEnd = t.span.end;
 			return t;
 		}
-		let t: Token | null = null;
+		let t: Token;
 		if (this.arr) {
 			if (this.idx < this.arr.length) {
 				t = this.arr[this.idx++];

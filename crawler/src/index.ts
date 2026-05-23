@@ -1942,7 +1942,7 @@ async function main() {
 			return;
 		}
 		// Non-events live at the top level map
-		let rawEntry: LLSD = null;
+		let rawEntry: LLSD;
 		if (kind === 'func' || kind === 'auto') {
 			// try exact, canonical, and then case-insensitive resolution
 			rawEntry = (cName && llsdGetObj(top, cName)) ?? llsdGetObj(top, name);
