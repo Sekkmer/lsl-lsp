@@ -1227,17 +1227,22 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const dd = pre.diagDirectives;
 	let finalDiagnostics = diagnostics;
 	if (dd && (dd.disableLine.size > 0 || dd.disableNextLine.size > 0 || dd.blocks.length > 0)) {
+		const lineSuppression = (map: Map<number, Set<string> | null>, line: number) => {
+			if (map.has(line)) return map.get(line);
+			if (map.has(line + 1)) return map.get(line + 1); // tolerate previous storage style
+			return undefined;
+		};
 		finalDiagnostics = diagnostics.filter(d => {
 			const startOff = doc.offsetAt(d.range.start);
 			const zeroBasedLine = doc.positionAt(startOff).line; // 0-based
 			// In preprocessing we stored line numbers as 0-based when calling lineOf(); convert consistently here.
 			const hasCode = (set: Set<string> | null) => !set || set.has(d.code);
 			// disable-line: same physical line (maps stored with 0-based line index)
-			const s1 = dd.disableLine.get(zeroBasedLine) || dd.disableLine.get(zeroBasedLine + 1); // tolerate previous storage style
-			if (s1 && hasCode(s1)) return false;
+			const s1 = lineSuppression(dd.disableLine, zeroBasedLine);
+			if (s1 !== undefined && hasCode(s1)) return false;
 			// disable-next-line: directive appears on previous line suppressing this one. Maps store directive line index.
-			const sPrev = dd.disableNextLine.get(zeroBasedLine - 1);
-			if (sPrev && hasCode(sPrev)) return false;
+			const sPrev = dd.disableNextLine.has(zeroBasedLine - 1) ? dd.disableNextLine.get(zeroBasedLine - 1) : undefined;
+			if (sPrev !== undefined && hasCode(sPrev)) return false;
 			for (const b of dd.blocks) {
 				if (startOff >= b.start && startOff <= b.end && hasCode(b.codes)) return false;
 			}

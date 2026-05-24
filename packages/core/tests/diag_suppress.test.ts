@@ -18,9 +18,26 @@ describe('diagnostic suppression directives', () => {
 		expect(analysis.diagnostics.find(d => d.code === 'LSL001')).toBeFalsy();
 	});
 
+	it('disables all diagnostics on the same line with bare lsl-disable-line', async () => {
+		const code = `integer f(){
+		return x; // lsl-disable-line
+	}`;
+		const { analysis } = await analyze(code);
+		expect(analysis.diagnostics.find(d => d.code === 'LSL001')).toBeFalsy();
+	});
+
 	it('disables on the next line with lsl-disable-next-line', async () => {
 		const code = `integer f(){
 		// lsl-disable-next-line LSL001
+		return x;
+	}`;
+		const { analysis } = await analyze(code);
+		expect(analysis.diagnostics.find(d => d.code === 'LSL001')).toBeFalsy();
+	});
+
+	it('disables all diagnostics on the next line with bare lsl-disable-next-line', async () => {
+		const code = `integer f(){
+		// lsl-disable-next-line
 		return x;
 	}`;
 		const { analysis } = await analyze(code);
