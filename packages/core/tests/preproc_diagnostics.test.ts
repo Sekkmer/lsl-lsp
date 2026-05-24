@@ -16,6 +16,15 @@ describe('preprocessor diagnostics', () => {
 		expect(msgs.some(m => /Malformed #if expression/i.test(m))).toBe(true);
 	});
 
+	it('reports malformed #if expression with trailing tokens', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('#if 1 2\nint X;\n#endif\n');
+		const { pre, expandedTokens } = runPipeline(doc, defs);
+		const msgs = messages(pre);
+		expect(msgs.some(m => /Malformed #if expression/i.test(m))).toBe(true);
+		expect((expandedTokens ?? []).some(t => t.value === 'X')).toBe(false);
+	});
+
 	it('reports malformed #elif expression', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('#if 0\n#elif (defined(FOO\nint X;\n#endif\n');

@@ -826,6 +826,7 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 	}
 
 	const result = parseLogOr();
+	if (p < toks.length) return false;
 	return truthy(result);
 }
 
@@ -897,6 +898,7 @@ function validateIfExpr(expr: string): boolean {
 	function parseOr(): number { let v = parseAnd(); while (peek() && peek()!.kind === 'op' && (peek() as { kind: 'op'; value: string }).value === '||') { take(); v = parseAnd(); } return v; }
 	parseOr();
 	if (!ok) return false;
+	if (p < toks.length) return false;
 	const last = toks[toks.length - 1];
 	if (last && last.kind === 'op') return false;
 	return true;
