@@ -19,4 +19,11 @@ describe('jump label handling', () => {
 		const unk = analysis.diagnostics.find(d => d.code === LSL_DIAGCODES.UNKNOWN_IDENTIFIER);
 		expect(unk).toBeTruthy();
 	});
+
+	it('errors when jump is missing a semicolon', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('default{ state_entry(){ jump L @L; }}');
+		const { analysis } = runPipeline(doc, defs);
+		expect(analysis.diagnostics.some(d => d.code === 'LSL000' && /expected ';'/.test(d.message))).toBe(true);
+	});
 });

@@ -84,4 +84,12 @@ describe('states: declaration and change rules', () => {
 		const e = analysis.diagnostics.find(d => d.code === 'LSL023');
 		expect(e).toBeFalsy();
 	});
+
+	it('errors when state change is missing a semicolon', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('default { state_entry(){ state ready } } state ready { state_entry(){ } }');
+		const { analysis } = runPipeline(doc, defs);
+		const e = analysis.diagnostics.find(d => d.code === 'LSL000' && /expected ';'/.test(d.message));
+		expect(e).toBeTruthy();
+	});
 });

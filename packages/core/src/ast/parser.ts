@@ -933,8 +933,8 @@ class Parser {
 						this.report({ kind: 'id', value: '', span: { start: kw.span.start, end: body.span.end }, file: kw.file || '<unknown>' }, 'State declarations are only allowed at global scope', 'LSL022');
 						return { span: spanFrom(kw.span.start, body.span.end), kind: 'ErrorStmt' } as Stmt;
 					}
-					this.maybe('punct', ';');
-					return { span: spanFrom(kw.span.start, nameTok.span.end), kind: 'StateChangeStmt', state: nameTok.value } as Stmt;
+					const semi = this.eat('punct', ';');
+					return { span: spanFrom(kw.span.start, semi.span.end || nameTok.span.end), kind: 'StateChangeStmt', state: nameTok.value } as Stmt;
 				}
 				case 'default': {
 					// default block inside function/event is illegal here
@@ -973,9 +973,8 @@ class Parser {
 		if (t.kind === 'keyword' && t.value === 'jump') {
 			const kw = this.eat('keyword', 'jump');
 			const target = this.eat('id');
-			const semi = this.maybe('punct', ';');
-			const end = semi ? semi.span.end : target.span.end;
-			return { span: spanFrom(kw.span.start, end), kind: 'JumpStmt', target: { span: target.span, kind: 'Identifier', name: target.value } } as Stmt;
+			const semi = this.eat('punct', ';');
+			return { span: spanFrom(kw.span.start, semi.span.end || target.span.end), kind: 'JumpStmt', target: { span: target.span, kind: 'Identifier', name: target.value } } as Stmt;
 		}
 		// expr;
 		try {
