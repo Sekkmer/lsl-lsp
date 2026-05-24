@@ -913,11 +913,6 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					});
 				}
 				const d: Decl = { name, range: findNameRangeInSpan(name, stmt.span, false), kind: 'var', type };
-				scope.vars.set(name, d);
-				decls.push(d);
-				// Track local decl for unused checks when inside a body
-				const top = usageStack[usageStack.length - 1];
-				if (top) top.localDecls.push(d);
 				if (stmt.initializer) {
 					walkExpr(stmt.initializer, scope, typeScope);
 					validateExpr(stmt.initializer, typeScope);
@@ -927,6 +922,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					const dv = zeroValueForType(type);
 					if (dv) currentValueEnv().setVar(name, dv);
 				}
+				scope.vars.set(name, d);
+				decls.push(d);
+				// Track local decl for unused checks when inside a body
+				const top = usageStack[usageStack.length - 1];
+				if (top) top.localDecls.push(d);
 				addType(typeScope, name, type);
 				break;
 			}
