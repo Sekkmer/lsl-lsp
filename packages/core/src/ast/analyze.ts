@@ -342,14 +342,20 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			if (eventNames.length > 0) {
 				const codeText = maskCommentsAndStrings(text);
 				const namesRe = eventNames.map(n => n.replace(/[-\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
-				const sigRe = new RegExp(`^[\\t ]*(?:${namesRe})\\s*\\(`, 'm');
-				if (sigRe.test(codeText)) {
+				const sigRe = new RegExp(`^[\\t ]*(${namesRe})\\s*\\(`, 'gm');
+				for (const match of codeText.matchAll(sigRe)) {
+					const leading = /^[\t ]*/.exec(match[0])?.[0].length ?? 0;
+					const eventStart = match.index + leading;
+					const disabled = pre.disabledRanges.some(r => eventStart >= r.start && eventStart < r.end);
+					if (disabled) continue;
+					const eventName = match[1] ?? '';
 					diagnostics.push({
 						code: LSL_DIAGCODES.EVENT_OUTSIDE_STATE,
 						message: 'Event must be declared inside a state',
-						range: { start: doc.positionAt(0), end: doc.positionAt(Math.min(1, text.length)) },
+						range: { start: doc.positionAt(eventStart), end: doc.positionAt(eventStart + eventName.length) },
 						severity: DiagnosticSeverity.Error,
 					});
+					break;
 				}
 			}
 		}
