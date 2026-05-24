@@ -21,7 +21,7 @@ describe('preprocessor full expansion', () => {
 		const defs = await loadTestDefs();
 		const header = tmpFile('api.lslh', [
 			'integer GLOB_Y;',
-			'integer utilAdd(integer a, integer b);',
+			'integer utilAdd(integer a, integer b) { return a + b; }',
 			'state Included { state_entry() { } }',
 			''
 		].join('\n'));
@@ -31,7 +31,7 @@ describe('preprocessor full expansion', () => {
 		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [includeDir] });
 		// Assert expanded tokens present and from include file
 		expect(pre.expandedTokens && pre.expandedTokens.some(t => t.file && t.file.endsWith('api.lslh'))).toBe(true);
-		// The prototype utilAdd should be callable (no unknown id diagnostic)
+		// The included function definition should be callable (no unknown id diagnostic)
 		const unknowns = analysis.diagnostics.filter(d => /Unknown identifier utilAdd/.test(d.message));
 		expect(unknowns.length).toBe(0);
 		// Global GLOB_Y should be present as a declaration

@@ -25,7 +25,7 @@ describe('hover: include docs for functions/globals', async () => {
 			'/**',
 			' * Adds two numbers (include).',
 			' */',
-			'integer addi(integer a, integer b);',
+			'integer addi(integer a, integer b) { return a + b; }',
 		].join('\n'));
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\ninteger z = addi(1,2);\n`;

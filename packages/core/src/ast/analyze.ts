@@ -93,10 +93,6 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	for (const c of defs.consts.values()) {
 		if (c?.type) addType(globalTypeScope, c.name, c.type);
 	}
-	// Fallback symbol sets (used when scanning expanded tokens for include-provided decls)
-	const fallbackFuncs = new Set<string>();
-	const fallbackGlobals = new Set<string>();
-	const fallbackMacros = new Set<string>();
 	const mustUseFunctions = new Set<string>();
 	const functionMeta = new Map<string, { godMode: boolean; deprecated: boolean; deprecatedMessage?: string }>();
 	const extractDeprecatedMessage = (doc?: string): string | undefined => {
@@ -349,18 +345,15 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				// record ref; unknown identifier diagnostics if not known symbol/keyword/const/type
 				addRef(e.name, spanToRange(doc, e.span), scope);
 				const known = resolveInScope(e.name, scope)
-					|| defs.consts.has(e.name)
-					|| isKeyword(e.name)
-					|| defs.funcs.has(e.name)
-					|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, e.name))
-					|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, e.name))
-					|| fallbackFuncs.has(e.name)
-					|| fallbackGlobals.has(e.name)
-					|| fallbackMacros.has(e.name)
-					// Accept lowercase booleans as known identifiers (treated as constants) to reduce noise
-					|| e.name === 'true' || e.name === 'false'
-					// Suppress diagnostics for identifiers that match macro parameter names
-					|| macroParamNames.has(e.name);
+						|| defs.consts.has(e.name)
+						|| isKeyword(e.name)
+						|| defs.funcs.has(e.name)
+						|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, e.name))
+						|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, e.name))
+						// Accept lowercase booleans as known identifiers (treated as constants) to reduce noise
+						|| e.name === 'true' || e.name === 'false'
+						// Suppress diagnostics for identifiers that match macro parameter names
+						|| macroParamNames.has(e.name);
 				if (!known) {
 					diagnostics.push({
 						code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER,
@@ -390,12 +383,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					calls.push({ name: calleeName, args: e.args.length, range: { start, end }, argRanges });
 					addRef(calleeName, spanToRange(doc, e.callee.span), scope);
 					const known = resolveInScope(calleeName, scope)
-						|| defs.funcs.has(calleeName)
-						|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, calleeName))
-						|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, calleeName))
-						|| fallbackFuncs.has(calleeName)
-						|| defs.consts.has(calleeName) // tolerate accidental const call as known id for better downstream type error
-						|| isKeyword(calleeName);
+							|| defs.funcs.has(calleeName)
+							|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, calleeName))
+							|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, calleeName))
+							|| defs.consts.has(calleeName) // tolerate accidental const call as known id for better downstream type error
+							|| isKeyword(calleeName);
 					if (!known) {
 						diagnostics.push({
 							code: LSL_DIAGCODES.UNKNOWN_IDENTIFIER,
@@ -1113,111 +1105,22 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	}
 
 	// Walk functions and states once, validating expressions inline
-	// BEFORE walking functions we may need to synthesize declarations coming from included headers
-	// that the parser ignored (e.g. function prototypes and global variable declarations ending with ';').
-	// Map include file -> range of its #include directive in root doc for better diagnostic ranges.
+	// Map include file -> range of its #include directive in root doc for duplicate diagnostics.
 	const includeRangeByFile = new Map<string, { start: ReturnType<typeof doc.positionAt>; end: ReturnType<typeof doc.positionAt> }>();
 	try {
 		const targets = pre.includeTargets as undefined | { start: number; end: number; file: string; resolved: string | null }[];
 		if (targets) for (const t of targets) { const r = { start: doc.positionAt(t.start), end: doc.positionAt(t.end) }; if (t.resolved) includeRangeByFile.set(t.resolved, r); includeRangeByFile.set(t.file, r); }
 	} catch { /* ignore */ }
 
-	try {
-		const expandedEarly = pre.expandedTokens as unknown as Token[] | undefined;
-		if (expandedEarly && expandedEarly.length) {
-			let primaryFsPath: string | undefined; try { primaryFsPath = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined; } catch { /* ignore */ }
-			// Current declared names
-			const declaredFuncNames = new Set<string>(); for (const d of decls) if (d.kind === 'func') declaredFuncNames.add(d.name);
-			const declaredVarNames = new Set<string>(); for (const d of decls) if (d.kind === 'var') declaredVarNames.add(d.name);
-			// Builtin functions so we don't synthesize decls for them
-			const builtinFuncNames = new Set<string>(); for (const [name] of defs.funcs) builtinFuncNames.add(name);
-			// Simple pattern scan
-			for (let i = 0; i < expandedEarly.length; i++) {
-				const t = expandedEarly[i]!;
-				const anyT = t as Token & { originFile?: string; file?: string };
-				const origin = anyT.originFile || anyT.file;
-				if (!origin || (primaryFsPath && origin === primaryFsPath)) {
-					continue; // only includes
-				}
-				// Ignore tokens originating from includes that are clearly within a state body when scanning prototypes/globals
-				if (t.kind === 'keyword' && t.value === 'state') { // skip ahead to matching closing brace to avoid noise
-					let depthBr = 0; let k = i + 1; let entered = false;
-					while (k < expandedEarly.length) {
-						const tk = expandedEarly[k]!;
-						if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === '{') { depthBr++; entered = true; }
-						else if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === '}') { depthBr--; if (entered && depthBr <= 0) { i = k; break; } }
-						if (tk.kind === 'eof') break; k++;
-					}
-					continue;
-				}
-				// Function prototype: (<type keyword|id>) <id> '(' ... ')' ';'
-				if ((t.kind === 'keyword' || t.kind === 'id')) {
-					const nameTok = expandedEarly[i + 1];
-					const lparen = expandedEarly[i + 2];
-					if (nameTok && nameTok.kind === 'id' && lparen && (lparen.kind === 'punct' || lparen.kind === 'op') && lparen.value === '(') {
-						let j = i + 3; let depth = 1; let foundClose = -1;
-						while (j < expandedEarly.length) {
-							const tk = expandedEarly[j]!;
-							if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === '(') depth++;
-							else if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === ')') { depth--; if (depth === 0) { foundClose = j; break; } }
-							if (tk.kind === 'eof') break; j++;
-						}
-						if (foundClose > 0) {
-							const semi = expandedEarly[foundClose + 1];
-							if (semi && (semi.kind === 'punct' || semi.kind === 'op') && semi.value === ';') {
-								const fname = nameTok.value;
-								if (!declaredFuncNames.has(fname) && !builtinFuncNames.has(fname)) {
-									const incRange = includeRangeByFile.get(origin) || { start: doc.positionAt(0), end: doc.positionAt(0) };
-									const d: Decl = { name: fname, kind: 'func', range: incRange, type: t.value, params: [] };
-									decls.push(d); functions.set(fname, d); declaredFuncNames.add(fname);
-								}
-							}
-							// advance to after ';' if present
-							if (semi && semi.value === ';') { i = foundClose + 1; continue; }
-						}
-					}
-				}
-				// Global variable: <type> <id> ';' not followed by '(' (avoid misreading function without params but w/ body later)
-				if ((t.kind === 'keyword' || t.kind === 'id')) {
-					const nameTok = expandedEarly[i + 1];
-					const semi = expandedEarly[i + 2];
-					if (nameTok && nameTok.kind === 'id' && semi && (semi.kind === 'punct' || semi.kind === 'op') && semi.value === ';' ) {
-						if (!declaredVarNames.has(nameTok.value)) {
-							const incRange = includeRangeByFile.get(origin) || { start: doc.positionAt(0), end: doc.positionAt(0) };
-							const d: Decl = { name: nameTok.value, kind: 'var', range: incRange, type: t.value };
-							decls.push(d); globalDecls.push(d); declaredVarNames.add(nameTok.value);
-						}
-						i = i + 2; continue; // jump past var decl
-					}
-				}
-			}
-		}
-	} catch { /* ignore synthetic decl errors */ }
-
 	for (const [, f] of script.functions) visitFunction(f);
 	for (const [, s] of script.states) visitState(s);
 
-	// After building declarations from the (expanded) AST, perform cross-include duplicate detection.
-	// Because we now fully expand includes into pre.expandedTokens, header declarations surface as part
-	// of the parsed script unless they were only forward declarations (e.g. prototypes) filtered out by the parser.
-	// We replicate the legacy behaviour: if an included header redeclares a built-in function or state name
-	// that is also declared in the main script, emit a duplicate diagnostic pointing at the included declaration.
+	// After building declarations from the expanded AST, perform cross-include duplicate state detection.
 	try {
-		// Access expandedTokens produced by preprocessForAst (available when using new parser path)
 		const expanded = pre.expandedTokens as unknown as Token[] | undefined;
 		if (expanded && expanded.length) {
-			// Build a quick index of builtin function names for fast membership checks
-			const builtinFuncNames = new Set<string>();
-			for (const [name] of defs.funcs) builtinFuncNames.add(name);
-			// Existing declared user functions and states (from this script body)
-			const userFuncNames = new Set<string>();
-			for (const d of decls) if (d.kind === 'func') userFuncNames.add(d.name);
 			const userStateNames = new Set<string>();
 			for (const d of decls) if (d.kind === 'state') userStateNames.add(d.name);
-			// Scan token stream for simple prototypes originating from include files:
-			// pattern: <type-id> <id> '(' ... ')' ';'  (function prototype) OR 'state' <id> '{'
-			// We only care when originFile differs from primary doc (heuristic: token has originFile and
-			// that path is different from current file path resolved from doc.uri) and the name clashes.
 			let primaryFsPath: string | undefined;
 			try { primaryFsPath = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined; } catch { /* ignore */ }
 			const toks = expanded as Token[];
@@ -1238,43 +1141,6 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 						}
 					}
 					continue;
-				}
-				// Potential function prototype: id id '(' ... ')' ';' (allow any first id; parser may have skipped prototype)
-				if (t.kind === 'id' || t.kind === 'keyword') {
-					const nameTok = toks[i + 1];
-					if (nameTok && nameTok.kind === 'id') {
-						const lparen = toks[i + 2];
-						if (lparen && (lparen.kind === 'punct' || lparen.kind === 'op') && lparen.value === '(') {
-							let j = i + 3; let depth = 1; let foundClose = -1;
-							while (j < toks.length) {
-								const tk = toks[j]!;
-								if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === '(') depth++;
-								else if ((tk.kind === 'punct' || tk.kind === 'op') && tk.value === ')') { depth--; if (depth === 0) { foundClose = j; break; } }
-								if (tk.kind === 'eof') break;
-								j++;
-							}
-							if (foundClose > 0) {
-								const semi = toks[foundClose + 1];
-								if (semi && (semi.kind === 'punct' || semi.kind === 'op') && semi.value === ';') {
-									const fname = nameTok.value;
-									if (builtinFuncNames.has(fname) || userFuncNames.has(fname)) {
-										const incRange = includeRangeByFile.get(origin);
-										const range = incRange || { start: doc.positionAt(nameTok.span.start), end: doc.positionAt(nameTok.span.end) };
-										diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Duplicate declaration of function ${fname}`, range, severity: DiagnosticSeverity.Error });
-									}
-									// Also synthesize missing global variable decls (defensive second pass) if pattern <type> <id> ';' and not already declared
-								} else {
-									// Non-prototype path: check for global var (handled earlier but safe)
-									const after = toks[i + 2];
-									if (after && (after.kind === 'punct' || after.kind === 'op') && after.value === ';' && !globalDecls.some(g => g.name === nameTok.value)) {
-										const incRange = includeRangeByFile.get(origin) || { start: doc.positionAt(0), end: doc.positionAt(0) };
-										const d: Decl = { name: nameTok.value, kind: 'var', range: incRange, type: t.value };
-										decls.push(d); globalDecls.push(d);
-									}
-								}
-							}
-						}
-					}
 				}
 			}
 		}

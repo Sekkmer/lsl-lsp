@@ -66,7 +66,7 @@ export function gotoDefinition(doc: TextDocument, pos: Position, a: Analysis, pr
 	if ('uri' in target && 'range' in target) {
 		return { uri: target.uri, range: target.range };
 	}
-	// Fallback: if no navigable target (builtin) but symbol present in includes as user prototype
+	// Fallback: if no navigable target (builtin) but symbol is defined in an include.
 	if (!('uri' in target) && pre) {
 		// Identify word under cursor and verify it's followed by '('
 		const text = doc.getText();

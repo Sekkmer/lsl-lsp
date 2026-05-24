@@ -21,9 +21,9 @@ describe('findAllReferences', () => {
 		expect(results.filter(r => r.uri === doc.uri).length).toBeGreaterThanOrEqual(3);
 	});
 
-	it('returns refs within current doc for include-defined function (header decl not yet included)', async () => {
+	it('returns refs within current doc for include-defined function', async () => {
 		const defs = await loadTestDefs();
-		const header = '#define FOO 1\ninteger myApi(integer a);\n';
+		const header = '#define FOO 1\ninteger myApi(integer a) { return a; }\n';
 		const path = require('node:path');
 		const fs = require('node:fs');
 		const base = require('node:os').tmpdir();

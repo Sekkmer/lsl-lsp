@@ -38,7 +38,7 @@ describe('include symbols/macros', () => {
 	});
 
 	it('classifies functions from included headers as function tokens', async () => {
-		const header = tmpFile('api.lslh', 'integer myFunc(integer x);\n');
+		const header = tmpFile('api.lslh', 'integer myFunc(integer x) { return x; }\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\ninteger z = myFunc(1);\n`;
 		const doc = docFrom(code, 'file:///proj/usesFunc.lsl');
@@ -98,7 +98,7 @@ describe('include symbols/macros', () => {
 
 	it('resolves symbols through transitive includes', async () => {
 		// a.lslh includes b.lslh which defines function Foo and macro BAR
-		const b = tmpFile('b.lslh', '#define BAR 7\ninteger Foo(integer x);\n');
+		const b = tmpFile('b.lslh', '#define BAR 7\ninteger Foo(integer x) { return x; }\n');
 		const a = tmpFile('a.lslh', '#include "b.lslh"\n');
 		const includeDir = path.dirname(await b.write());
 		await a.write();

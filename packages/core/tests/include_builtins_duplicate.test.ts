@@ -17,16 +17,16 @@ function tmpFile(rel: string, contents: string) {
 }
 
 describe('includes: duplicate built-in function declarations', () => {
-	it('emits duplicate function diagnostic at include site when header redeclares builtin', async () => {
+	it('emits a reserved identifier diagnostic when an include defines a builtin function name', async () => {
 		const defsPath = path.join(__dirname, 'fixtures', 'lsl-defs.yaml');
 		const defs = await loadDefs(defsPath);
-		const header = tmpFile('dup_builtin.lslh', 'integer llSay(key id, string msg);\n');
+		const header = tmpFile('dup_builtin.lslh', 'integer llSay(key id, string msg) { return 0; }\n');
 		const includeDir = path.dirname(await header.write());
 		const code = `#include "${path.basename(header.path)}"\ninteger main(){ return 0; }\n`;
 		const doc = docFrom(code, 'file:///proj/dup_builtin.lsl');
 		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [includeDir] });
 		const errs = analysis.diagnostics.filter(d => d.severity === 1);
-		expect(errs.some(d => /Duplicate declaration of function llSay/.test(d.message))).toBe(true);
+		expect(errs.some(d => /"llSay" is reserved/.test(d.message))).toBe(true);
 		expect(pre.includeTargets?.length).toBe(1);
 	});
 });

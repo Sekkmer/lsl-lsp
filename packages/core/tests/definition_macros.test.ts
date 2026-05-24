@@ -49,7 +49,7 @@ describe('goto definition for macros', () => {
 		await fs.mkdir(base, { recursive: true });
 		const b = path.join(base, 'b.lslh');
 		const a = path.join(base, 'a.lslh');
-		await fs.writeFile(b, '#define MC 42\ninteger Foo(integer x);\n', 'utf8');
+		await fs.writeFile(b, '#define MC 42\ninteger Foo(integer x) { return x; }\n', 'utf8');
 		await fs.writeFile(a, '#include "b.lslh"\n', 'utf8');
 		const code = '#include "a.lslh"\ninteger y = MC;\ninteger z = Foo(1);\n';
 		const doc = docFrom(code, 'file:///proj/goto_transitive.lsl');
@@ -88,5 +88,22 @@ describe('goto definition for macros', () => {
 		const pos = { line: 1, character: callLine.indexOf('llOwnerSay') + 1 };
 		const loc = gotoDefinition(doc, pos, analysis, pre, defs);
 		expect(loc).toBeNull();
+	});
+
+	it('does not treat invalid function prototypes as include definitions', async () => {
+		const fs = await import('node:fs/promises');
+		const base = path.join(__dirname, 'tmp_includes', 'definition_prototypes');
+		await fs.mkdir(base, { recursive: true });
+		const header = path.join(base, 'api.lslh');
+		await fs.writeFile(header, 'integer Foo(integer x);\n', 'utf8');
+		const code = '#include "api.lslh"\ndefault { state_entry() { Foo(1); } }\n';
+		const doc = docFrom(code, 'file:///definition-invalid-prototype.lsl');
+		const defs = await loadTestDefs();
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [base] });
+		const callLine = code.split(/\r?\n/)[1]!;
+		const pos = { line: 1, character: callLine.indexOf('Foo') + 1 };
+		const loc = gotoDefinition(doc, pos, analysis, pre, defs);
+		expect(loc).toBeNull();
+		expect(analysis.diagnostics.some(d => d.message.includes('expected \'{\' for function body'))).toBe(true);
 	});
 });

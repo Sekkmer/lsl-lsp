@@ -77,6 +77,7 @@ export class TokenStream {
 
 	pushBack(t: Token) {
 		if (t.kind === 'eof') return; // ignore pushing back EOF
+		this.stickyEof = null;
 		this.pushback.push(t);
 	}
 

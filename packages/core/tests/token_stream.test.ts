@@ -52,6 +52,14 @@ describe('TokenStream', () => {
 		expect(e2).toBe(e1); // same object instance
 	});
 
+	it('pushBack after EOF clears sticky EOF and replays the token', () => {
+		const s = new TokenStream([t('id', 'a', 0, 1)]);
+		const a = s.next();
+		expect(s.next().kind).toBe('eof');
+		s.pushBack(a);
+		expect(s.next()).toEqual(a);
+	});
+
 	it('producer mode: stops calling producer after EOF due to sticky EOF', () => {
 		let calls = 0;
 		const seq: Token[] = [

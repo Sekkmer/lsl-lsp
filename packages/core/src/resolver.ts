@@ -93,6 +93,32 @@ function stripStringLiterals(line: string): string {
 	return out;
 }
 
+function hasFunctionBodyAfterOpenParen(lines: string[], lineIndex: number, openParen: number): boolean {
+	let depth = 0;
+	for (let i = lineIndex; i < lines.length; i++) {
+		const line = lines[i]!;
+		const start = i === lineIndex ? openParen : 0;
+		for (let c = start; c < line.length; c++) {
+			const ch = line[c]!;
+			if (ch === '(') depth++;
+			else if (ch === ')') {
+				depth--;
+				if (depth === 0) {
+					for (let j = i; j < lines.length; j++) {
+						const after = lines[j]!;
+						let k = j === i ? c + 1 : 0;
+						while (k < after.length && /\s/.test(after[k]!)) k++;
+						if (k >= after.length) continue;
+						return after[k] === '{';
+					}
+					return false;
+				}
+			}
+		}
+	}
+	return false;
+}
+
 export function scanIncludesForSymbol(name: string, pre?: PreprocResult): ExternalDefHit | null {
 	if (!pre || !pre.includeTargets || !name) return null;
 	const queue: string[] = [];
@@ -105,11 +131,14 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 		// TEMP DEBUG: log traversal for transitive include resolution in tests
 		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[scanIncludes]', name, 'visiting', file); } catch { /* ignore */ }
 		const lines = readIncludeFileLines(file);
+		const strippedLines: string[] = [];
 		const commentState = { inBlockComment: false };
+		for (const line of lines) strippedLines.push(stripStringLiterals(stripComments(line, commentState)));
+		const includeCommentState = { inBlockComment: false };
 		for (let i = 0; i < lines.length; i++) {
 			const L = lines[i]!;
-			const codeLine = stripComments(L, commentState);
-			const symbolLine = stripStringLiterals(codeLine);
+			const codeLine = stripComments(L, includeCommentState);
+			const symbolLine = strippedLines[i]!;
 			// Discover further includes transitively
 			const inc = /^\s*#\s*include\s+["<]([^">]+)[">]/.exec(codeLine);
 			if (inc) {
@@ -125,13 +154,16 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 				const col = codeLine.indexOf(name);
 				return { file, line: i, startChar: col, endChar: col + name.length, kind: (/\w+\s*\(/.test(codeLine) ? 'macro-func' : 'macro-obj') } as ExternalDefHit;
 			}
-			// Function prototype/definition
+			// Function definition. Includes are textual LSL, so C-style prototypes are not declarations.
 			const funcRe = new RegExp(`(^|[^A-Za-z0-9_])([A-Za-z_]\\w*)\\s+(${name})\\s*\\(`);
 			const fm = funcRe.exec(symbolLine);
 			if (fm) {
-				try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND function', name, 'in', file, 'line', i); } catch { /* ignore */ }
 				const col = symbolLine.indexOf(name, fm.index);
-				if (col >= 0) return { file, line: i, startChar: col, endChar: col + name.length, kind: 'function' } as ExternalDefHit;
+				const openParen = symbolLine.indexOf('(', col + name.length);
+				if (col >= 0 && openParen >= 0 && hasFunctionBodyAfterOpenParen(strippedLines, i, openParen)) {
+					try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND function', name, 'in', file, 'line', i); } catch { /* ignore */ }
+					return { file, line: i, startChar: col, endChar: col + name.length, kind: 'function' } as ExternalDefHit;
+				}
 			}
 			// Global variable
 			const gvRe = new RegExp(`(^|[^A-Za-z0-9_])([A-Za-z_]\\w*)\\s+(${name})(?=\\n|[ \t]*[=;])`);
@@ -246,7 +278,7 @@ export function resolveSymbolAt(
 			return { kind: earlyHit.kind as ResolvedTarget['kind'], name: refName, uri, range: { start: { line: earlyHit.line, character: earlyHit.startChar }, end: { line: earlyHit.line, character: earlyHit.endChar } }, from: 'include' };
 		}
 	}
-	// Built-ins: treat as non-navigable targets (after include scan to allow user prototypes to override)
+	// Built-ins: treat as non-navigable targets after include definitions have had a chance to shadow them.
 	if (defs && (defs.funcs.has(refName) || defs.consts.has(refName))) {
 		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] builtin hit', refName); } catch { /* ignore */ }
 		if (defs.funcs.has(refName)) return { kind: 'builtin-func', name: refName };

@@ -232,6 +232,32 @@ class Parser {
 		return out;
 	}
 
+	private tokenAfterMatchedParenAt(parenIndex: number): Token | null {
+		const toks = this.lookAheadNonTrivia(128);
+		const open = toks[parenIndex];
+		if (!open || open.kind !== 'punct' || open.value !== '(') return null;
+		let depth = 0;
+		for (let i = parenIndex; i < toks.length; i++) {
+			const t = toks[i]!;
+			if (t.kind === 'punct' && t.value === '(') depth++;
+			else if (t.kind === 'punct' && t.value === ')') {
+				depth--;
+				if (depth === 0) {
+					return toks[i + 1] ?? null;
+				}
+			}
+			if (t.kind === 'eof') break;
+		}
+		return null;
+	}
+
+	private consumeInvalidTopLevelDeclaration() {
+		while (this.peek().kind !== 'eof') {
+			const t = this.next();
+			if (t.kind === 'punct' && t.value === ';') return;
+		}
+	}
+
 	parseScript(): Script {
 		const start = this.peek().span.start;
 		type FnWithOrigin = FnNode & { originFile?: string };
@@ -258,59 +284,6 @@ class Parser {
 			if (this.peek().kind === 'directive') { this.look = null; this.lx.next(); continue; }
 			// skip stray semicolons
 			if (this.maybe('punct', ';')) continue;
-			// Permissive mode: tolerate bare call or expression statements that appear at
-			// top-level in included headers (test fixtures intentionally include a call
-			// like `llSay(0, "dbg");`). Historically these were ignored; to preserve
-			// zero-diagnostic expectation we consume a leading pattern <id '(' ... ')'> ';'
-			// without emitting an error. We only trigger when the first token is an id
-			// (not a type keyword) and we immediately see '(' as the next non-trivia token.
-			{
-				const t0 = this.peek();
-				if (t0.kind === 'id') {
-					const la = this.lookAheadNonTrivia(2)[1];
-					if (la && la.kind === 'punct' && la.value === '(') {
-						// Before treating it as a bare call, detect implicit-void function pattern id(...) { ... }.
-						// We can't toggle disableSourceHeuristics (readonly); instead perform a lightweight
-						// ad-hoc scan: ensure that after the parenthesis group the next non-trivia token is '{'.
-						let scanIdx = 0;
-						let parenDepth = 0;
-						let sawGroup = false;
-						const tokens: Token[] = [];
-						// Collect a small window of tokens to inspect pattern id ( ... ) '{'
-						while (scanIdx < 40) { // arbitrary small cap
-							const t = this.lookAheadNonTrivia(scanIdx + 1)[scanIdx];
-							if (!t) break;
-							tokens.push(t);
-							if (tokens.length === 1) { scanIdx++; continue; } // first is id
-							if (tokens.length === 2 && !(t.kind === 'punct' && t.value === '(')) break; // not call pattern
-							if (t.kind === 'punct' && t.value === '(') { parenDepth++; }
-							else if (t.kind === 'punct' && t.value === ')') { parenDepth--; if (parenDepth === 0) { sawGroup = true; break; } }
-							scanIdx++;
-						}
-						let looksImplicit = false;
-						if (sawGroup) {
-							// After capturing the group, peek the next non-trivia token after the ')'
-							const afterGroup = this.lookAheadNonTrivia(tokens.length + 1)[tokens.length];
-							looksImplicit = !!afterGroup && afterGroup.kind === 'punct' && afterGroup.value === '{';
-						}
-						if (!looksImplicit) {
-							// Treat as bare call/expression statement: consume id + balanced parens then optional ';'
-							this.next(); // id
-							if (this.peek().kind === 'punct' && this.peek().value === '(') {
-								let depth = 0;
-								while (true) {
-									const t = this.next();
-									if (t.kind === 'punct' && t.value === '(') depth++;
-									else if (t.kind === 'punct' && t.value === ')') { depth--; if (depth === 0) break; }
-									if (t.kind === 'eof') break;
-								}
-								if (this.peek().kind === 'punct' && this.peek().value === ';') this.next();
-								continue; // proceed to next top-level construct
-							}
-						}
-					}
-				}
-			}
 			// Detect and report illegal global state-change statements: "state <id>;"
 			if (this.peek().kind === 'keyword' && this.peek().value === 'state') {
 				const tState = this.peek();
@@ -356,6 +329,15 @@ class Parser {
 			// function or global var: only start if next is a type keyword
 			const nextTok = this.peek();
 			if (nextTok.kind === 'keyword' && isTypeName(nextTok.value)) {
+				const ahead = this.lookAheadNonTrivia(3);
+				const afterParen = ahead[1] && ahead[1].kind === 'id' && ahead[2] && ahead[2].kind === 'punct' && ahead[2].value === '('
+					? this.tokenAfterMatchedParenAt(2)
+					: null;
+				if (afterParen && afterParen.kind === 'punct' && afterParen.value === ';') {
+					this.report(afterParen, 'expected \'{\' for function body', 'LSL000');
+					this.consumeInvalidTopLevelDeclaration();
+					continue;
+				}
 				let decl: FnNode | { span: Span; kind: 'GlobalVar'; varType: Type; name: string; initializer?: Expr; comment?: string; };
 				try { decl = this.parseTopLevel(); }
 				catch (e: unknown) { const msg = e instanceof Error ? e.message : String(e); this.report(this.peek(), msg); this.syncTopLevel(); continue; }
@@ -390,9 +372,10 @@ class Parser {
 			}
 			// Implicit-void function: <id> '(' ... ')' '{' ... '}'
 			// Allow implicit-void function detection even in expanded token mode (tests rely on this)
+			const afterImplicitParen = nextTok.kind === 'id' ? this.tokenAfterMatchedParenAt(1) : null;
 			const implicitFn = nextTok.kind === 'id' && (
 				this.looksLikeImplicitFunctionDeclAfter(nextTok.span.end)
-				|| (this.disableSourceHeuristics && (() => { const la = this.lookAheadNonTrivia(2); return la[1] && la[1].kind === 'punct' && la[1].value === '('; })())
+					|| (this.disableSourceHeuristics && !!afterImplicitParen && afterImplicitParen.kind === 'punct' && afterImplicitParen.value === '{')
 			);
 			if (implicitFn) {
 				const leading = this.consumeLeadingComment();
@@ -425,9 +408,9 @@ class Parser {
 	private parseTopLevel(): FnNode | { span: Span; kind: 'GlobalVar'; varType: Type; name: string; initializer?: Expr; comment?: string; } {
 		// Either: <type> <name> '(' ... -> function ; or '{'
 		// Or: <type> <name> [= expr] ;	-> global
-		// Capture any leading doc comment right at decl start
-		const leading = this.consumeLeadingComment();
 		const first = this.next();
+		// Capture any leading doc comment right at decl start.
+		const leading = this.consumeLeadingCommentFor(first.span.start);
 		if (!(first.kind === 'keyword' && isTypeName(first.value))) { this.report(first, 'expected type', 'LSL000'); return { span: first.span, kind: 'GlobalVar', varType: 'integer' as Type, name: '__error', comment: undefined }; }
 		const varType = canonicalType(first.value);
 		// Collect a run of identifier/keyword tokens immediately following the type. Some external
@@ -1249,6 +1232,19 @@ class Parser {
 		const s = this.leadingComment.trim();
 		this.leadingComment = '';
 		return s.length ? s : undefined;
+	}
+
+	private consumeLeadingCommentFor(start: number): string | undefined {
+		const pending = this.consumeLeadingComment();
+		if (pending) return pending;
+		const before = this.src.slice(0, start);
+		const match = /(?:^|[\r\n])([ \t]*(?:(?:\/\/[^\r\n]*|\/\*[\s\S]*?\*\/)[ \t]*(?:\r?\n|$))+)[ \t]*$/.exec(before);
+		if (!match) return undefined;
+		return match[1]!
+			.split(/\r?\n/)
+			.map(line => line.replace(/^[ \t]*\/\/[ \t]?/, '').replace(/^[ \t]*\/\*[ \t]?/, '').replace(/[ \t]*\*\/[ \t]*$/, '').replace(/^[ \t]*\*[ \t]?/, ''))
+			.join('\n')
+			.trim() || undefined;
 	}
 
 	private unquote(str: string): string { if (str.length >= 2 && ((str[0] === '"' && str.at(-1) === '"') || (str[0] === '\'' && str.at(-1) === '\''))) return str.slice(1, -1); return str; }

@@ -1,6 +1,9 @@
 // included file for tests
+integer includedValue()
+{
 #ifdef DEBUG
-llSay(0, "dbg");
+	return 1;
 #else
-llSay(0, "inc");
+	return 0;
 #endif
+}
