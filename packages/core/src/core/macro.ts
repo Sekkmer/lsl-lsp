@@ -1075,26 +1075,51 @@ function parseMacroCall(tokens: Token[], startIndex: number): MacroCall | null {
 	if (!open || open.kind !== 'punct' || open.value !== '(') return null;
 	i++; // after '('
 	let depth = 1;
+	let bracketDepth = 0;
+	let angleDepth = 0;
 	let current = '';
 	const args: string[] = [];
 	let prevWasWord = false;
+	let prevCanStartAngleLiteral = true;
 	let sawTopLevelComma = false;
 	const isWord = (t: Token) => t.kind === 'id' || t.kind === 'number' || t.kind === 'keyword';
 	for (; i < tokens.length; i++) {
 		const tk = tokens[i]!;
 		if (tk.kind === 'punct') {
-			if (tk.value === '(') { depth++; current += tk.value; prevWasWord = false; continue; }
+			if (tk.value === '(') { depth++; current += tk.value; prevWasWord = false; prevCanStartAngleLiteral = true; continue; }
 			if (tk.value === ')') {
 				depth--; if (depth === 0) {
 					const trimmed = current.trim();
 					if (trimmed.length || sawTopLevelComma) args.push(trimmed);
 					return { args, nextIndex: i+1, endSpanEnd: tk.span.end };
 				}
-				current += tk.value; prevWasWord = false; continue;
+				current += tk.value; prevWasWord = false; prevCanStartAngleLiteral = false; continue;
 			}
-			if (tk.value === ',' && depth === 1) { args.push(current.trim()); current=''; prevWasWord=false; sawTopLevelComma=true; continue; }
+			if (tk.value === '[') { bracketDepth++; current += tk.value; prevWasWord = false; prevCanStartAngleLiteral = true; continue; }
+			if (tk.value === ']') { if (bracketDepth > 0) bracketDepth--; current += tk.value; prevWasWord = false; prevCanStartAngleLiteral = false; continue; }
+			if (tk.value === ',' && depth === 1 && bracketDepth === 0 && angleDepth === 0) { args.push(current.trim()); current=''; prevWasWord=false; prevCanStartAngleLiteral=true; sawTopLevelComma=true; continue; }
 			// other punctuation is significant
-			current += tk.value; prevWasWord=false; continue;
+			current += tk.value; prevWasWord=false; prevCanStartAngleLiteral=true; continue;
+		}
+		if (tk.kind === 'op') {
+			if (tk.value === '<' && prevCanStartAngleLiteral) {
+				angleDepth++;
+				current += tk.value;
+				prevWasWord = false;
+				prevCanStartAngleLiteral = true;
+				continue;
+			}
+			if (tk.value === '>' && angleDepth > 0) {
+				angleDepth--;
+				current += tk.value;
+				prevWasWord = false;
+				prevCanStartAngleLiteral = false;
+				continue;
+			}
+			current += tk.value;
+			prevWasWord = false;
+			prevCanStartAngleLiteral = true;
+			continue;
 		}
 		// For consecutive word tokens (identifier/number/keyword) that were originally
 		// separate tokens, insert a space so stringification preserves separation.
@@ -1102,9 +1127,11 @@ function parseMacroCall(tokens: Token[], startIndex: number): MacroCall | null {
 			if (prevWasWord) current += ' ';
 			current += tk.value;
 			prevWasWord = true;
+			prevCanStartAngleLiteral = false;
 		} else {
 			current += tk.value;
 			prevWasWord = false;
+			prevCanStartAngleLiteral = false;
 		}
 	}
 	return null; // unterminated -> treat as not a call; parser will handle

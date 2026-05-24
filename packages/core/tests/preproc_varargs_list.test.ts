@@ -4,6 +4,32 @@ import { loadTestDefs } from './loadDefs.testutil';
 
 // Validate vararg macros expanding into list literals [ ... ]
 describe('preprocessor: varargs into list literals', () => {
+	it('keeps list literal commas inside a fixed macro argument', async () => {
+		const defs = await loadTestDefs();
+		const code = [
+			'#define SAY_LIST(value) llOwnerSay(llList2CSV(value))',
+			'#define SAY_VALUE(value) llOwnerSay((string)value)',
+			'#define SAY_PAIR(a, b) if (a) llOwnerSay(b)',
+			'default {',
+			'\tstate_entry() {',
+			'\t\tSAY_LIST([1, 2]);',
+			'\t\tSAY_VALUE(<1, 2, 3>);',
+			'\t\tSAY_PAIR(1 < 2, "ok");',
+			'\t}',
+			'}'
+		].join('\n');
+		const doc = docFrom(code);
+		const { expandedTokens, analysis } = runPipeline(doc, defs);
+		const expText = expandedTokens?.map(t => t.value).join(' ') ?? '';
+		expect(expText).toContain('[ 1 , 2 ]');
+		expect(expText).toContain('< 1 , 2 , 3 >');
+		expect(expText).toContain('1 < 2');
+		expect(expText).toContain('"ok"');
+		const msgs = analysis.diagnostics.map(d => `${d.code}: ${d.message}`).join('\n');
+		expect(msgs).not.toMatch(/LSL000/);
+		expect(msgs).not.toMatch(/Operator|Wrong argument|expects/);
+	});
+
 	it('expands to empty list when no varargs', async () => {
 		const defs = await loadTestDefs();
 		const code = [
