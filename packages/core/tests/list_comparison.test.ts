@@ -23,6 +23,25 @@ integer f() {
 		expect(msg?.severity).toBe(DiagnosticSeverity.Warning);
 	});
 
+	it('warns when comparing a local list with a global list', async () => {
+		const defs = await loadTestDefs();
+		const code = `
+list GLOBAL = [1, 2, 3];
+
+default {
+	state_entry() {
+		list local = [4, 5, 6];
+		if (local == GLOBAL) llOwnerSay("same length");
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///list_eq_global.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const msg = analysis.diagnostics.find(d => d.message.includes('compares only length'));
+		expect(msg).toBeTruthy();
+		expect(msg?.severity).toBe(DiagnosticSeverity.Warning);
+	});
+
 	it('allows comparing a list to empty list literal []', async () => {
 		const defs = await loadTestDefs();
 		const code = `

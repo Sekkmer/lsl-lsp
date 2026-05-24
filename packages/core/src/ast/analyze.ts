@@ -83,7 +83,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	// ---------------- Missing helper structures (reconstructed after accidental file corruption) ----------------
 	// Type scope used by operator/type validation helpers
 	type TypeScope = { parent?: TypeScope; view: Map<string, SimpleType> };
-	function pushTypeScope(parent?: TypeScope): TypeScope { return { parent, view: new Map<string, SimpleType>() }; }
+	function pushTypeScope(parent?: TypeScope): TypeScope { return { parent, view: new Map<string, SimpleType>(parent?.view) }; }
 	function addType(scope: TypeScope, name: string, type: string) { scope.view.set(name, normalizeType(type) as SimpleType); }
 	// Global (file) scope for variables/functions/states
 	const globalScope: Scope = { vars: new Map(), kind: 'global' };
