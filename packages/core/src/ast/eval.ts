@@ -77,6 +77,10 @@ export class Env {
 		return this._vars.has(name) || !!this._parent?.hasVar(name);
 	}
 
+	clone(): Env {
+		return new Env(new Map(this._vars), this._functionReturnTypes, this._parent?.clone());
+	}
+
 	child(): Env {
 		return new Env(new Map(), this._functionReturnTypes, this);
 	}

@@ -98,4 +98,34 @@ describe('constant condition diagnostics', () => {
 		expect(codes).not.toContain(LSL_DIAGCODES.ALWAYS_TRUE_CONDITION);
 		expect(codes).not.toContain(LSL_DIAGCODES.ALWAYS_FALSE_CONDITION);
 	});
+
+	it('does not leak uncertain branch or loop assignments into later conditions', async () => {
+		const defs = await loadTestDefs();
+		const code = `
+			default {
+				state_entry() {
+					integer branchValue = 0;
+					if (llGetTime())
+						branchValue = 1;
+					if (branchValue) { }
+
+					integer loopValue = 0;
+					while (llGetTime())
+						loopValue = 1;
+					if (loopValue) { }
+
+					integer updateValue = 0;
+					for (; llGetTime(); updateValue = 1) { }
+					if (updateValue) { }
+				}
+			}
+		`;
+		const doc = docFrom(code, 'file:///const-control-flow-leak.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const conditionDiagnostics = analysis.diagnostics.filter(d =>
+			d.code === LSL_DIAGCODES.ALWAYS_TRUE_CONDITION ||
+			d.code === LSL_DIAGCODES.ALWAYS_FALSE_CONDITION,
+		);
+		expect(conditionDiagnostics).toHaveLength(0);
+	});
 });

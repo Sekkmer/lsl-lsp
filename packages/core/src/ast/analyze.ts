@@ -247,6 +247,15 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const currentValueEnv = () => valueEnvStack[valueEnvStack.length - 1] ?? constantEnv;
 	const evalLocalConstant = (expr: Expr | null, env: Env = currentValueEnv()): Value =>
 		evalExpr(expr, env, ANALYSIS_EVAL_OPTIONS);
+	function visitWithRestoredValueEnv(fn: () => void) {
+		const index = valueEnvStack.length - 1;
+		const snapshot = currentValueEnv().clone();
+		try {
+			fn();
+		} finally {
+			if (index >= 0) valueEnvStack[index] = snapshot;
+		}
+	}
 
 	function conditionNodeCount(expr: Expr | null, limit: number): number {
 		if (!expr) return 0;
@@ -889,6 +898,40 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		return acc;
 	}
 
+	function collectMutatedIdentifiersInStmt(stmt: Stmt | null | undefined, acc: Set<string> = new Set()): Set<string> {
+		if (!stmt) return acc;
+		switch (stmt.kind) {
+			case 'ExprStmt': collectMutatedIdentifiers(stmt.expression, acc); break;
+			case 'ReturnStmt': collectMutatedIdentifiers(stmt.expression ?? null, acc); break;
+			case 'BlockStmt': for (const s of stmt.statements) collectMutatedIdentifiersInStmt(s, acc); break;
+			case 'IfStmt':
+				collectMutatedIdentifiers(stmt.condition, acc);
+				collectMutatedIdentifiersInStmt(stmt.then, acc);
+				collectMutatedIdentifiersInStmt(stmt.else, acc);
+				break;
+			case 'WhileStmt':
+			case 'DoWhileStmt':
+				collectMutatedIdentifiers(stmt.condition, acc);
+				collectMutatedIdentifiersInStmt(stmt.body, acc);
+				break;
+			case 'ForStmt':
+				collectMutatedIdentifiers(stmt.init ?? null, acc);
+				collectMutatedIdentifiers(stmt.condition ?? null, acc);
+				collectMutatedIdentifiers(stmt.update ?? null, acc);
+				collectMutatedIdentifiersInStmt(stmt.body, acc);
+				break;
+			default: break;
+		}
+		return acc;
+	}
+
+	function markMutatedValuesUnknown(names: Iterable<string>, typeScope: TypeScope) {
+		for (const name of names) {
+			const t = normalizeType(typeScope.view.get(name) ?? 'integer');
+			currentValueEnv().setExistingOrLocal(name, { kind: 'unknown', type: toConcreteType(t) ?? 'integer' } as Value);
+		}
+	}
+
 	function visitStmt(stmt: Stmt | null, scope: Scope, typeScope: TypeScope) {
 		if (!stmt) return;
 		switch (stmt.kind) {
@@ -970,28 +1013,46 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				walkExpr(stmt.condition, scope, typeScope);
 				// Validate condition with suspicious-assignment flag; other expressions validated normally
 				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
+				let truth: boolean | null = null;
 				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
-					const truth = evalCondition(stmt.condition);
+					truth = evalCondition(stmt.condition);
 					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
 					else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
 				}
-				visitStmt(stmt.then, scope, typeScope);
-				if (stmt.else) visitStmt(stmt.else, scope, typeScope);
+				if (truth === true) {
+					visitStmt(stmt.then, scope, typeScope);
+					if (stmt.else) visitWithRestoredValueEnv(() => visitStmt(stmt.else ?? null, scope, typeScope));
+				} else if (truth === false) {
+					visitWithRestoredValueEnv(() => visitStmt(stmt.then, scope, typeScope));
+					if (stmt.else) visitStmt(stmt.else, scope, typeScope);
+				} else {
+					visitWithRestoredValueEnv(() => visitStmt(stmt.then, scope, typeScope));
+					if (stmt.else) visitWithRestoredValueEnv(() => visitStmt(stmt.else ?? null, scope, typeScope));
+					const mutated = new Set<string>();
+					collectMutatedIdentifiersInStmt(stmt.then, mutated);
+					collectMutatedIdentifiersInStmt(stmt.else, mutated);
+					markMutatedValuesUnknown(mutated, typeScope);
+				}
 				break;
 			}
 			case 'WhileStmt': {
 				walkExpr(stmt.condition, scope, typeScope);
 				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
+				let truth: boolean | null = null;
 				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
-					const truth = evalCondition(stmt.condition);
+					truth = evalCondition(stmt.condition);
 					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Loop condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
 					else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Loop condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
 				}
-				visitStmt(stmt.body, scope, typeScope);
+				visitWithRestoredValueEnv(() => visitStmt(stmt.body, scope, typeScope));
+				const bodyMutations = collectMutatedIdentifiersInStmt(stmt.body);
+				if (truth !== false && bodyMutations.size) markMutatedValuesUnknown(bodyMutations, typeScope);
 				break;
 			}
 			case 'DoWhileStmt': {
-				visitStmt(stmt.body, scope, typeScope);
+				visitWithRestoredValueEnv(() => visitStmt(stmt.body, scope, typeScope));
+				const bodyMutations = collectMutatedIdentifiersInStmt(stmt.body);
+				if (bodyMutations.size) markMutatedValuesUnknown(bodyMutations, typeScope);
 				walkExpr(stmt.condition, scope, typeScope);
 				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
 				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
@@ -1003,6 +1064,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 			case 'ForStmt': {
 				if (stmt.init) { walkExpr(stmt.init, scope, typeScope, false); validateExpr(stmt.init, typeScope); updateValueEnvFromExpr(stmt.init, typeScope); }
+				let truth: boolean | null = stmt.condition ? null : true;
 				if (stmt.condition) {
 					walkExpr(stmt.condition, scope, typeScope);
 					validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
@@ -1012,13 +1074,20 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					const mutatedCondition = collectMutatedIdentifiers(stmt.condition ?? null);
 					const mutatesLoop = [...condIds].some(n => mutatedInit.has(n) || mutatedUpdate.has(n) || mutatedCondition.has(n));
 					if (!mutatesLoop) {
-						const truth = evalCondition(stmt.condition);
+						truth = evalCondition(stmt.condition);
 						if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Loop condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
 						else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Loop condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
 					}
 				}
-				if (stmt.update) { walkExpr(stmt.update, scope, typeScope, false); validateExpr(stmt.update, typeScope); updateValueEnvFromExpr(stmt.update, typeScope); }
-				visitStmt(stmt.body, scope, typeScope);
+				if (stmt.update) {
+					walkExpr(stmt.update, scope, typeScope, false);
+					validateExpr(stmt.update, typeScope);
+					visitWithRestoredValueEnv(() => updateValueEnvFromExpr(stmt.update ?? null, typeScope));
+				}
+				visitWithRestoredValueEnv(() => visitStmt(stmt.body, scope, typeScope));
+				const loopMutations = collectMutatedIdentifiersInStmt(stmt.body);
+				collectMutatedIdentifiers(stmt.update ?? null, loopMutations);
+				if (truth !== false && loopMutations.size) markMutatedValuesUnknown(loopMutations, typeScope);
 				break;
 			}
 			case 'StateChangeStmt': {
