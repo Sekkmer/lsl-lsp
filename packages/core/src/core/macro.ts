@@ -362,7 +362,7 @@ function parseDirectiveKind(raw: string): DirKind | null {
 	const head = m[1]!.toLowerCase();
 	// Tokenizer already inserted literal newlines where a backslash-newline splice occurred.
 	// Keep those newlines in the body for multi-line macros; only strip trailing line comments.
-	const rest = (m[2] || '').replace(/\/\/.*$/, '').trim();
+	const rest = stripDirectiveLineComments(m[2] || '').trim();
 	if (head === 'if') return { kind: 'if', expr: rest };
 	if (head === 'elif') return { kind: 'elif', expr: rest };
 	if (head === 'else') return { kind: 'else' };
@@ -393,12 +393,41 @@ function parseDirectiveKind(raw: string): DirKind | null {
 }
 
 function parseIncludeTarget(rest: string): string | null {
-	const s = rest.replace(/\/\/.*$/, '').trim();
+	const s = stripDirectiveLineComments(rest).trim();
 	const q1 = s.indexOf('"');
 	if (q1 >= 0) { const q2 = s.indexOf('"', q1 + 1); if (q2 > q1 + 1) return s.slice(q1 + 1, q2); }
 	const a1 = s.indexOf('<');
 	if (a1 >= 0) { const a2 = s.indexOf('>', a1 + 1); if (a2 > a1 + 1) return s.slice(a1 + 1, a2); }
 	return null;
+}
+
+function stripDirectiveLineComments(text: string): string {
+	let out = '';
+	let quote: '"' | '\'' | null = null;
+	let escaped = false;
+	for (let i = 0; i < text.length; i++) {
+		const ch = text[i]!;
+		const next = text[i + 1];
+		if (quote) {
+			out += ch;
+			if (escaped) escaped = false;
+			else if (ch === '\\') escaped = true;
+			else if (ch === quote) quote = null;
+			continue;
+		}
+		if (ch === '"' || ch === '\'') {
+			quote = ch;
+			out += ch;
+			continue;
+		}
+		if (ch === '/' && next === '/') {
+			while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i++;
+			i--;
+			continue;
+		}
+		out += ch;
+	}
+	return out;
 }
 
 function parseMacroValue(v: string): string | number | boolean {
