@@ -35,6 +35,8 @@ import {
 	preprocessForAst,
 } from '@lsl-lsp/core';
 
+declare const CLI_VERSION: string;
+
 type CommandName = 'check' | 'format' | 'preprocess' | 'symbols' | 'definition' | 'hover' | 'dump-defs';
 
 interface CliOptions {
@@ -477,7 +479,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 		return null;
 	}
 	if (args[0] === '--version' || args[0] === '-v') {
-		process.stdout.write('0.1.10\n');
+		process.stdout.write(`${CLI_VERSION}\n`);
 		return null;
 	}
 

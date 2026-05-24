@@ -1,6 +1,6 @@
 {
   "name": "@lsl-lsp/cli",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "license": "MIT",
   "author": {
@@ -13,7 +13,7 @@
   },
   "scripts": {
     "build": "node ../../scripts/clean-dir.cjs out && pnpm run typecheck && pnpm run bundle",
-    "bundle": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --minify --sourcemap --loader:.yaml=text --outfile=out/lsl-lsp.cjs",
+    "bundle": "node scripts/bundle.mjs",
     "start": "node out/lsl-lsp.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "watch": "tsc -w -p tsconfig.json --noEmit",

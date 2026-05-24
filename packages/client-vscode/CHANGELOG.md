@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.12
+- Fixed the bundled CLI `--version` output so it is injected from the CLI package version during release builds.
+
 ## 0.1.11
 - Fixed include preprocessing so inactive conditional spans are tracked per source file instead of suppressing unrelated included tokens at matching offsets.
 - Fixed angle-bracket include resolution so include paths take precedence over the including file's directory, preventing self-include skips in shared module layouts.
