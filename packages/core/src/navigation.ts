@@ -4,8 +4,30 @@ import type { Analysis } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import type { Token as LexToken } from './lexer';
 import { isKeyword } from './ast/lexer';
+import { fileUriToPath } from './protocol';
 
 export type SimpleToken = { kind: string; value: string; start: number; end: number };
+
+function isDisabledOffset(pre: PreprocResult, offset: number): boolean {
+	return pre.disabledRanges.some(r => offset >= r.start && offset < r.end);
+}
+
+function localMacroDefNameSpan(doc: TextDocument, pre: PreprocResult, name: string): { start: number; end: number } | null {
+	const def = pre.macroDefs?.[name];
+	if (!def) return null;
+	const localPath = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined;
+	if (def.file !== localPath) return null;
+	const text = doc.getText();
+	const slice = text.slice(def.start, def.end);
+	const m = /^(\s*#\s*define\s+[$#?]?)([A-Za-z_]\w*)/.exec(slice);
+	if (!m || m[2] !== name) return null;
+	const start = def.start + m[1].length;
+	return { start, end: start + name.length };
+}
+
+function isActiveMacro(pre: PreprocResult, name: string): boolean {
+	return Object.prototype.hasOwnProperty.call(pre.macros, name) || Object.prototype.hasOwnProperty.call(pre.funcMacros, name);
+}
 
 export function getWordAt(doc: TextDocument, offset: number): { start: number; end: number; text: string } | null {
 	const text = doc.getText();
@@ -28,6 +50,7 @@ export function prepareRename(
 ): Range | null {
 	const w = getWordAt(doc, offset);
 	if (!w) return null;
+	if (isDisabledOffset(pre, offset)) return null;
 	if (isKeyword(w.text)) return null;
 
 	const atDecl = analysis.symbolAt(offset);
@@ -43,8 +66,7 @@ export function prepareRename(
 		}
 	}
 	const name = w.text;
-	const isMacro = Object.prototype.hasOwnProperty.call(pre.macros, name) || Object.prototype.hasOwnProperty.call(pre.funcMacros, name);
-	if (isMacro) return { start: doc.positionAt(w.start), end: doc.positionAt(w.end) };
+	if (isActiveMacro(pre, name) && localMacroDefNameSpan(doc, pre, name)) return { start: doc.positionAt(w.start), end: doc.positionAt(w.end) };
 	return null;
 }
 
@@ -69,6 +91,7 @@ export function computeRenameEdits(
 
 	const w = getWordAt(doc, offset);
 	if (!w) return { changes };
+	if (isDisabledOffset(pre, offset)) return { changes };
 	const oldName = w.text;
 	if (oldName === newName) return { changes };
 	if (!/^[A-Za-z_]\w*$/.test(newName)) return { changes };
@@ -92,24 +115,15 @@ export function computeRenameEdits(
 		return { changes };
 	}
 
-	const isMacro = Object.prototype.hasOwnProperty.call(pre.macros, oldName) || Object.prototype.hasOwnProperty.call(pre.funcMacros, oldName);
-	if (isMacro) {
+	if (isActiveMacro(pre, oldName)) {
+		const defSpan = localMacroDefNameSpan(doc, pre, oldName);
+		if (!defSpan) return { changes };
+		addEdit(doc.uri, defSpan.start, defSpan.end);
 		for (const t of tokens) {
-			if (t.kind === 'id' && t.value === oldName) {
+			if (t.kind === 'id' && t.value === oldName && !isDisabledOffset(pre, t.start)) {
 				const resolved = analysis.refAt(t.start);
 				if (!resolved) addEdit(doc.uri, t.start, t.end);
 			}
-		}
-		const text = doc.getText();
-		const lines = text.split(/\r?\n/);
-		let running = 0;
-		for (const L of lines) {
-			const m = /^\s*#\s*define\s+([A-Za-z_]\w*)/.exec(L);
-			if (m && m[1] === oldName) {
-				const idx = L.indexOf(oldName);
-				if (idx >= 0) addEdit(doc.uri, running + idx, running + idx + oldName.length);
-			}
-			running += L.length + 1;
 		}
 		return { changes };
 	}
@@ -150,25 +164,14 @@ export function findAllReferences(
 
 	const w = getWordAt(doc, offset);
 	if (!w) return out;
+	if (isDisabledOffset(pre, offset)) return out;
 	const name = w.text;
 
-	const isMacro = Object.prototype.hasOwnProperty.call(pre.macros, name) || Object.prototype.hasOwnProperty.call(pre.funcMacros, name);
-	if (isMacro) {
-		if (includeDecl) {
-			const text = doc.getText();
-			const lines = text.split(/\r?\n/);
-			let running = 0;
-			for (const L of lines) {
-				const m = /^\s*#\s*define\s+([A-Za-z_]\w*)/.exec(L);
-				if (m && m[1] === name) {
-					const idx = L.indexOf(name);
-					if (idx >= 0) pushLoc(doc.uri, { start: doc.positionAt(running + idx), end: doc.positionAt(running + idx + name.length) });
-				}
-				running += L.length + 1;
-			}
-		}
+	if (isActiveMacro(pre, name)) {
+		const defSpan = localMacroDefNameSpan(doc, pre, name);
+		if (includeDecl && defSpan) pushLoc(doc.uri, { start: doc.positionAt(defSpan.start), end: doc.positionAt(defSpan.end) });
 		for (const t of tokens) {
-			if (t.kind === 'id' && t.value === name) {
+			if (t.kind === 'id' && t.value === name && !isDisabledOffset(pre, t.start)) {
 				const resolved = analysis.refAt(t.start);
 				if (!resolved) pushLoc(doc.uri, { start: doc.positionAt(t.start), end: doc.positionAt(t.end) });
 			}
