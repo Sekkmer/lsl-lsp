@@ -475,7 +475,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 		return null;
 	}
 	if (args[0] === '--version' || args[0] === '-v') {
-		process.stdout.write('0.1.9\n');
+		process.stdout.write('0.1.10\n');
 		return null;
 	}
 

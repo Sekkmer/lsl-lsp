@@ -6,6 +6,7 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 - Preprocessor awareness: `#include`, `#if`/`#elif`/`#endif`, macros (built‑ins like `__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`, varargs with `__VA_ARGS__`/`__VA_OPT__`, `#` stringification and `##` token pasting), and disabled ranges.
 - Formatter: full document, range, and on-type formatting.
 - Syntax highlighting and semantic tokens aligned with the parser’s understanding.
+- A shared core analyzer also powers the repository's standalone `lsl-lsp` CLI for non-VS Code workflows.
 
 ## Features
 
@@ -37,7 +38,7 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 	- Consistent brace/semicolon/newline handling
 - Diagnostics (server‑side analysis)
 	- AST‑based checks for common LSL issues: arity/return mismatches, unused/duplicate declarations, dead code, and precise operator/type rules
-	- Constant conditions are evaluated for common literal and constant-expression cases with bounded folding
+	- Constant conditions are evaluated with bounded folding for literals, local constants, LSL truthiness, assignment-valued `if` conditions, and known vector/rotation equality
 	- Unary operators: numeric `+`/`-`; integer `!`/`~`
 	- Postfix `++/--`: require assignable integer variables
 	- Bitwise and shifts: integer operands
