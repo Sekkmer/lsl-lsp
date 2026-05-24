@@ -567,11 +567,11 @@ function looksLikeFloatString(s: string): boolean {
 }
 
 function looksLikeVectorOrRotationString(s: string, target: 'vector' | 'rotation'): boolean {
-	// Minimal check: <a, b, c> or <a, b, c, d>
-	const m = /^\s*<\s*[^,>]+\s*,\s*[^,>]+\s*,\s*[^,>]+\s*(?:,\s*[^,>]+\s*)?>\s*$/.exec(s);
-	if (!m) return false;
-	const has4 = /,\s*[^,>]+\s*>\s*$/.test(s.trim());
-	return target === 'vector' ? !has4 : has4;
+	const trimmed = s.trim();
+	if (!trimmed.startsWith('<') || !trimmed.endsWith('>')) return false;
+	const parts = trimmed.slice(1, -1).split(',').map(part => part.trim());
+	if (parts.some(part => part.length === 0)) return false;
+	return target === 'vector' ? parts.length === 3 : parts.length === 4;
 }
 
 function looksLikeKeyString(s: string): boolean {

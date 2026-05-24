@@ -56,4 +56,18 @@ describe('casts validation', () => {
 		const infos = analysis.diagnostics.filter(d => d.severity === 3 || d.severity === 2); // Information or Warning
 		expect(infos.length).toBeGreaterThanOrEqual(4);
 	});
+	it('distinguishes string literal vector and rotation component counts', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = inEvent(`
+		vector validVector = (vector)"<1, 2, 3>";
+		rotation validRotation = (rotation)"<1, 2, 3, 4>";
+		vector invalidVector = (vector)"<1, 2, 3, 4>";
+		rotation invalidRotation = (rotation)"<1, 2, 3>";
+		`);
+		const doc = docFrom(code, 'file:///casts_vector_rotation_strings.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.filter(m => m.includes('Casting string to vector requires')).length).toBe(1);
+		expect(msgs.filter(m => m.includes('Casting string to rotation requires')).length).toBe(1);
+	});
 });
