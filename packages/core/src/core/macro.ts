@@ -111,8 +111,8 @@ export interface PreprocessResultNew {
 
 interface ProcessCtx {
 	includeResolver?: IncludeResolver;
-	seen: Set<string>; // detect cycles
-	collecting: string[]; // stack for cycle reporting
+	seen: Set<string>; // unique include ids encountered for reporting
+	collecting: string[]; // active include stack for cycle detection
 	includeOrder: string[];
 	diagnostics: { message: string; code?: string; start: number; end: number }[];
 }
@@ -294,7 +294,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 				if (!inc) { missingIncludes.push({ start: sj.dir.span.start, end: sj.dir.span.end, file: sj.dir.target }); continue; }
 				// update last include target with resolved id
 				includeTargets[includeTargets.length-1] = { start: sj.dir.span.start, end: sj.dir.span.end, file: sj.dir.target, resolved: inc.id };
-				if (ctx.seen.has(inc.id)) continue;
+				if (ctx.collecting.includes(inc.id)) continue;
 				ctx.seen.add(inc.id); ctx.collecting.push(inc.id); pushInclude(inc.id);
 				const nested = preprocessFileNew(inc.id, version, inc.tokens, macros, ctx);
 				Object.assign(macros, nested.macros);
@@ -318,7 +318,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 			const inc = ctx.includeResolver(d.target, fileId);
 			if (!inc) { includeTargets.push({ start: d.span.start, end: d.span.end, file: d.target, resolved: null }); missingIncludes.push({ start: d.span.start, end: d.span.end, file: d.target }); continue; }
 			includeTargets.push({ start: d.span.start, end: d.span.end, file: d.target, resolved: inc.id });
-			if (ctx.seen.has(inc.id)) continue;
+			if (ctx.collecting.includes(inc.id)) continue;
 			ctx.seen.add(inc.id); ctx.collecting.push(inc.id); pushInclude(inc.id);
 			const nested = preprocessFileNew(inc.id, version, inc.tokens, macros, ctx);
 			Object.assign(macros, nested.macros);

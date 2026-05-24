@@ -44,4 +44,22 @@ describe('core pipeline', () => {
 		// order is include first, then main
 		expect(ids).toEqual(['y', 'x']);
 	});
+
+	it('expands repeated includes textually unless guarded', () => {
+		const files = new Map<string, string>();
+		files.set('/v/main.lsl', '#include "inc.lsl"\n#include "inc.lsl"\n#include "guarded.lsl"\n#include "guarded.lsl"\ninteger x;');
+		files.set('/v/inc.lsl', 'integer y;');
+		files.set('/v/guarded.lsl', '#ifndef GUARDED_LSL\n#define GUARDED_LSL\ninteger z;\n#endif');
+		const fakeFs = {
+			readFileSync: (p: string, _enc: string) => {
+				const text = files.get(p);
+				if (text == null) throw new Error('not found');
+				return text;
+			},
+		};
+		const { tokens, includes } = preprocessTokens(files.get('/v/main.lsl')!, { includePaths: ['/v'], fromPath: '/v/main.lsl', fs: fakeFs });
+		expect(includes).toEqual(['/v/inc.lsl', '/v/guarded.lsl']);
+		const ids = tokens.filter(t => t.kind === 'id').map(t => t.value);
+		expect(ids).toEqual(['y', 'y', 'z', 'x']);
+	});
 });
