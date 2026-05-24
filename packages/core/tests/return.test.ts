@@ -20,6 +20,30 @@ describe('return diagnostics', () => {
 		expect(d).toBeTruthy();
 	});
 
+	it('reports wrong return type when returning float from integer function', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('integer foo(){ return 1.5; } default{ state_entry(){} }');
+		const { analysis } = runPipeline(doc, defs);
+		const d = analysis.diagnostics.find(di => di.code === LSL_DIAGCODES.RETURN_WRONG_TYPE);
+		expect(d).toBeTruthy();
+	});
+
+	it('accepts returning integer from float function', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('float foo(){ return 1; } default{ state_entry(){} }');
+		const { analysis } = runPipeline(doc, defs);
+		const d = analysis.diagnostics.find(di => di.code === LSL_DIAGCODES.RETURN_WRONG_TYPE);
+		expect(d).toBeFalsy();
+	});
+
+	it('accepts returning string/key across key-string-compatible functions', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('key k(){ return "00000000-0000-0000-0000-000000000000"; } string s(){ key id = "00000000-0000-0000-0000-000000000000"; return id; } default{ state_entry(){} }');
+		const { analysis } = runPipeline(doc, defs);
+		const wrongReturns = analysis.diagnostics.filter(di => di.code === LSL_DIAGCODES.RETURN_WRONG_TYPE);
+		expect(wrongReturns.length).toBe(0);
+	});
+
 	it('warns when returning value in void function', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('foo(){ return 1; } default{ state_entry(){} }');

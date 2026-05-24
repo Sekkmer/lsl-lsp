@@ -635,11 +635,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	}
 
 	function typesCompatible(expected: string, got: string): boolean {
-		const e = normalizeType(expected); const g = normalizeType(got);
-		if (e === g) return true;
-		if ((e === 'integer' && g === 'float') || (e === 'float' && g === 'integer')) return true;
-		if (g === 'any') return true;
-		return false;
+		return isAssignmentCompatible(toSimpleType(expected), toSimpleType(got));
 	}
 
 	function visitState(st: AstState) {
