@@ -195,12 +195,28 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 			}
 
 			case 'VectorLiteral': {
-			// 3 comps => vector, 4 comps => rotation. We don’t materialize the value shape here.
-				return { kind: 'unknown', type: expr.elements.length === 4 ? 'rotation' : 'vector' };
+				const nums: number[] = [];
+				for (const comp of expr.elements) {
+					const cv = evalExprInner(comp, env, ctx);
+					const n = num(cv);
+					if (n === null) return runtime.unknown(expr.elements.length === 4 ? 'rotation' : 'vector');
+					nums.push(n);
+				}
+				return expr.elements.length === 4
+					? { kind: 'value', type: 'rotation', value: nums as [number, number, number, number] }
+					: { kind: 'value', type: 'vector', value: nums as [number, number, number] };
 			}
 
-			case 'ListLiteral':
-				return { kind: 'unknown', type: 'list' };
+			case 'ListLiteral': {
+				const values: Value[] = [];
+				for (const element of expr.elements) {
+					const value = evalExprInner(element, env, ctx);
+					if (value.kind === 'unknown' && value.type === 'list') return runtime.unknown('list');
+					if (value.kind === 'value' && value.type === 'list') values.push(...value.value);
+					else values.push(value);
+				}
+				return { kind: 'value', type: 'list', value: values };
+			}
 
 			case 'Identifier':
 				return env.getVar(expr.name) ?? runtime.unknown('integer');

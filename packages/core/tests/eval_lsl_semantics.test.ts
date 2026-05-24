@@ -49,6 +49,16 @@ describe('evaluator LSL semantic fixtures', () => {
 		expect(evalSource('vector', '<1,2,3> * <0,0,0,1>')).toEqual({ kind: 'unknown', type: 'vector' });
 	});
 
+	it('materializes literal list and vector values for condition folding', () => {
+		expect(evalSource('list', '[1, []]')).toEqual({
+			kind: 'value',
+			type: 'list',
+			value: [{ kind: 'value', type: 'integer', value: 1 }],
+		});
+		expect(evalSource('vector', '<1,2,3>')).toEqual({ kind: 'value', type: 'vector', value: [1, 2, 3] });
+		expect(evalSource('rotation', '<0,0,0,1>')).toEqual({ kind: 'value', type: 'rotation', value: [0, 0, 0, 1] });
+	});
+
 	it('matches SL list comparison shape for literal list lengths', () => {
 		expect(evalSource('integer', '[] == []')).toEqual({ kind: 'value', type: 'integer', value: 1 });
 		expect(evalSource('integer', '[1] == ["x"]')).toEqual({ kind: 'value', type: 'integer', value: 1 });
@@ -81,5 +91,37 @@ default {
 		expect(codes).not.toContain(LSL_DIAGCODES.ALWAYS_TRUE_CONDITION);
 		expect(codes).not.toContain(LSL_DIAGCODES.ALWAYS_FALSE_CONDITION);
 		expect(analysis.diagnostics.some(d => d.code === LSL_DIAGCODES.WRONG_TYPE && d.severity === DiagnosticSeverity.Error)).toBe(true);
+	});
+
+	it('folds SL truthiness for non-numeric condition values', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+	state_entry() {
+		string nonEmpty = "x";
+		string empty = "";
+		list populated = [1];
+		list blank = [];
+		vector nonZero = <1, 0, 0>;
+		vector zero = ZERO_VECTOR;
+		key nonNull = "00000000-0000-0000-0000-000000000001";
+		key nullKey = NULL_KEY;
+		if (nonEmpty) { }
+		if (empty) { }
+		if (populated) { }
+		if (blank) { }
+		if (nonZero) { }
+		if (zero) { }
+		if (nonNull) { }
+		if (nullKey) { }
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///eval-truthiness.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const truthy = analysis.diagnostics.filter(d => d.code === LSL_DIAGCODES.ALWAYS_TRUE_CONDITION);
+		const falsy = analysis.diagnostics.filter(d => d.code === LSL_DIAGCODES.ALWAYS_FALSE_CONDITION);
+		expect(truthy).toHaveLength(4);
+		expect(falsy).toHaveLength(4);
 	});
 });

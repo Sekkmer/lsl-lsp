@@ -16,6 +16,7 @@ import { Token } from '../core/tokens';
 import { Env, evalExpr, type EvalOptions } from './eval';
 import type { Value } from './runtime';
 import { isAssignmentCompatible } from './compat';
+import { keyValueFromString, NULL_KEY_VALUE } from './key';
 
 // Scope now carries a lightweight kind tag to distinguish event/function contexts
 type Scope = { parent?: Scope; vars: Map<string, Decl>; kind?: 'event' | 'func' | 'state' | 'global' | 'block' };
@@ -264,9 +265,34 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		return count > limit ? limit + 1 : count;
 	}
 
+	const toConcreteType = (type: string): Type | null => {
+		const normalized = normalizeType(type);
+		return isLslType(normalized) ? normalized as Type : null;
+	};
+	const coerceValueForDeclaredType = (value: Value, type: string): Value => {
+		const target = toConcreteType(type);
+		if (!target) return value;
+		if (value.kind === 'unknown') return { kind: 'unknown', type: target };
+		if (value.type === target) return value;
+		if (target === 'float' && value.type === 'integer') {
+			return { kind: 'value', type: 'float', value: value.value };
+		}
+		if (target === 'string' && value.type === 'key') {
+			return { kind: 'value', type: 'string', value: value.value };
+		}
+		if (target === 'key' && value.type === 'string') {
+			const key = keyValueFromString(value.value);
+			return key === null ? { kind: 'unknown', type: 'key' } : { kind: 'value', type: 'key', value: key };
+		}
+		return value;
+	};
 	const truthyValue = (v: Value): boolean | null => {
 		if (v.kind !== 'value') return null;
 		if (v.type === 'integer' || v.type === 'float') return Math.trunc(v.value) !== 0;
+		if (v.type === 'string') return v.value.length !== 0;
+		if (v.type === 'key') return v.value !== '' && v.value !== NULL_KEY_VALUE;
+		if (v.type === 'list') return v.value.length !== 0;
+		if (v.type === 'vector' || v.type === 'rotation') return v.value.some(component => component !== 0);
 		return null;
 	};
 
@@ -805,7 +831,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			if (expr.left.kind === 'Identifier') {
 				if (expr.op === '=') {
 					const rhsVal = evalLocalConstant(expr.right);
-					currentValueEnv().setExistingOrLocal(expr.left.name, rhsVal);
+					const lhsType = normalizeType(inferTypeOf(expr.left, typeScope));
+					currentValueEnv().setExistingOrLocal(expr.left.name, coerceValueForDeclaredType(rhsVal, lhsType));
 				} else {
 					const t = normalizeType(inferTypeOf(expr.left, typeScope));
 					currentValueEnv().setExistingOrLocal(expr.left.name, { kind: 'unknown', type: t } as Value);
@@ -925,7 +952,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					walkExpr(stmt.initializer, scope, typeScope);
 					validateExpr(stmt.initializer, typeScope);
 					validateInitializerType(type, stmt.initializer, typeScope);
-					currentValueEnv().setVar(name, evalLocalConstant(stmt.initializer));
+					currentValueEnv().setVar(name, coerceValueForDeclaredType(evalLocalConstant(stmt.initializer), type));
 				} else {
 					const dv = zeroValueForType(type);
 					if (dv) currentValueEnv().setVar(name, dv);
@@ -1099,7 +1126,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 			validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures, { constantNames });
 			validateInitializerType(g.varType, g.initializer, globalTypeScope);
-			currentValueEnv().setVar(name, evalExpr(g.initializer, currentValueEnv()));
+			currentValueEnv().setVar(name, coerceValueForDeclaredType(evalExpr(g.initializer, currentValueEnv()), g.varType));
 		} else {
 			const dv = zeroValueForType(g.varType);
 			if (dv) currentValueEnv().setVar(name, dv);
