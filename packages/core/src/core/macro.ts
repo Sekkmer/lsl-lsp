@@ -951,6 +951,7 @@ export function expandActiveTokens(tokens: Token[], macroTable: MacroDefines): T
 			if (hs && hs.has(name)) { out.push(t); continue; }
 			// NOTE: __FILE__ is handled later during AST parsing (applyBuiltinExpansions) so that
 			// basename logic is centralized and consistent. We intentionally do not expand here.
+			if (name === '__FILE__') { out.push(t); continue; }
 			// Object-like macro expansion
 			if (Object.prototype.hasOwnProperty.call(obj, name)) {
 				const body = objectMacroToTokens(obj[name], t.file);

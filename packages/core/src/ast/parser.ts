@@ -13,6 +13,7 @@ import { basenameFromUri } from '../builtins';
 import { Tokenizer } from '../core/tokenizer';
 import { TokenStream } from '../core/tokens';
 import { fileUriToPath } from '../protocol';
+import fs from 'node:fs';
 // (macro expansion already applied via preprocessForAst.expandedTokens)
 
 type ParseOptions = {
@@ -33,7 +34,7 @@ export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', op
 	const commentTokens: Token[] = [];
 	for (;;) { const t = tz.next(); if (t.kind === 'comment-line' || t.kind === 'comment-block') commentTokens.push(t); if (t.kind === 'eof') break; }
 	const lineStarts = computeLineStarts(text);
-	const builtinsExpanded = applyBuiltinExpansions(pre.expandedTokens || [], basename, lineStarts);
+	const builtinsExpanded = applyBuiltinExpansions(pre.expandedTokens || [], basename, lineStarts, fromPath);
 	const merged: Token[] = mergeTokensWithComments(builtinsExpanded, commentTokens);
 	const ts = new TokenStream(merged);
 	const lxAdapter: Pick<Lexer, 'next' | 'peek' | 'pushBack'> = {
@@ -63,14 +64,29 @@ function lineOf(offset: number, lineStarts: number[]): number {
 }
 
 // Replace built-in identifiers with proper literal tokens so parser produces correct AST nodes.
-function applyBuiltinExpansions(tokens: Token[], basename: string, lineStarts: number[]): Token[] {
+function applyBuiltinExpansions(tokens: Token[], basename: string, rootLineStarts: number[], rootPath?: string): Token[] {
+	const lineStartsByFile = new Map<string, number[]>();
+	const lineStartsForFile = (file: string | undefined): number[] => {
+		if (!file || file === '<unknown>' || (rootPath && file === rootPath)) return rootLineStarts;
+		let cached = lineStartsByFile.get(file);
+		if (!cached) {
+			try { cached = computeLineStarts(fs.readFileSync(file, 'utf8')); }
+			catch { cached = rootLineStarts; }
+			lineStartsByFile.set(file, cached);
+		}
+		return cached;
+	};
+	const basenameForFile = (file: string | undefined): string => {
+		if (!file || file === '<unknown>') return basename;
+		return basenameFromUri(file);
+	};
 	return tokens.map(t => {
 		if (t.kind === 'id') {
 			if (t.value === '__LINE__') {
-				return { kind: 'number', value: String(lineOf(t.span.start, lineStarts)), span: t.span, file: t.file || '<unknown>' } as Token;
+				return { kind: 'number', value: String(lineOf(t.span.start, lineStartsForFile(t.file))), span: t.span, file: t.file || '<unknown>' } as Token;
 			}
 			if (t.value === '__FILE__') {
-				return { kind: 'string', value: JSON.stringify(basename), span: t.span, file: t.file || '<unknown>' } as Token;
+				return { kind: 'string', value: JSON.stringify(basenameForFile(t.file)), span: t.span, file: t.file || '<unknown>' } as Token;
 			}
 		}
 		return t;

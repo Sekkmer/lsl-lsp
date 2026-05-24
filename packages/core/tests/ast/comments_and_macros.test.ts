@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { parseScriptFromText } from '../../src/ast/parser';
 
 describe('AST parser: comments and macros', () => {
@@ -53,5 +55,23 @@ describe('AST parser: comments and macros', () => {
 		expect(fi.kind).toBe('StringLiteral');
 		// should be quoted basename of uri
 		expect(fi.value).toBe('test.lsl');
+	});
+
+	it('expands built-in macros using include file origin', async () => {
+		const base = path.join(__dirname, '..', 'tmp_includes', 'ast_builtins');
+		await fs.mkdir(base, { recursive: true });
+		await fs.writeFile(path.join(base, 'builtins.lslh'), [
+			'integer before;',
+			'integer incLine = __LINE__;',
+			'string incFile = __FILE__;',
+		].join('\n'), 'utf8');
+		const script = parseScriptFromText('#include "builtins.lslh"\n', 'file:///proj/root.lsl', { includePaths: [base] });
+		const line = script.globals.get('incLine')?.initializer;
+		const file = script.globals.get('incFile')?.initializer;
+
+		expect(line?.kind).toBe('NumberLiteral');
+		expect(line?.raw).toBe('2');
+		expect(file?.kind).toBe('StringLiteral');
+		expect(file?.value).toBe('builtins.lslh');
 	});
 });
