@@ -49,6 +49,7 @@ export function buildIncludeResolver(opts: IncludeResolverOptions): IncludeResol
 export function preprocessForAst(text: string, opts: IncludeResolverOptions & { defines?: MacroDefines }): {
 	macros: MacroDefines;
 	funcMacros: Record<string, string>;
+	macroDefs?: Record<string, { start: number; end: number; file: string }>;
 	includes: string[];
 	disabledRanges: { start: number; end: number }[];
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[];
@@ -225,6 +226,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	return {
 		macros: pre.macros,
 		funcMacros,
+		macroDefs: pre.macroDefs,
 		includes: pre.includes,
 		disabledRanges,
 		includeTargets,

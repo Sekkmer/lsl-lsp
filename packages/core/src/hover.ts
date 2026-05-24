@@ -1,4 +1,4 @@
-import { MarkupKind, type Hover, type Position } from './protocol';
+import { fileUriToPath, MarkupKind, type Hover, type Position } from './protocol';
 import type { TextDocument } from './protocol';
 import { Defs } from './defs';
 import type { DefFunction } from './defs';
@@ -528,5 +528,8 @@ function macroSourceFile(doc: TextDocument, pre: PreprocResult | undefined, name
 	if (!pre) return null;
 	// Prefer local defines: no need to add From: for local
 	if (hasLocalMacroDefine(doc, name)) return null;
-	return null;
+	const def = pre.macroDefs?.[name];
+	if (!def) return null;
+	const localPath = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined;
+	return def.file && def.file !== localPath ? def.file : null;
 }

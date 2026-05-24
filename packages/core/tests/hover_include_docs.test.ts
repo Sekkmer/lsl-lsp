@@ -70,6 +70,7 @@ describe('hover: include docs for functions/globals', async () => {
 		const hv = lslHover(doc, { position: hoverPos }, defs, analysis, pre);
 		expect(hv).toBeTruthy();
 		const md = hoverToString(hv!);
+		expect(md).toContain(`From: ${header.path}`);
 		expect(md).toMatch(/macro adds stuff/);
 	});
 

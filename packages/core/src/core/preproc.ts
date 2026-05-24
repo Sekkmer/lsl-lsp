@@ -16,6 +16,7 @@ export interface PreprocResult {
 	disabledRanges: DisabledRange[];
 	macros: MacroDefines;
 	funcMacros: Record<string, string>;
+	macroDefs?: Record<string, { start: number; end: number; file: string }>;
 	includes: string[];
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[];
 	missingIncludes?: { start: number; end: number; file: string }[];

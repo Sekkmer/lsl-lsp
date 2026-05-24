@@ -298,6 +298,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 				ctx.seen.add(inc.id); ctx.collecting.push(inc.id); pushInclude(inc.id);
 				const nested = preprocessFileNew(inc.id, version, inc.tokens, macros, ctx);
 				Object.assign(macros, nested.macros);
+				Object.assign(macroDefs, nested.macroDefs);
 				for (const tk of nested.tokens) out.push(tk);
 				ctx.collecting.pop();
 				continue;
@@ -322,6 +323,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 			ctx.seen.add(inc.id); ctx.collecting.push(inc.id); pushInclude(inc.id);
 			const nested = preprocessFileNew(inc.id, version, inc.tokens, macros, ctx);
 			Object.assign(macros, nested.macros);
+			Object.assign(macroDefs, nested.macroDefs);
 			for (const tk of nested.tokens) out.push(tk);
 			ctx.collecting.pop();
 			continue;

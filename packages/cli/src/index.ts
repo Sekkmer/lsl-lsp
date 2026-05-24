@@ -270,6 +270,7 @@ function toPreprocResult(full: ReturnType<typeof preprocessForAst>): PreprocResu
 		disabledRanges: full.disabledRanges,
 		macros: full.macros,
 		funcMacros: full.funcMacros,
+		macroDefs: full.macroDefs,
 		includes: full.includes,
 		includeTargets: full.includeTargets,
 		missingIncludes: full.missingIncludes,

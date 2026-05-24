@@ -33,6 +33,7 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOpt
 		disabledRanges: full.disabledRanges,
 		macros: { ...full.macros },
 		funcMacros: full.funcMacros,
+		macroDefs: full.macroDefs,
 		includes: full.includes,
 		includeTargets: full.includeTargets,
 		missingIncludes: full.missingIncludes,

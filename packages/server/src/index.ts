@@ -206,6 +206,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 		disabledRanges: full.disabledRanges,
 		macros: full.macros,
 		funcMacros: full.funcMacros,
+		macroDefs: full.macroDefs,
 		includes: full.includes,
 		includeTargets: full.includeTargets,
 		missingIncludes: full.missingIncludes,
