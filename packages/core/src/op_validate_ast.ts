@@ -446,7 +446,21 @@ export function validateOperatorsFromAst(
 				break;
 			}
 			case 'ListLiteral': {
-				e.elements.forEach(walk);
+				for (const comp of e.elements) {
+					walk(comp);
+					const ct = inferExprTypeFromAst(comp, symbolTypes, functionReturnTypes);
+					const flattensList = comp.kind === 'ListLiteral'
+						|| ct === 'list'
+						|| (comp.kind === 'Identifier' && symbolTypes.get(comp.name) === 'list');
+					if (flattensList) {
+						diagnostics.push({
+							code: LSL_DIAGCODES.LIST_LITERAL_FLATTENS_LIST,
+							message: 'List value in list literal is flattened into the surrounding list',
+							range: mk(doc, comp.span.start, comp.span.end),
+							severity: DiagnosticSeverity.Warning,
+						});
+					}
+				}
 				break;
 			}
 			case 'VectorLiteral': {
