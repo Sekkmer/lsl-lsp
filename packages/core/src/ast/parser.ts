@@ -546,7 +546,10 @@ class Parser {
 				this.report(tName, `Duplicate declaration of ${tName.value}`, 'LSL070');
 			}
 			params.set(tName.value, canonicalType(tType.value));
-			this.maybe('punct', ',');
+			const comma = this.maybe('punct', ',');
+			if (comma && this.peek().kind === 'punct' && this.peek().value === ')') {
+				this.report(comma, 'Trailing comma is not allowed', 'LSL000');
+			}
 		}
 		return params;
 	}
@@ -1203,7 +1206,11 @@ class Parser {
 			while (!this.maybe('punct', ']')) {
 				if (this.peek().kind === 'eof') { this.report(this.peek(), 'missing ] to close list literal', 'LSL000'); break; }
 				if (++guard > 20000) { this.report(this.peek(), 'parser recovery limit in list literal', 'LSL000'); break; }
-				const e = this.parseExpr(); elements.push(e); this.maybe('punct', ',');
+				const e = this.parseExpr(); elements.push(e);
+				const comma = this.maybe('punct', ',');
+				if (comma && this.peek().kind === 'punct' && this.peek().value === ']') {
+					this.report(comma, 'Trailing comma is not allowed', 'LSL000');
+				}
 			}
 			return this.parsePostfix({ span: spanFrom(t.span.start, this.peek().span.end), kind: 'ListLiteral', elements });
 		}
@@ -1240,7 +1247,11 @@ class Parser {
 					// Prevent runaway EOF loops when ')' is missing
 					if (this.peek().kind === 'eof') { this.report(this.peek(), 'missing ) to close call', 'LSL000'); break; }
 					if (++guard > 20000) { this.report(this.peek(), 'parser recovery limit in call args', 'LSL000'); break; }
-					const e = this.parseExpr(); args.push(e); this.maybe('punct', ',');
+					const e = this.parseExpr(); args.push(e);
+					const comma = this.maybe('punct', ',');
+					if (comma && this.peek().kind === 'punct' && this.peek().value === ')') {
+						this.report(comma, 'Trailing comma is not allowed', 'LSL000');
+					}
 				}
 				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Call', callee: expr, args };
 				continue;
