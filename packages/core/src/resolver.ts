@@ -33,6 +33,7 @@ function readIncludeFile(file: string): { lines: string[]; text: string } {
 }
 
 export interface ExternalDefHit { file: string; line: number; startChar: number; endChar: number; kind: ResolvedTarget['kind']; }
+export type ExternalDefKind = Extract<ExternalDefHit['kind'], 'macro-obj' | 'macro-func' | 'function' | 'global'>;
 
 function lineOffsetsFor(text: string): number[] {
 	const offsets: number[] = [];
@@ -148,11 +149,12 @@ function hasFunctionBodyAfterOpenParen(lines: string[], lineIndex: number, openP
 	return false;
 }
 
-export function scanIncludesForSymbol(name: string, pre?: PreprocResult): ExternalDefHit | null {
+export function scanIncludesForSymbol(name: string, pre?: PreprocResult, kinds?: readonly ExternalDefKind[]): ExternalDefHit | null {
 	if (!pre || !pre.includeTargets || !name) return null;
+	const acceptsKind = (kind: ExternalDefKind) => !kinds || kinds.includes(kind);
 	const queue: string[] = [];
 	const seen = new Set<string>();
-	for (const t of pre.includeTargets) { const f = t.resolved || t.file; if (f) queue.push(f); }
+	for (const t of pre.includeTargets) { if (t.resolved) queue.push(t.resolved); }
 	const MAX = 16; let depth = 0;
 	while (queue.length && depth < MAX) {
 		const file = queue.shift()!; if (seen.has(file)) { depth++; continue; }
@@ -182,10 +184,12 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 			if (mMacro && mMacro[1] === name) {
 				const activeLine = activeMacroDefineLine(pre, name, file, lineOffsets, lines);
 				if (activeLine !== i) continue;
-				try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND macro', name, 'in', file, 'line', i); } catch { /* ignore */ }
 				const col = codeLine.indexOf(name);
 				const afterName = codeLine.slice(col + name.length);
-				return { file, line: i, startChar: col, endChar: col + name.length, kind: (/^\(/.test(afterName) ? 'macro-func' : 'macro-obj') } as ExternalDefHit;
+				const macroKind = /^\(/.test(afterName) ? 'macro-func' : 'macro-obj';
+				if (!acceptsKind(macroKind)) continue;
+				try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND macro', name, 'in', file, 'line', i); } catch { /* ignore */ }
+				return { file, line: i, startChar: col, endChar: col + name.length, kind: macroKind } as ExternalDefHit;
 			}
 			// Function definition. Includes are textual LSL, so C-style prototypes are not declarations.
 			const funcRe = new RegExp(`(^|[^A-Za-z0-9_])([A-Za-z_]\\w*)\\s+(${name})\\s*\\(`);
@@ -195,6 +199,7 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 				const openParen = symbolLine.indexOf('(', col + name.length);
 				if (col >= 0 && openParen >= 0 && hasFunctionBodyAfterOpenParen(strippedLines, i, openParen)) {
 					if (!hasActiveTokenOnLine(pre, file, i, lineOffsets, lines)) continue;
+					if (!acceptsKind('function')) continue;
 					try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND function', name, 'in', file, 'line', i); } catch { /* ignore */ }
 					return { file, line: i, startChar: col, endChar: col + name.length, kind: 'function' } as ExternalDefHit;
 				}
@@ -204,6 +209,7 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 			const gvm = gvRe.exec(symbolLine);
 			if (gvm && !/\(\s*$/.test(symbolLine.slice(gvm.index))) {
 				if (!hasActiveTokenOnLine(pre, file, i, lineOffsets, lines)) continue;
+				if (!acceptsKind('global')) continue;
 				try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND global', name, 'in', file, 'line', i); } catch { /* ignore */ }
 				const col = symbolLine.indexOf(name, gvm.index);
 				if (col >= 0) return { file, line: i, startChar: col, endChar: col + name.length, kind: 'global' } as ExternalDefHit;

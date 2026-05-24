@@ -104,4 +104,50 @@ describe('hover: include docs for functions/globals', async () => {
 		expect(md).toMatch(/new doc/);
 		expect(md).not.toMatch(/old doc/);
 	});
+
+	it('does not attach inactive include docs to local symbols', async () => {
+		const header = tmpFile('inactive_shadow_docs.lslh', [
+			'#if 0',
+			'/** inactive include function doc */',
+			'integer LocalShadow(integer x) { return x; }',
+			'// inactive include macro doc',
+			'#define LOCAL_SHADOW 1',
+			'#endif',
+		].join('\n'));
+		const includeDir = path.dirname(await header.write());
+		const code = [
+			`#include "${path.basename(header.path)}"`,
+			'integer LocalShadow(integer x) { return x; }',
+			'#define LOCAL_SHADOW 2',
+			'default { state_entry() { integer y = LocalShadow(LOCAL_SHADOW); } }',
+		].join('\n');
+		const doc = docFrom(code, 'file:///proj/hover_inactive_shadow.lsl');
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [includeDir] });
+
+		const funcHover = lslHover(doc, { position: doc.positionAt(code.lastIndexOf('LocalShadow(') + 2) }, defs, analysis, pre);
+		expect(hoverToString(funcHover!)).not.toContain('inactive include function doc');
+
+		const macroHover = lslHover(doc, { position: doc.positionAt(code.lastIndexOf('LOCAL_SHADOW') + 2) }, defs, analysis, pre);
+		expect(hoverToString(macroHover!)).not.toContain('inactive include macro doc');
+	});
+
+	it('does not scan files from inactive include directives', async () => {
+		const header = tmpFile('inactive_include_shadow_docs.lslh', [
+			'/** inactive include target function doc */',
+			'integer LocalInactiveInclude(integer x) { return x; }',
+		].join('\n'));
+		const includePath = await header.write();
+		const code = [
+			'#if 0',
+			`#include "${includePath}"`,
+			'#endif',
+			'integer LocalInactiveInclude(integer x) { return x; }',
+			'default { state_entry() { integer y = LocalInactiveInclude(1); } }',
+		].join('\n');
+		const doc = docFrom(code, 'file:///proj/hover_inactive_include_shadow.lsl');
+		const { analysis, pre } = runPipeline(doc, defs);
+
+		const funcHover = lslHover(doc, { position: doc.positionAt(code.lastIndexOf('LocalInactiveInclude(') + 2) }, defs, analysis, pre);
+		expect(hoverToString(funcHover!)).not.toContain('inactive include target function doc');
+	});
 });

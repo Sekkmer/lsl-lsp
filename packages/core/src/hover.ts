@@ -7,6 +7,7 @@ import { Analysis } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import { isKeyword } from './ast/lexer';
 import { isType } from './ast/types';
+import { scanIncludesForSymbol } from './resolver';
 
 function readIncludeFile(file: string): string | null {
 	try {
@@ -46,34 +47,23 @@ function extractGenericLeadingComment(text: string, declStart: number): string |
 
 function extractIncludeSymbolDoc(name: string, kind: 'func' | 'var' | 'macro', pre?: PreprocResult): string | null {
 	if (!pre || !pre.includeTargets) return null;
-	for (const inc of pre.includeTargets) {
-		if (!inc.resolved) continue;
-		const txt = readIncludeFile(inc.resolved);
-		if (!txt) continue;
-		let pattern: RegExp;
-		const id = name.replace(/[.*+?^${}()|[\]\\]/g, r => `\\${r}`);
-		// NOTE: We test one line at a time, so we don't need the 'm' flag here.  Use explicit \b word boundary.
-		if (kind === 'func') {
-			pattern = new RegExp(`^[\\t ]*[A-Za-z_][A-Za-z0-9_]*[\\t ]+${id}[\\t ]*\\(`);
-		} else if (kind === 'macro') {
-			// Match both object-like and function-like macros: #define NAME   or  #define NAME(...)
-			pattern = new RegExp(`^\\s*#\\s*define\\s+${id}(?:\\b|\\(|$)`);
-		} else {
-			pattern = new RegExp(`^[\\t ]*[A-Za-z_][A-Za-z0-9_]*[\\t ]+${id}[\\t ]*(?:=|;|$)`);
-		}
-		const lines = txt.split(/\r?\n/);
-		let offset = 0;
-		for (const L of lines) {
-			if (pattern.test(L)) {
-				const declStart = offset;
-				const doc = extractGenericLeadingComment(txt, declStart);
-				if (doc) return doc;
-				break;
-			}
-			offset += L.length + 1;
-		}
+	const wanted = kind === 'func' ? ['function'] as const : kind === 'var' ? ['global'] as const : ['macro-obj', 'macro-func'] as const;
+	const hit = scanIncludesForSymbol(name, pre, wanted);
+	if (!hit) return null;
+	const txt = readIncludeFile(hit.file);
+	if (!txt) return null;
+	const declStart = offsetForLine(txt, hit.line);
+	return extractGenericLeadingComment(txt, declStart);
+}
+
+function offsetForLine(text: string, line: number): number {
+	let offset = 0;
+	for (let current = 0; current < line && offset < text.length; current++) {
+		const nl = text.indexOf('\n', offset);
+		if (nl < 0) return text.length;
+		offset = nl + 1;
 	}
-	return null;
+	return offset;
 }
 
 function formatNumber(value: number): string {
