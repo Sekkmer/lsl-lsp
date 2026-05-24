@@ -39,4 +39,22 @@ describe('postfix ++/-- parsing and validation', () => {
 		const msgs = diagMsgs(analysis);
 		expect(msgs.some((m: string) => m.includes('Operand of ++ must be a variable'))).toBe(true);
 	});
+
+	it('accepts postfix on vector members', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = 'default { state_entry() { vector v = <1.0, 2.0, 3.0>; v.x++; } }';
+		const doc = docFrom(code, 'file:///postfix_member_ok.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = diagMsgs(analysis);
+		expect(msgs.some((m: string) => m.includes('Operand of ++ must be a variable') || m.includes('expects a numeric variable'))).toBe(false);
+	});
+
+	it('flags postfix on parenthesized vector members', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = 'default { state_entry() { vector v = <1.0, 2.0, 3.0>; (v.x)++; } }';
+		const doc = docFrom(code, 'file:///postfix_parenthesized_member.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = diagMsgs(analysis);
+		expect(msgs.some((m: string) => m.includes('Operand of ++ must be a variable'))).toBe(true);
+	});
 });

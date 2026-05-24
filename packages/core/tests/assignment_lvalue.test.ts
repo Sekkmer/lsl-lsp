@@ -56,4 +56,32 @@ integer a; default { state_entry() { a = 2; } }
 		const hasInvalid = analysis.diagnostics.some(d => d.code === 'LSL050');
 		expect(hasInvalid).toBe(false);
 	});
+
+	it('accepts vector member assignment', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default { state_entry() {
+	vector v = <1.0, 2.0, 3.0>;
+	v.x = 4.0;
+} }
+`;
+		const doc = docFrom(code, 'file:///lhs_member_ok.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const hasInvalid = analysis.diagnostics.some(d => d.code === 'LSL050');
+		expect(hasInvalid).toBe(false);
+	});
+
+	it('flags parenthesized member assignment', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default { state_entry() {
+	vector v = <1.0, 2.0, 3.0>;
+	(v.x) = 4.0;
+} }
+`;
+		const doc = docFrom(code, 'file:///lhs_parenthesized_member.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => `${d.message} @${d.code}`);
+		expect(msgs.some(m => m.includes('Left-hand side of assignment must be a variable') && m.includes('LSL050'))).toBe(true);
+	});
 });

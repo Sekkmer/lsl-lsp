@@ -1216,12 +1216,11 @@ class Parser {
 				}
 			}
 			const e = this.parseExpr(); const close = this.eat('punct', ')');
-			// Unwrap redundant parentheses around complex expressions like Binary/Call/Member/etc
+			// Unwrap redundant parentheses around complex expressions like Binary/Call/etc.
 			// Keep Paren nodes around identifiers/literals to influence assignability checks.
 			switch (e.kind) {
 				case 'Binary':
 				case 'Call':
-				case 'Member':
 				case 'ListLiteral':
 				case 'VectorLiteral':
 				case 'Cast': {
