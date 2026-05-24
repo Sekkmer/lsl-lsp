@@ -589,6 +589,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 		}
 		visitStmt(fn.body, scope, ts);
+		if (fn.body.kind === 'BlockStmt' && fn.body.statements.length === 0) {
+			diagnostics.push({ code: LSL_DIAGCODES.EMPTY_FUNCTION_BODY, message: `Function ${fn.name} body is empty`, range: spanToRange(doc, fn.body.span), severity: DiagnosticSeverity.Warning });
+		}
 		scanReturns(fn.body);
 		if (returnType === 'void') {
 			for (const r of returns) {
@@ -734,6 +737,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			const savedLabels = currentLabels;
 			currentLabels = collectLabels(ev.body);
 			visitStmt(ev.body, evScope, tsEvent);
+			if (ev.body.kind === 'BlockStmt' && ev.body.statements.length === 0) {
+				diagnostics.push({ code: LSL_DIAGCODES.EMPTY_EVENT_BODY, message: `Event ${ev.name} body is empty`, range: spanToRange(doc, ev.body.span), severity: DiagnosticSeverity.Warning });
+			}
 			// Emit unused diagnostics for this event
 			// Honor block-based suppression that overlaps the event body
 			const dd = pre.diagDirectives;

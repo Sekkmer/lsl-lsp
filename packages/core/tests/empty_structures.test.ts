@@ -6,12 +6,12 @@ import { DiagnosticSeverity } from '../src/protocol';
 // Empty structure validation tests
 
 describe('empty structures: functions, events, if/else', () => {
-	it('allows empty event handler body', async () => {
+	it('warns on empty event handler body', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('default { touch_start(integer n) { } }');
 		const { analysis } = runPipeline(doc, defs);
 		const e = analysis.diagnostics.find(d => d.code === 'LSL024');
-		expect(e).toBeUndefined();
+		expect(e?.severity).toBe(DiagnosticSeverity.Warning);
 	});
 
 	it('no error on non-empty event handler body', async () => {
@@ -22,12 +22,12 @@ describe('empty structures: functions, events, if/else', () => {
 		expect(e).toBeUndefined();
 	});
 
-	it('allows empty typed function body', async () => {
+	it('warns on empty typed function body', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('integer foo(){ }');
 		const { analysis } = runPipeline(doc, defs);
 		const e = analysis.diagnostics.find(d => d.code === 'LSL025');
-		expect(e).toBeUndefined();
+		expect(e?.severity).toBe(DiagnosticSeverity.Warning);
 	});
 
 	it('no error on non-empty typed function body', async () => {
@@ -38,12 +38,12 @@ describe('empty structures: functions, events, if/else', () => {
 		expect(e).toBeUndefined();
 	});
 
-	it('allows empty void function body', async () => {
+	it('warns on empty void function body', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('foo(){ }');
 		const { analysis } = runPipeline(doc, defs);
 		const e = analysis.diagnostics.find(d => d.code === 'LSL025');
-		expect(e).toBeUndefined();
+		expect(e?.severity).toBe(DiagnosticSeverity.Warning);
 	});
 
 	it('no error on non-empty void function body', async () => {
