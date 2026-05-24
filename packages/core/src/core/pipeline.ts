@@ -107,7 +107,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 			if (!normalized) continue;
 			codes.add(normalized);
 		}
-		return codes.size ? codes : null;
+		return codes;
 	}
 	// Build line index mapping offset-> line number to store directives quickly.
 	const lineOffsets: number[] = [0];

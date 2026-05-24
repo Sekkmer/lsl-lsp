@@ -85,6 +85,14 @@ describe('diagnostic suppression directives', () => {
 		expect(analysis.diagnostics.find(d => d.code === 'LSL041')).toBeFalsy();
 	});
 
+	it('does not treat unknown suppression codes as disable-all', async () => {
+		const code = `integer f(){
+		return x; // lsl-disable-line not-a-real-code
+	}`;
+		const { analysis } = await analyze(code);
+		expect(analysis.diagnostics.find(d => d.code === 'LSL001')).toBeTruthy();
+	});
+
 	it('still honors numeric codes for low-level errors and ignores named alias when disallowed', async () => {
 		const code = `default {
 		state_entry(){
