@@ -517,6 +517,9 @@ class Parser {
 				continue;
 			}
 			const tName = this.eatNameToken();
+			if (params.has(tName.value)) {
+				this.report(tName, `Duplicate declaration of ${tName.value}`, 'LSL070');
+			}
 			params.set(tName.value, canonicalType(tType.value));
 			this.maybe('punct', ',');
 		}

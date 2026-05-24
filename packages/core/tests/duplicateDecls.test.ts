@@ -32,4 +32,11 @@ describe('duplicate declarations', () => {
 		const { analysis } = runPipeline(docFrom(src), defs);
 		expect(analysis.diagnostics.some(d => d.message === 'Unknown identifier hidden')).toBe(true);
 	});
+
+	it('errors on duplicate function parameter names', async () => {
+		const defs = await loadTestDefs();
+		const src = 'integer probe(integer value, integer value) { return value; }\n';
+		const { analysis } = runPipeline(docFrom(src), defs);
+		expect(analysis.diagnostics.some(d => d.code === 'LSL070')).toBe(true);
+	});
 });
