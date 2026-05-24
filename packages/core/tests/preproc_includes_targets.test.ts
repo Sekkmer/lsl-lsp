@@ -24,5 +24,9 @@ describe('preprocessor include targets', () => {
 		// missingIncludes should contain the second
 		expect(pre.missingIncludes.length).toBe(1);
 		expect(pre.missingIncludes[0].file).toBe('does_not_exist.lsl');
+		expect(pre.preprocDiagnostics.some(d =>
+			d.code === 'LSL-include-missing' &&
+			d.message === 'Cannot resolve include "does_not_exist.lsl"'
+		)).toBe(true);
 	});
 });

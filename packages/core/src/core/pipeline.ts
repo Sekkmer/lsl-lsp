@@ -168,7 +168,13 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	// Collect built-in preprocessor diagnostics and pass-through macro diagnostics
 	const mcp = new MacroConditionalProcessor(rootTokens);
 	const structuralDiags = mcp.collectDiagnostics(initialDefines);
-	const preprocDiagnostics = (pre.diagnostics || []).concat(structuralDiags);
+	const missingIncludeDiags = missingIncludes.map(mi => ({
+		start: mi.start,
+		end: mi.end,
+		message: `Cannot resolve include "${mi.file}"`,
+		code: 'LSL-include-missing',
+	}));
+	const preprocDiagnostics = (pre.diagnostics || []).concat(structuralDiags, missingIncludeDiags);
 	const diagDirectives: import('./preproc').DiagDirectives = { disableLine, disableNextLine, blocks };
 	// Build funcMacros map: function-like macro definitions body string as stored in macros table ("(params) body")
 	const funcMacros: Record<string,string> = {};

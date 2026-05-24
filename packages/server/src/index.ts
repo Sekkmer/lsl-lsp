@@ -427,9 +427,7 @@ async function validateTextDocument(doc: TextDocument) {
 
 	const diags: Diagnostic[] = [];
 
-	// Missing includes are not tracked in the new pipeline; include targets are still linkable when resolved.
-
-	// Preprocessor diagnostics (malformed/stray/unmatched directives)
+	// Preprocessor diagnostics (malformed/stray/unmatched directives and unresolved includes)
 	for (const pd of pre.preprocDiagnostics || []) {
 		diags.push({
 			range: { start: doc.positionAt(pd.start), end: doc.positionAt(pd.end) },
