@@ -33,6 +33,18 @@ key f() {
 		expect(analysis.diagnostics.some(d => d.code === LSL_DIAGCODES.EVENT_OUTSIDE_STATE)).toBe(true);
 	});
 
+	it('does not report event outside state for commented event signatures', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom([
+			'/*',
+			'touch_start(integer n) { }',
+			'*/',
+			'string note = "state_entry()";',
+		].join('\n'));
+		const { analysis } = runPipeline(doc, defs);
+		expect(analysis.diagnostics.some(d => d.code === LSL_DIAGCODES.EVENT_OUTSIDE_STATE)).toBe(false);
+	});
+
 	it('reports wrong arity', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('default{state_entry(){ llSay(0); }}');

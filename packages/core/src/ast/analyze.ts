@@ -20,6 +20,65 @@ import { isAssignmentCompatible } from './compat';
 // Scope now carries a lightweight kind tag to distinguish event/function contexts
 type Scope = { parent?: Scope; vars: Map<string, Decl>; kind?: 'event' | 'func' | 'state' | 'global' | 'block' };
 
+function maskCommentsAndStrings(text: string): string {
+	let out = '';
+	let inBlock = false;
+	let inLine = false;
+	let quote: string | null = null;
+	for (let i = 0; i < text.length; i++) {
+		const ch = text[i]!;
+		const next = text[i + 1];
+		if (inLine) {
+			if (ch === '\n') {
+				inLine = false;
+				out += ch;
+			} else {
+				out += ' ';
+			}
+			continue;
+		}
+		if (inBlock) {
+			if (ch === '*' && next === '/') {
+				out += '  ';
+				i++;
+				inBlock = false;
+			} else {
+				out += ch === '\n' ? ch : ' ';
+			}
+			continue;
+		}
+		if (quote) {
+			if (ch === '\\' && next != null) {
+				out += '  ';
+				i++;
+				continue;
+			}
+			out += ch === '\n' ? ch : ' ';
+			if (ch === quote) quote = null;
+			continue;
+		}
+		if (ch === '/' && next === '/') {
+			out += '  ';
+			i++;
+			inLine = true;
+			continue;
+		}
+		if (ch === '/' && next === '*') {
+			out += '  ';
+			i++;
+			inBlock = true;
+			continue;
+		}
+		if (ch === '"' || ch === '\'') {
+			out += ' ';
+			quote = ch;
+			continue;
+		}
+		out += ch;
+	}
+	return out;
+}
+
 export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: PreprocResult): Analysis {
 	const diagnostics: Diag[] = [];
 	// Merge parser diagnostics (previously only available on Script) into analysis diagnostics so
@@ -283,9 +342,10 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			// Only consider actual LSL event names at start-of-line
 			const eventNames = Array.from(defs.events.keys());
 			if (eventNames.length > 0) {
+				const codeText = maskCommentsAndStrings(text);
 				const namesRe = eventNames.map(n => n.replace(/[-\\^$*+?.()|[\]{}]/g, '\\$&')).join('|');
 				const sigRe = new RegExp(`^[\\t ]*(?:${namesRe})\\s*\\(`, 'm');
-				if (sigRe.test(text)) {
+				if (sigRe.test(codeText)) {
 					diagnostics.push({
 						code: LSL_DIAGCODES.EVENT_OUTSIDE_STATE,
 						message: 'Event must be declared inside a state',
