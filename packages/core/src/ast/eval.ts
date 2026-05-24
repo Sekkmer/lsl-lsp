@@ -2,6 +2,7 @@ import type { Expr, Stmt, Type } from './types';
 import { AssertNever } from '../utils';
 import * as runtime from './runtime';
 import { keyValueFromString } from './key';
+import { parseHexFloat, parseNumberLiteral } from './numberLiteral';
 
 // Value model for evaluation
 export type Unknown<T extends runtime.LSLType = runtime.LSLType> = runtime.Unknown<T>;
@@ -85,55 +86,6 @@ const int = (x: number) => Math.trunc(x);
 
 const numberToLSLString = (t: 'integer' | 'float', n: number): string =>
 	t === 'integer' ? String(int(n)) : Number(n).toFixed(6);
-
-// parse numeric literal with LSL-friendly rules
-function parseNumberLiteral(rawIn: string): { type: 'integer' | 'float'; value: number } | null {
-	let raw = rawIn.trim();
-
-	// C99-style hex float?  e.g. 0x1.fp3  or  0x1.f  (p exponent optional)  (LSL accepts this via (float)"...") :contentReference[oaicite:8]{index=8}
-	const hexFloatMatch = /^[+-]?0x[0-9a-f]+(?:\.[0-9a-f]*)?(?:p[+-]?\d+)?$/i.test(raw);
-	if (hexFloatMatch) {
-		const v = parseHexFloat(raw);
-		return Number.isFinite(v) ? { type: 'float', value: v! } : null;
-	}
-
-	// Hex integer?
-	if (/^[+-]?0x[0-9a-f]+$/i.test(raw)) {
-		const sign = raw.startsWith('-') ? -1 : 1;
-		raw = raw.replace(/^[+-]/, '');
-		const v = sign * parseInt(raw, 16);
-		return Number.isFinite(v) ? { type: 'integer', value: v } : null;
-	}
-
-	// Float if it looks like one (decimal point or exponent)
-	if (/[.eE]/.test(raw)) {
-		const v = Number.parseFloat(raw);
-		return Number.isFinite(v) ? { type: 'float', value: v } : null;
-	}
-
-	// Decimal integer
-	const v = Number.parseInt(raw, 10);
-	return Number.isFinite(v) ? { type: 'integer', value: v } : null;
-}
-
-// Minimal C99 hex-float parser for strings already validated by regex above
-function parseHexFloat(s: string): number | null {
-	const m = /^\s*([+-])?0x([0-9a-f]+)(?:\.([0-9a-f]*))?(?:p([+-]?\d+))?\s*$/i.exec(s);
-	if (!m) return null;
-	const sign = m[1] === '-' ? -1 : 1;
-	const intPart = m[2] || '0';
-	const fracPart = m[3] || '';
-	const exp = m[4] ? parseInt(m[4], 10) : 0;
-	let mantissa = parseInt(intPart, 16);
-	if (fracPart.length) {
-		let frac = 0;
-		for (let i = 0; i < fracPart.length; i++) {
-			frac += parseInt(fracPart[i]!, 16) / Math.pow(16, i + 1);
-		}
-		mantissa += frac;
-	}
-	return sign * mantissa * Math.pow(2, exp);
-}
 
 // LSL-like string→integer cast: trim, recognize hex, accept leading sign, stop at first non-digit, default 0. :contentReference[oaicite:9]{index=9}
 function castStringToInteger(s: string): number {

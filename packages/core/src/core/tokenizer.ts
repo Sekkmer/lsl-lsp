@@ -102,7 +102,7 @@ export class Tokenizer {
 		if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(this.text[this.i + 1] || ''))) {
 			const s = this.i; let j = this.i; let sawDot = false;
 			while (j < this.n) { const ch = this.text[j]!; if (/[0-9]/.test(ch)) { j++; continue; } if (ch === '.' && !sawDot) { sawDot = true; j++; continue; } break; }
-			if (j < this.n && /[eEpP]/.test(this.text[j]!)) { j++; if (this.text[j] === '+' || this.text[j] === '-') j++; while (j < this.n && /[0-9]/.test(this.text[j]!)) j++; }
+			if (j < this.n && /[eE]/.test(this.text[j]!)) { j++; if (this.text[j] === '+' || this.text[j] === '-') j++; while (j < this.n && /[0-9]/.test(this.text[j]!)) j++; }
 			const t = this.mk('number', this.text.slice(s, j), s, j); this.i = j; return t;
 		}
 

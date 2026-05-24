@@ -1,5 +1,6 @@
 import { Expr, Type } from './types';
 import { AssertNever } from '../utils';
+import { numberLiteralType } from './numberLiteral';
 
 // Include 'void' so inference can represent void-returning calls distinctly
 export type SimpleType = Type | 'any' | 'void';
@@ -16,7 +17,7 @@ export function inferExprTypeFromAst(
 		case 'ErrorExpr': return 'any';
 		case 'Paren': return inferExprTypeFromAst(expr.expression, symbolTypes, functionReturnTypes);
 		case 'StringLiteral': return 'string';
-		case 'NumberLiteral': return expr.raw.includes('.') ? 'float' : 'integer';
+		case 'NumberLiteral': return numberLiteralType(expr.raw);
 		case 'VectorLiteral': {
 			if (expr.elements.length === 3) return 'vector';
 			if (expr.elements.length === 4) return 'rotation';

@@ -27,8 +27,10 @@ describe('evaluator LSL semantic fixtures', () => {
 		expect(evalSource('integer', '1 + 2 * 3')).toEqual({ kind: 'value', type: 'integer', value: 7 });
 		expect(evalSource('integer', '7 / 2')).toEqual({ kind: 'value', type: 'integer', value: 3 });
 		expect(evalSource('float', '7.0 / 2')).toEqual({ kind: 'value', type: 'float', value: 3.5 });
+		expect(evalSource('integer', '0x10')).toEqual({ kind: 'value', type: 'integer', value: 16 });
 		expect(evalSource('integer', '(integer)"0x10 suffix"')).toEqual({ kind: 'value', type: 'integer', value: 16 });
 		expect(evalSource('float', '(float)"0x1.8p1"')).toEqual({ kind: 'value', type: 'float', value: 3 });
+		expect(evalSource('string', '(string)0x10')).toEqual({ kind: 'value', type: 'string', value: '16' });
 		expect(evalSource('string', '(string)1 + "a"')).toEqual({ kind: 'value', type: 'string', value: '1a' });
 	});
 

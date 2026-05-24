@@ -192,7 +192,7 @@ export class Lexer {
 			this.i = end;
 			return this.mk('number', raw, start, end);
 		}
-		// decimal integer/float with optional exponent: e/E or p/P (we accept p for decimal to align with viewer tolerance)
+		// decimal integer/float with optional decimal exponent
 		if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(this.text[this.i + 1] || ''))) {
 			const start = this.i; let j = this.i;
 			let sawDot = false;
@@ -203,7 +203,7 @@ export class Lexer {
 				break;
 			}
 			// optional exponent
-			if (j < this.n && (this.text[j] === 'e' || this.text[j] === 'E' || this.text[j] === 'p' || this.text[j] === 'P')) {
+			if (j < this.n && (this.text[j] === 'e' || this.text[j] === 'E')) {
 				j++;
 				if (this.text[j] === '+' || this.text[j] === '-') j++;
 				while (j < this.n && /[0-9]/.test(this.text[j]!)) { j++; }
