@@ -74,6 +74,24 @@ describe('hover: include docs for functions/globals', async () => {
 		expect(md).toMatch(/macro adds stuff/);
 	});
 
+	it('shows include source for macros shadowed by inactive local defines', async () => {
+		const header = tmpFile('inactive_local_macro_source.lslh', '#define ACTIVE_SOURCE_MACRO 7\n');
+		const includeDir = path.dirname(await header.write());
+		const code = [
+			`#include "${path.basename(header.path)}"`,
+			'#if 0',
+			'#define ACTIVE_SOURCE_MACRO 8',
+			'#endif',
+			'default { state_entry() { integer y = ACTIVE_SOURCE_MACRO; } }',
+		].join('\n');
+		const doc = docFrom(code, 'file:///proj/hover_inactive_local_macro.lsl');
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [includeDir] });
+		const hv = lslHover(doc, { position: doc.positionAt(code.lastIndexOf('ACTIVE_SOURCE_MACRO') + 2) }, defs, analysis, pre);
+		const md = hoverToString(hv!);
+
+		expect(md).toContain(`From: ${header.path}`);
+	});
+
 	it('refreshes include docs after content changes without an mtime change', async () => {
 		const base = path.join(__dirname, 'tmp_includes');
 		await fs.mkdir(base, { recursive: true });

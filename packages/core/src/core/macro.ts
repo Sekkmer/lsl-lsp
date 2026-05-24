@@ -344,7 +344,7 @@ export function preprocessAndExpandNew(fileId: string, version: number, tokens: 
 	const ctx: ProcessCtx = { includeResolver, seen: new Set<string>([fileId]), collecting: [fileId], includeOrder: [], diagnostics: [] };
 	const pre = preprocessFileNew(fileId, version, tokens, initialMacros, ctx);
 	const expanded = expandActiveTokens(pre.tokens, pre.macros);
-	return { tokens: expanded, macros: pre.macros, diagnostics: pre.diagnostics, includes: pre.includes, macroDefs: pre.macroDefs, includeTargets: pre.includeTargets, missingIncludes: pre.missingIncludes, inactiveSpans: pre.inactiveSpans };
+	return { tokens: expanded, macros: pre.macros, diagnostics: pre.diagnostics, includes: ctx.includeOrder, macroDefs: pre.macroDefs, includeTargets: pre.includeTargets, missingIncludes: pre.missingIncludes, inactiveSpans: pre.inactiveSpans };
 }
 
 function parseDirectiveKind(raw: string): DirKind | null {

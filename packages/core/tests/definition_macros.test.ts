@@ -224,4 +224,41 @@ describe('goto definition for macros', () => {
 		expect(target?.from).toBe('include');
 		expect(target && 'uri' in target ? target.uri.endsWith('api.lslh') : false).toBe(true);
 	});
+
+	it('resolves transitive include definitions through include paths', async () => {
+		const fs = await import('node:fs/promises');
+		const base = path.join(__dirname, 'tmp_includes', 'definition_transitive_include_path');
+		const nestedDir = path.join(base, 'nested');
+		await fs.mkdir(nestedDir, { recursive: true });
+		await fs.writeFile(path.join(base, 'shared.lslh'), 'integer ViaIncludePath(integer x) { return x; }\n', 'utf8');
+		await fs.writeFile(path.join(nestedDir, 'api.lslh'), '#include "shared.lslh"\n', 'utf8');
+		const code = '#include "nested/api.lslh"\ndefault { state_entry() { ViaIncludePath(1); } }\n';
+		const doc = docFrom(code, 'file:///definition-transitive-include-path.lsl');
+		const defs = await loadTestDefs();
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [base] });
+		const line = code.split(/\r?\n/)[1]!;
+		const loc = gotoDefinition(doc, { line: 1, character: line.indexOf('ViaIncludePath') + 1 }, analysis, pre, defs);
+
+		expect(loc?.uri.endsWith('shared.lslh')).toBe(true);
+	});
+
+	it('resolves include definitions after more than sixteen include files', async () => {
+		const fs = await import('node:fs/promises');
+		const base = path.join(__dirname, 'tmp_includes', 'definition_many_includes');
+		await fs.mkdir(base, { recursive: true });
+		const includes: string[] = [];
+		for (let i = 0; i < 20; i++) {
+			const name = `many_${i}.lslh`;
+			includes.push(`#include "${name}"`);
+			await fs.writeFile(path.join(base, name), i === 19 ? 'integer LateIncludeSymbol(integer x) { return x; }\n' : `integer Filler${i};\n`, 'utf8');
+		}
+		const code = `${includes.join('\n')}\ndefault { state_entry() { LateIncludeSymbol(1); } }\n`;
+		const doc = docFrom(code, 'file:///definition-many-includes.lsl');
+		const defs = await loadTestDefs();
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [base] });
+		const line = code.split(/\r?\n/)[20]!;
+		const loc = gotoDefinition(doc, { line: 20, character: line.indexOf('LateIncludeSymbol') + 1 }, analysis, pre, defs);
+
+		expect(loc?.uri.endsWith('many_19.lslh')).toBe(true);
+	});
 });

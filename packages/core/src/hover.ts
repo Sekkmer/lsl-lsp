@@ -501,23 +501,9 @@ function withParamDocFormatting(bullets: string): string {
 	return bullets.replace(/\n/g, '\n	');
 }
 
-// Detect if a macro is locally defined in the current document
-function hasLocalMacroDefine(doc: TextDocument, name: string): boolean {
-	const text = doc.getText();
-	if (!text.includes('#define')) return false;
-	const lines = text.split(/\r?\n/);
-	for (const L of lines) {
-		const m = /^\s*#\s*define\s+([A-Za-z_]\w*)/.exec(L);
-		if (m && m[1] === name) return true;
-	}
-	return false;
-}
-
 // If macro comes from an include, return its source file path; otherwise null
 function macroSourceFile(doc: TextDocument, pre: PreprocResult | undefined, name: string): string | null {
 	if (!pre) return null;
-	// Prefer local defines: no need to add From: for local
-	if (hasLocalMacroDefine(doc, name)) return null;
 	const def = pre.macroDefs?.[name];
 	if (!def) return null;
 	const localPath = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined;

@@ -155,11 +155,12 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult, kinds?:
 	const queue: string[] = [];
 	const seen = new Set<string>();
 	for (const t of pre.includeTargets) { if (t.resolved) queue.push(t.resolved); }
-	const MAX = 16; let depth = 0;
-	while (queue.length && depth < MAX) {
-		const file = queue.shift()!; if (seen.has(file)) { depth++; continue; }
+	for (const file of pre.includes ?? []) queue.push(file);
+	const MAX_INCLUDE_SCAN_FILES = 1024;
+	while (queue.length && seen.size < MAX_INCLUDE_SCAN_FILES) {
+		const file = queue.shift()!; if (seen.has(file)) continue;
 		seen.add(file);
-		// TEMP DEBUG: log traversal for transitive include resolution in tests
+		// Optional debug log for include traversal.
 		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[scanIncludes]', name, 'visiting', file); } catch { /* ignore */ }
 		const { lines, text } = readIncludeFile(file);
 		const lineOffsets = lineOffsetsFor(text);
@@ -215,7 +216,6 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult, kinds?:
 				if (col >= 0) return { file, line: i, startChar: col, endChar: col + name.length, kind: 'global' } as ExternalDefHit;
 			}
 		}
-		depth++;
 	}
 	return null;
 }
