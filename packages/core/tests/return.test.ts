@@ -55,4 +55,28 @@ describe('return diagnostics', () => {
 		const hasMissing = analysis.diagnostics.some(di => di.code === LSL_DIAGCODES.MISSING_RETURN);
 		expect(hasMissing).toBe(true);
 	});
+
+	it('flags missing return when only a while body returns', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('integer foo(){ while (FALSE) { return 1; } } default{ state_entry(){} }');
+		const { analysis } = runPipeline(doc, defs);
+		const hasMissing = analysis.diagnostics.some(di => di.code === LSL_DIAGCODES.MISSING_RETURN);
+		expect(hasMissing).toBe(true);
+	});
+
+	it('flags missing return when only a for body returns', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('integer foo(){ integer i; for (i = 0; i < 0; ++i) { return 1; } } default{ state_entry(){} }');
+		const { analysis } = runPipeline(doc, defs);
+		const hasMissing = analysis.diagnostics.some(di => di.code === LSL_DIAGCODES.MISSING_RETURN);
+		expect(hasMissing).toBe(true);
+	});
+
+	it('flags missing return when only a do-while body returns', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('integer foo(){ do { return 1; } while (FALSE); } default{ state_entry(){} }');
+		const { analysis } = runPipeline(doc, defs);
+		const hasMissing = analysis.diagnostics.some(di => di.code === LSL_DIAGCODES.MISSING_RETURN);
+		expect(hasMissing).toBe(true);
+	});
 });
