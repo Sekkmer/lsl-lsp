@@ -176,6 +176,23 @@ function vectorishValuesEqual(l: Value, r: Value): boolean | null {
 	return l.value.length === r.value.length && l.value.every((component, i) => component === r.value[i]);
 }
 
+function coerceAssignedValue(value: Value, current: Value | undefined): Value {
+	if (!current) return value;
+	if (value.kind === 'unknown') return runtime.unknown(current.type);
+	if (value.type === current.type) return value;
+	if (current.type === 'float' && value.type === 'integer') {
+		return { kind: 'value', type: 'float', value: value.value };
+	}
+	if (current.type === 'string' && value.type === 'key') {
+		return { kind: 'value', type: 'string', value: value.value };
+	}
+	if (current.type === 'key' && value.type === 'string') {
+		const key = keyValueFromString(value.value);
+		return key === null ? runtime.unknown('key') : { kind: 'value', type: 'key', value: key };
+	}
+	return runtime.unknown(current.type);
+}
+
 export function evalExpr(expr: Expr | null, env: Env = new Env(), options?: EvalOptions): Value {
 	return evalExprInner(expr, env, new EvalContext(options));
 }
@@ -310,6 +327,14 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 			}
 
 			case 'Binary': {
+				if (expr.op === '=') {
+					const value = evalExprInner(expr.right, env, ctx);
+					if (expr.left.kind !== 'Identifier') return runtime.unknown(value.type);
+					const assigned = coerceAssignedValue(value, env.getVar(expr.left.name));
+					env.setExistingOrLocal(expr.left.name, assigned);
+					return assigned;
+				}
+
 				// Some operations are easier to fold directly from the AST (vectors).
 				// Vector dot / cross when both sides are literal vectors.
 				if (expr.op === '*' || expr.op === '%') {

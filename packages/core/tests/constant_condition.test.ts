@@ -128,4 +128,37 @@ describe('constant condition diagnostics', () => {
 		);
 		expect(conditionDiagnostics).toHaveLength(0);
 	});
+
+	it('folds assignment-valued if conditions and keeps LSL non-short-circuit logic side effects', async () => {
+		const defs = await loadTestDefs();
+		const code = `
+			default {
+				state_entry() {
+					integer a = 0;
+					integer b = 0;
+					integer c = 0;
+					integer d = 0;
+					integer e = 0;
+					integer f = 0;
+					if (a = 1) { }
+					if ((b = 1) == 2) { }
+					if ((c = 1) || (d = 1)) { }
+					if ((e = 0) && (f = 1)) { }
+					if (a == 1) { }
+					if (c == 1) { }
+					if (d == 1) { }
+					if (f == 1) { }
+				}
+			}
+		`;
+		const doc = docFrom(code, 'file:///const-assignment-condition.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const linesWithCode = (code: string) =>
+			analysis.diagnostics
+				.filter(d => d.code === code)
+				.map(d => d.range.start.line)
+				.sort((a, b) => a - b);
+		expect(linesWithCode(LSL_DIAGCODES.ALWAYS_TRUE_CONDITION)).toEqual([9, 11, 13, 14, 15, 16]);
+		expect(linesWithCode(LSL_DIAGCODES.ALWAYS_FALSE_CONDITION)).toEqual([10, 12]);
+	});
 });

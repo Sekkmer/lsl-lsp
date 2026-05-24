@@ -932,6 +932,19 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		}
 	}
 
+	function evaluateIfCondition(expr: Expr): { truth: boolean | null; envAfter?: Env } {
+		const hasAssignment = collectMutatedIdentifiers(expr).size > 0;
+		if (!hasAssignment) return { truth: evalCondition(expr) };
+		const env = currentValueEnv().clone();
+		return { truth: evalCondition(expr, env), envAfter: env };
+	}
+
+	function applyConditionValueEnv(result: { envAfter?: Env }) {
+		if (!result.envAfter) return;
+		const index = valueEnvStack.length - 1;
+		if (index >= 0) valueEnvStack[index] = result.envAfter;
+	}
+
 	function visitStmt(stmt: Stmt | null, scope: Scope, typeScope: TypeScope) {
 		if (!stmt) return;
 		switch (stmt.kind) {
@@ -1013,12 +1026,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				walkExpr(stmt.condition, scope, typeScope);
 				// Validate condition with suspicious-assignment flag; other expressions validated normally
 				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
-				let truth: boolean | null = null;
-				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
-					truth = evalCondition(stmt.condition);
-					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
-					else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
-				}
+				const condition = evaluateIfCondition(stmt.condition);
+				const truth = condition.truth;
+				if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
+				else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
+				applyConditionValueEnv(condition);
 				if (truth === true) {
 					visitStmt(stmt.then, scope, typeScope);
 					if (stmt.else) visitWithRestoredValueEnv(() => visitStmt(stmt.else ?? null, scope, typeScope));
