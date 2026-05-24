@@ -593,7 +593,7 @@ export class MacroConditionalProcessor {
 	// Collect preprocessor diagnostics: malformed #if/#elif, stray #elif/#else/#endif, unmatched #if at EOF
 	collectDiagnostics(_defines: MacroDefines): { start: number; end: number; message: string; code?: string }[] {
 		const diagnostics: { start: number; end: number; message: string; code?: string }[] = [];
-		const stack: Array<'if' | 'ifdef' | 'ifndef'> = [];
+		const stack: Array<{ kind: 'if' | 'ifdef' | 'ifndef'; sawElse: boolean }> = [];
 		for (let i = 0; i < this.tokens.length; i++) {
 			const t = this.tokens[i]!;
 			if (t.kind !== 'directive') continue;
@@ -602,17 +602,26 @@ export class MacroConditionalProcessor {
 			const add = (msg: string) => diagnostics.push({ start: t.span.start, end: t.span.end, message: msg, code: 'LSL-preproc' });
 			if (d.kind === 'if') {
 				if (!validateIfExpr(d.expr)) add('Malformed #if expression');
-				stack.push('if');
+				stack.push({ kind: 'if', sawElse: false });
 				continue;
 			}
-			if (d.kind === 'ifdef') { stack.push('ifdef'); continue; }
-			if (d.kind === 'ifndef') { stack.push('ifndef'); continue; }
+			if (d.kind === 'ifdef') { stack.push({ kind: 'ifdef', sawElse: false }); continue; }
+			if (d.kind === 'ifndef') { stack.push({ kind: 'ifndef', sawElse: false }); continue; }
 			if (d.kind === 'elif') {
 				if (stack.length === 0) add('Stray #elif');
+				else if (stack[stack.length - 1]!.sawElse) add('#elif after #else');
 				if (!validateIfExpr(d.expr)) add('Malformed #elif expression');
 				continue;
 			}
-			if (d.kind === 'else') { if (stack.length === 0) add('Stray #else'); continue; }
+			if (d.kind === 'else') {
+				if (stack.length === 0) add('Stray #else');
+				else {
+					const top = stack[stack.length - 1]!;
+					if (top.sawElse) add('Duplicate #else');
+					top.sawElse = true;
+				}
+				continue;
+			}
 			if (d.kind === 'endif') { if (stack.length === 0) add('Stray #endif'); else stack.pop(); continue; }
 		}
 		if (stack.length > 0) diagnostics.push({ start: this.tokens.length ? this.tokens[this.tokens.length - 1]!.span.end : 0, end: this.tokens.length ? this.tokens[this.tokens.length - 1]!.span.end : 0, message: 'Unmatched conditional block', code: 'LSL-preproc' });

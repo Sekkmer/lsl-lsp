@@ -51,6 +51,15 @@ describe('preprocessor diagnostics', () => {
 		expect(msgs.some(m => /Stray #endif/i.test(m))).toBe(true);
 	});
 
+	it('reports #elif and duplicate #else after #else', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('#if 0\ninteger A;\n#else\ninteger B;\n#elif 1\ninteger C;\n#else\ninteger D;\n#endif\n');
+		const { pre } = runPipeline(doc, defs);
+		const msgs = messages(pre);
+		expect(msgs.some(m => /#elif after #else/i.test(m))).toBe(true);
+		expect(msgs.some(m => /Duplicate #else/i.test(m))).toBe(true);
+	});
+
 	it('reports unmatched #if at EOF', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('#if 1\nint X;\n');
