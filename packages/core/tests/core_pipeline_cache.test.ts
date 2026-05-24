@@ -48,6 +48,28 @@ describe('core pipeline cache', () => {
 		expect(r2.changedKeys.length).toBe(0);
 	});
 
+	it('refreshes include directive segments when include content changes', () => {
+		const files = new Map<string, string>();
+		files.set('/abs/main.lsl', '#include "inc.lsl"\ninteger z;');
+		files.set('/abs/inc.lsl', 'integer oldName;');
+		type RFS = typeof import('node:fs').readFileSync;
+		const readFileSyncCompat: RFS = ((path: PathOrFileDescriptor, _options?: Parameters<RFS>[1]): ReturnType<RFS> => {
+			const text = files.get(String(path));
+			if (text == null) throw new Error('not found');
+			return text as unknown as ReturnType<RFS>;
+		}) as RFS;
+		const fakeFs: import('../src/core/pipeline').IncludeResolverOptions['fs'] = {
+			readFileSync: readFileSyncCompat,
+		};
+
+		const first = preprocessTokens(files.get('/abs/main.lsl')!, { includePaths: ['/abs'], fromPath: '/abs/main.lsl', fs: fakeFs });
+		expect(first.tokens.filter(t => t.kind === 'id').map(t => t.value)).toEqual(['oldName', 'z']);
+
+		files.set('/abs/inc.lsl', 'integer newName;');
+		const second = preprocessTokens(files.get('/abs/main.lsl')!, { includePaths: ['/abs'], fromPath: '/abs/main.lsl', fs: fakeFs });
+		expect(second.tokens.filter(t => t.kind === 'id').map(t => t.value)).toEqual(['newName', 'z']);
+	});
+
 	it('handles CRLF in multi-line define by normalizing to \n', () => {
 		const src = '#define X 1 + \\\r\n+2';
 		const { macros } = preprocessTokens(src, { includePaths: [] });

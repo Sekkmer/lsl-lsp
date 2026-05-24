@@ -34,6 +34,7 @@ export type DirKindWithSpan = (DirKind & { span: { start: number; end: number } 
 interface FileSegCacheEntry {
 	segs: Seg[];
 	version: number; // simple bump / mtime placeholder (caller supplies)
+	tokenHash: number;
 }
 
 const NOISE_CHARS = new Set(['#', '$', '?', '\\', '"', '\'']);
@@ -61,8 +62,14 @@ const fileSegCache = new Map<string, FileSegCacheEntry>();
  * Results are cached per fileId+version.
  */
 export function segmentFileDirectives(fileId: string, version: number, tokens: Token[]): Seg[] {
+	let tokenHash = 2166136261 >>> 0;
+	for (const t of tokens) {
+		const text = `${t.kind}\0${t.value}\0${t.span.start}\0${t.span.end}`;
+		for (let i = 0; i < text.length; i++) { tokenHash ^= text.charCodeAt(i); tokenHash = Math.imul(tokenHash, 16777619); }
+	}
+	tokenHash >>>= 0;
 	const cached = fileSegCache.get(fileId);
-	if (cached && cached.version === version) return cached.segs;
+	if (cached && cached.version === version && cached.tokenHash === tokenHash) return cached.segs;
 	const segs: Seg[] = [];
 	let buf: Token[] = [];
 	const flushBuf = () => {
@@ -88,7 +95,7 @@ export function segmentFileDirectives(fileId: string, version: number, tokens: T
 		}
 	}
 	flushBuf();
-	fileSegCache.set(fileId, { segs, version });
+	fileSegCache.set(fileId, { segs, version, tokenHash });
 	return segs;
 }
 
