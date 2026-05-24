@@ -279,6 +279,19 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	// Usage tracking for unused param/local diagnostics
 	type UsageContext = { usedParamNames: Set<string>; usedLocalNames: Set<string>; paramDecls: Decl[]; localDecls: Decl[] };
 	const usageStack: UsageContext[] = [];
+	type ReturnInfo = { expr?: Expr; span: { start: number; end: number } };
+	function collectReturns(stmt: Stmt, out: ReturnInfo[]) {
+		if (!stmt) return;
+		switch (stmt.kind) {
+			case 'ReturnStmt': out.push({ expr: stmt.expression, span: stmt.span }); break;
+			case 'BlockStmt': for (const s of stmt.statements) collectReturns(s, out); break;
+			case 'IfStmt': collectReturns(stmt.then, out); if (stmt.else) collectReturns(stmt.else, out); break;
+			case 'WhileStmt': collectReturns(stmt.body, out); break;
+			case 'DoWhileStmt': collectReturns(stmt.body, out); break;
+			case 'ForStmt': collectReturns(stmt.body, out); break;
+			default: break;
+		}
+	}
 	// Reserved identifiers: anything colliding with builtin keywords/types/funcs/events/consts
 	function isReserved(defs: Defs, name: string): boolean {
 		try { if (process.env.LSL_DEBUG_RESERVED) console.log('[isReserved-debug]', name); } catch {/*ignore*/}
@@ -534,19 +547,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			ctx.paramDecls.push(d);
 		}
 		// Collect returns and compute simple all-paths-return for top-level body
-		const returns: { expr?: Expr; span: { start: number; end: number } }[] = [];
-		function scanReturns(stmt: Stmt) {
-			if (!stmt) return;
-			switch (stmt.kind) {
-				case 'ReturnStmt': returns.push({ expr: stmt.expression, span: stmt.span }); break;
-				case 'BlockStmt': for (const s of stmt.statements) scanReturns(s); break;
-				case 'IfStmt': scanReturns(stmt.then); if (stmt.else) scanReturns(stmt.else); break;
-				case 'WhileStmt': scanReturns(stmt.body); break;
-				case 'DoWhileStmt': scanReturns(stmt.body); break;
-				case 'ForStmt': scanReturns(stmt.body); break;
-				default: break;
-			}
-		}
+		const returns: ReturnInfo[] = [];
 		// helper: does this statement guarantee a return along all paths?
 		function allPathsReturn(stmt: Stmt): boolean {
 			if (!stmt) return false;
@@ -572,11 +573,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (fn.body.kind === 'BlockStmt' && fn.body.statements.length === 0) {
 			diagnostics.push({ code: LSL_DIAGCODES.EMPTY_FUNCTION_BODY, message: `Function ${fn.name} body is empty`, range: spanToRange(doc, fn.body.span), severity: DiagnosticSeverity.Warning });
 		}
-		scanReturns(fn.body);
+		collectReturns(fn.body, returns);
 		if (returnType === 'void') {
 			for (const r of returns) {
 				if (r.expr) {
-					diagnostics.push({ code: LSL_DIAGCODES.RETURN_IN_VOID, message: 'Returning a value in a void function', range: spanToRange(doc, r.span), severity: DiagnosticSeverity.Warning });
+					diagnostics.push({ code: LSL_DIAGCODES.RETURN_IN_VOID, message: 'Returning a value in a void function', range: spanToRange(doc, r.span), severity: DiagnosticSeverity.Error });
 				}
 			}
 		} else {
@@ -715,6 +716,13 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			visitStmt(ev.body, evScope, tsEvent);
 			if (ev.body.kind === 'BlockStmt' && ev.body.statements.length === 0) {
 				diagnostics.push({ code: LSL_DIAGCODES.EMPTY_EVENT_BODY, message: `Event ${ev.name} body is empty`, range: spanToRange(doc, ev.body.span), severity: DiagnosticSeverity.Warning });
+			}
+			const returns: ReturnInfo[] = [];
+			collectReturns(ev.body, returns);
+			for (const r of returns) {
+				if (r.expr) {
+					diagnostics.push({ code: LSL_DIAGCODES.RETURN_IN_VOID, message: 'Returning a value in an event handler', range: spanToRange(doc, r.span), severity: DiagnosticSeverity.Error });
+				}
 			}
 			// Emit unused diagnostics for this event
 			// Honor block-based suppression that overlaps the event body

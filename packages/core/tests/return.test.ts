@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { docFrom, runPipeline } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
 import { LSL_DIAGCODES } from '../src/parser';
+import { DiagnosticSeverity } from '../src/protocol';
 
 describe('return diagnostics', () => {
 	it('reports missing return in non-void', async () => {
@@ -44,12 +45,22 @@ describe('return diagnostics', () => {
 		expect(wrongReturns.length).toBe(0);
 	});
 
-	it('warns when returning value in void function', async () => {
+	it('errors when returning value in void function', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('foo(){ return 1; } default{ state_entry(){} }');
 		const { analysis } = runPipeline(doc, defs);
 		const d = analysis.diagnostics.find(di => di.code === LSL_DIAGCODES.RETURN_IN_VOID);
 		expect(d).toBeTruthy();
+		expect(d?.severity).toBe(DiagnosticSeverity.Error);
+	});
+
+	it('errors when returning value in event handler', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('default{ state_entry(){ return 1; } }');
+		const { analysis } = runPipeline(doc, defs);
+		const d = analysis.diagnostics.find(di => di.code === LSL_DIAGCODES.RETURN_IN_VOID);
+		expect(d).toBeTruthy();
+		expect(d?.severity).toBe(DiagnosticSeverity.Error);
 	});
 
 	it('accepts correct return type', async () => {
