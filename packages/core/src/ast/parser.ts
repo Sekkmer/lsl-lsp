@@ -3,8 +3,8 @@
 	It uses the preprocessor to get macro tables and disabled ranges, then tokenizes
 	the active code, attaches leading comments as `comment` on decl nodes.
 */
-import type { Expr, Stmt, Script, Function as FnNode, State, Event, Type, Span, Diagnostic } from './types';
-import { isType, spanFrom } from './types';
+import type { Expr, Stmt, Script, Function as FnNode, State, Event, Type, TypeName, Span, Diagnostic } from './types';
+import { canonicalType, isTypeName, spanFrom } from './types';
 import { Lexer } from './lexer';
 import type { Token } from '../core/tokens';
 import { preprocessForAst } from '../core/pipeline';
@@ -190,7 +190,7 @@ class Parser {
 		for (; ;) {
 			const t = this.peek();
 			if (t.kind === 'eof') return;
-			if (t.kind === 'keyword' && (isType(t.value) || t.value === 'state')) return;
+			if (t.kind === 'keyword' && (isTypeName(t.value) || t.value === 'state')) return;
 			if (t.kind === 'punct' && t.value === ';') { this.next(); return; }
 			// skip a token
 			this.next();
@@ -355,7 +355,7 @@ class Parser {
 			}
 			// function or global var: only start if next is a type keyword
 			const nextTok = this.peek();
-			if (nextTok.kind === 'keyword' && isType(nextTok.value)) {
+			if (nextTok.kind === 'keyword' && isTypeName(nextTok.value)) {
 				let decl: FnNode | { span: Span; kind: 'GlobalVar'; varType: Type; name: string; initializer?: Expr; comment?: string; };
 				try { decl = this.parseTopLevel(); }
 				catch (e: unknown) { const msg = e instanceof Error ? e.message : String(e); this.report(this.peek(), msg); this.syncTopLevel(); continue; }
@@ -428,8 +428,8 @@ class Parser {
 		// Capture any leading doc comment right at decl start
 		const leading = this.consumeLeadingComment();
 		const first = this.next();
-		if (!(first.kind === 'keyword' && isType(first.value))) { this.report(first, 'expected type', 'LSL000'); return { span: first.span, kind: 'GlobalVar', varType: 'integer' as Type, name: '__error', comment: undefined }; }
-		const varType = first.value as Type;
+		if (!(first.kind === 'keyword' && isTypeName(first.value))) { this.report(first, 'expected type', 'LSL000'); return { span: first.span, kind: 'GlobalVar', varType: 'integer' as Type, name: '__error', comment: undefined }; }
+		const varType = canonicalType(first.value);
 		// Collect a run of identifier/keyword tokens immediately following the type. Some external
 		// headers use attribute-like markers before the real variable name: `string _user DEFAULT_DOMAIN = "...";`
 		// We treat the LAST token in such a run as the variable name unless the FIRST token is
@@ -506,7 +506,7 @@ class Parser {
 			if (this.peek().kind === 'punct' && this.peek().value === '{') { this.report(this.peek(), 'missing ) to close parameter list', 'LSL000'); break; }
 			if (++guard > 10000) { this.report(this.peek(), 'parser recovery limit in parameter list', 'LSL000'); break; }
 			const tType = this.next();
-			if (!(tType.kind === 'keyword' && isType(tType.value))) {
+			if (!(tType.kind === 'keyword' && isTypeName(tType.value))) {
 				// Recovery: if we see an id or other token where a type is expected, report once and try to skip until ',' or ')'
 				this.report(tType, 'expected param type', 'LSL000');
 				// attempt to resync
@@ -518,7 +518,7 @@ class Parser {
 				continue;
 			}
 			const tName = this.eatNameToken();
-			params.set(tName.value, tType.value as Type);
+			params.set(tName.value, canonicalType(tType.value));
 			this.maybe('punct', ',');
 		}
 		return params;
@@ -551,7 +551,7 @@ class Parser {
 					((t1 && (t1.kind === 'id' || (t1.kind === 'keyword' && t1.value === 'default'))) && t2 && t2.kind === 'punct' && t2.value === '{')
 				);
 				const tokenDefaultDecl = look.value === 'default' && (t1 && t1.kind === 'punct' && t1.value === '{');
-				const tokenFuncDecl = isType(look.value) && (t1 && (t1.kind === 'id' || t1.kind === 'keyword') && t2 && t2.kind === 'punct' && t2.value === '(');
+				const tokenFuncDecl = isTypeName(look.value) && (t1 && (t1.kind === 'id' || t1.kind === 'keyword') && t2 && t2.kind === 'punct' && t2.value === '(');
 				if (tokenStateDecl || tokenDefaultDecl || tokenFuncDecl) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
 			}
 			if (look.kind === 'eof') { this.report(look, 'missing } before end of file', 'LSL000'); break; }
@@ -595,7 +595,7 @@ class Parser {
 				const t2 = ahead[2];
 				const tokenStateDecl = look.value === 'state' && (((t1 && (t1.kind === 'id' || (t1.kind === 'keyword' && t1.value === 'default'))) && t2 && t2.kind === 'punct' && t2.value === '{'));
 				const tokenDefaultDecl = look.value === 'default' && (t1 && t1.kind === 'punct' && t1.value === '{');
-				const tokenFuncDecl = isType(look.value) && (t1 && (t1.kind === 'id' || t1.kind === 'keyword') && t2 && t2.kind === 'punct' && t2.value === '(');
+				const tokenFuncDecl = isTypeName(look.value) && (t1 && (t1.kind === 'id' || t1.kind === 'keyword') && t2 && t2.kind === 'punct' && t2.value === '(');
 				if (tokenStateDecl || tokenDefaultDecl || tokenFuncDecl) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
 			}
 			if (look.kind === 'eof') { this.report(look, 'missing } before end of file', 'LSL000'); break; }
@@ -644,8 +644,8 @@ class Parser {
 					((t1 && (t1.kind === 'id' || (t1.kind === 'keyword' && t1.value === 'default'))) && t2 && t2.kind === 'punct' && t2.value === '{')
 				);
 				const tokenDefaultDecl = look.value === 'default' && (t1 && t1.kind === 'punct' && t1.value === '{');
-				const tokenFuncDecl = isType(look.value) && (t1 && (t1.kind === 'id' || t1.kind === 'keyword') && t2 && t2.kind === 'punct' && t2.value === '(');
-				const isFuncDecl = (isType(look.value) && this.looksLikeFunctionDeclAfter(look.span.end)) || tokenFuncDecl;
+				const tokenFuncDecl = isTypeName(look.value) && (t1 && (t1.kind === 'id' || t1.kind === 'keyword') && t2 && t2.kind === 'punct' && t2.value === '(');
+				const isFuncDecl = (isTypeName(look.value) && this.looksLikeFunctionDeclAfter(look.span.end)) || tokenFuncDecl;
 				const isStateDecl = (look.value === 'state' && this.looksLikeStateDeclAfter(look.span.end)) || tokenStateDecl;
 				const isDefaultStateDecl = (look.value === 'default' && this.looksLikeDefaultStateDeclAfter(look.span.end)) || tokenDefaultDecl;
 				if (isStateDecl || isDefaultStateDecl) {
@@ -918,7 +918,7 @@ class Parser {
 				}
 			}
 			// var decl inside block
-			if (isType(t.value)) return this.parseVarDecl();
+			if (isTypeName(t.value)) return this.parseVarDecl();
 		}
 		// label using '@name;' form (enforced)
 		if (t.kind === 'punct' && t.value === '@') {
@@ -975,12 +975,12 @@ class Parser {
 
 	private parseVarDecl(): Stmt {
 		const tType = this.eat('keyword');
-		if (!isType(tType.value)) { this.report(tType, 'expected type', 'LSL000'); return { span: tType.span, kind: 'ErrorStmt' } as Stmt; }
+		if (!isTypeName(tType.value)) { this.report(tType, 'expected type', 'LSL000'); return { span: tType.span, kind: 'ErrorStmt' } as Stmt; }
 		const nameTok = this.eatNameToken();
 		let initializer: Expr | undefined;
 		if (this.maybe('op', '=')) initializer = this.parseExpr();
 		this.eat('punct', ';');
-		return { span: spanFrom(tType.span.start, nameTok.span.end), kind: 'VarDecl', varType: tType.value as Type, name: nameTok.value, initializer, comment: this.consumeLeadingComment() };
+		return { span: spanFrom(tType.span.start, nameTok.span.end), kind: 'VarDecl', varType: canonicalType(tType.value), name: nameTok.value, initializer, comment: this.consumeLeadingComment() };
 	}
 	private parseIf(inFunctionOrEvent: boolean): Stmt {
 		const kw = this.eat('keyword', 'if'); this.eat('punct', '(');
@@ -1138,14 +1138,14 @@ class Parser {
 			// Special-case C-style cast syntax: (type)expr
 			// Look ahead for a type keyword immediately followed by ')'
 			const after = this.peek();
-			if (after.kind === 'keyword' && isType(after.value)) {
+			if (after.kind === 'keyword' && isTypeName(after.value)) {
 				const after2 = this.lx.peek();
 				if (after2.kind === 'punct' && after2.value === ')') {
 					// Consume the type and closing ')', then parse the cast argument as a unary expression
 					const tType = this.next();
 					this.eat('punct', ')');
 					const arg = this.parseUnary();
-					return this.parsePostfix({ span: spanFrom(t.span.start, arg.span.end), kind: 'Cast', type: tType.value as Type, argument: arg } as Expr);
+					return this.parsePostfix({ span: spanFrom(t.span.start, arg.span.end), kind: 'Cast', type: canonicalType(tType.value as TypeName), argument: arg } as Expr);
 				}
 			}
 			const e = this.parseExpr(); const close = this.eat('punct', ')');
@@ -1165,9 +1165,9 @@ class Parser {
 					return this.parsePostfix({ span: spanFrom(t.span.start, close.span.end), kind: 'Paren', expression: e });
 			}
 		}
-		if (t.kind === 'keyword' && isType(t.value) && this.maybe('punct', '(')) {
+		if (t.kind === 'keyword' && isTypeName(t.value) && this.maybe('punct', '(')) {
 			const arg = this.parseExpr(); this.eat('punct', ')');
-			return this.parsePostfix({ span: spanFrom(t.span.start, arg.span.end), kind: 'Cast', type: t.value as Type, argument: arg });
+			return this.parsePostfix({ span: spanFrom(t.span.start, arg.span.end), kind: 'Cast', type: canonicalType(t.value), argument: arg });
 		}
 		if (t.kind === 'punct' && t.value === '[') {
 			// list literal [a, b, c]

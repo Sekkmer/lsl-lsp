@@ -54,6 +54,46 @@ key f() {
 		const { analysis } = runPipeline(doc, defs);
 		expect(analysis.diagnostics.some(d => d.code === LSL_DIAGCODES.UNUSED_VAR)).toBe(true);
 	});
+
+	it('accepts quaternion as a rotation type alias', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom(`
+quaternion q = <0, 0, 0, 1>;
+
+quaternion spin(quaternion input) {
+	return input * q;
+}
+
+default {
+	state_entry() {
+		rotation r = spin(q);
+		llOwnerSay((string)r);
+	}
+}
+`);
+		const { analysis } = runPipeline(doc, defs);
+		const msg = analysis.diagnostics.map(d => `${d.code}:${d.message}`).join('\n');
+		expect(msg).not.toContain('unexpected token keyword');
+		expect(msg).not.toContain('expected type');
+		expect(analysis.decls.find(d => d.name === 'q')?.type).toBe('rotation');
+		expect(analysis.decls.find(d => d.name === 'spin')?.type).toBe('rotation');
+	});
+
+	it('canonicalizes quaternion casts as rotation', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom(`
+default {
+	state_entry() {
+		rotation r = (quaternion)"<0,0,0,1>";
+		llOwnerSay((string)r);
+	}
+}
+`);
+		const { analysis } = runPipeline(doc, defs);
+		const msg = analysis.diagnostics.map(d => `${d.code}:${d.message}`).join('\n');
+		expect(msg).not.toContain('Cannot assign quaternion to rotation');
+		expect(msg).not.toContain('Cannot cast');
+	});
 });
 
 describe('parser', () => {

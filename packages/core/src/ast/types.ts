@@ -6,9 +6,19 @@ export type Span = { start: number; end: number };
 export const TYPES = ['key', 'list', 'integer', 'float', 'rotation', 'string', 'vector'] as const;
 export type Type = typeof TYPES[number];
 const TYPE_SET = new Set(TYPES) as ReadonlySet<Type>;
+export type TypeName = Type | 'quaternion';
+const TYPE_NAME_SET = new Set<TypeName>([...TYPES, 'quaternion']);
 
 export function isType(t: string): t is Type {
 	return TYPE_SET.has(t as Type);
+}
+
+export function isTypeName(t: string): t is TypeName {
+	return TYPE_NAME_SET.has(t as TypeName);
+}
+
+export function canonicalType(t: TypeName): Type {
+	return t === 'quaternion' ? 'rotation' : t;
 }
 
 // LSL operator types
