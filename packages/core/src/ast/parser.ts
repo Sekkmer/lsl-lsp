@@ -281,6 +281,7 @@ class Parser {
 		const functions = new Map<string, FnWithOrigin>();
 		const states = new Map<string, State>();
 		const globals = new Map<string, GlobalWithOrigin>();
+		const topLevelNames = new Map<string, { kind: 'function' | 'global' | 'state'; originFile?: string }>();
 		let sawStateDeclaration = false;
 		let sawRealDefaultState = false;
 		// Helper to normalize identifier names so that leading/trailing "noise" characters
@@ -296,6 +297,15 @@ class Parser {
 			while (s < e && isNoise(name[s]!)) s++;
 			while (e > s && isNoise(name[e - 1]!)) e--;
 			return name.slice(s, e);
+		};
+		const reportDuplicateTopLevel = (name: string, span: Span, curFile: string | undefined, kind: 'function' | 'global' | 'state') => {
+			const prev = topLevelNames.get(name);
+			const shouldReport = !!prev && (kind === 'state' || prev.kind === 'state' || !prev.originFile || prev.originFile === curFile);
+			if (shouldReport) {
+				const message = kind === 'state' ? `Duplicate declaration of state ${name}` : 'Duplicate declaration';
+				this.report({ kind: 'id', value: name, span, file: curFile || '<unknown>' } as Token, message, 'LSL070');
+			}
+			if (!prev) topLevelNames.set(name, { kind, originFile: curFile });
 		};
 		while (this.peek().kind !== 'eof') {
 			// skip any directives that may have been peeked
@@ -347,19 +357,16 @@ class Parser {
 					this.report(stateTok, 'default state must be declared before other states', 'LSL000');
 				}
 				const st = this.parseState();
-				if (states.has(st.name)) {
-					this.diagnostics.push({ span: st.span, message: `Duplicate declaration of state ${st.name}`, severity: 'error', code: 'LSL070' });
-				}
+				reportDuplicateTopLevel(st.name, st.span, stateTok.file, 'state');
 				states.set(st.name, st);
 				sawStateDeclaration = true;
 				continue;
 			}
 			// default state without explicit 'state' keyword
 			if (this.peek().kind === 'keyword' && this.peek().value === 'default') {
+				const defaultTok = this.peek();
 				const st = this.parseDefaultState();
-				if (states.has(st.name)) {
-					this.diagnostics.push({ span: st.span, message: `Duplicate declaration of state ${st.name}`, severity: 'error', code: 'LSL070' });
-				}
+				reportDuplicateTopLevel(st.name, st.span, defaultTok.file, 'state');
 				states.set(st.name, st);
 				sawStateDeclaration = true;
 				sawRealDefaultState = true;
@@ -385,29 +392,17 @@ class Parser {
 				catch (e: unknown) { const msg = e instanceof Error ? e.message : String(e); this.report(this.peek(), msg); this.syncTopLevel(); continue; }
 				if ('varType' in decl) {
 					const norm = normalizeName(decl.name);
-					const prev = globals.get(norm);
-					if (prev) {
-						const prevFile = prev.originFile;
-						const curFile = nextTok.file || '<unknown>';
-						if (!prevFile || prevFile === curFile) {
-							this.report({ kind: 'id', value: norm, span: decl.span, file: curFile }, 'Duplicate declaration', 'LSL070');
-						}
-					}
+					const curFile = nextTok.file || '<unknown>';
+					reportDuplicateTopLevel(norm, decl.span, curFile, 'global');
 					if (norm !== decl.name) { (decl as { name: string }).name = norm; }
-					const gWithOrigin: GlobalWithOrigin = { ...decl, originFile: nextTok.file || '<unknown>' } as GlobalWithOrigin;
+					const gWithOrigin: GlobalWithOrigin = { ...decl, originFile: curFile } as GlobalWithOrigin;
 					globals.set(norm, gWithOrigin);
 				} else {
 					const norm = normalizeName(decl.name);
-					const prev = functions.get(norm);
-					if (prev) {
-						const prevFile = prev.originFile;
-						const curFile = nextTok.file || '<unknown>';
-						if (!prevFile || prevFile === curFile) {
-							this.report({ kind: 'id', value: norm, span: decl.span, file: curFile }, 'Duplicate declaration', 'LSL070');
-						}
-					}
+					const curFile = nextTok.file || '<unknown>';
+					reportDuplicateTopLevel(norm, decl.span, curFile, 'function');
 					if (norm !== decl.name) { (decl as { name: string }).name = norm; }
-					const fWithOrigin: FnWithOrigin = { ...decl, originFile: nextTok.file || '<unknown>' } as FnWithOrigin;
+					const fWithOrigin: FnWithOrigin = { ...decl, originFile: curFile } as FnWithOrigin;
 					functions.set(norm, fWithOrigin);
 				}
 				continue;
@@ -431,14 +426,7 @@ class Parser {
 				const span = spanFrom(nameTok.span.start, body.span.end);
 				const norm = normalizeName(nameTok.value);
 				const node: FnNode = { span, kind: 'Function', name: norm, parameters: params, body, comment: leading, returnType: 'void' };
-				const prev = functions.get(norm);
-				if (prev) {
-					const prevFile = prev.originFile;
-					const curFile = nameTok.file;
-					if (!prevFile || prevFile === curFile) {
-						this.report({ kind: 'id', value: norm, span, file: curFile } as Token, 'Duplicate declaration', 'LSL070');
-					}
-				}
+				reportDuplicateTopLevel(norm, span, nameTok.file, 'function');
 				functions.set(norm, { ...node, originFile: nameTok.file });
 				continue;
 			}

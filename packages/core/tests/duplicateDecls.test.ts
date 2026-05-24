@@ -46,4 +46,28 @@ describe('duplicate declarations', () => {
 		const { analysis } = runPipeline(docFrom(src), defs);
 		expect(analysis.diagnostics.some(d => d.code === 'LSL070' && /Duplicate declaration of state S/.test(d.message))).toBe(true);
 	});
+
+	it('errors when a global and function share a name', async () => {
+		const defs = await loadTestDefs();
+		const src = 'integer same;\ninteger same() { return 1; }\ndefault { state_entry() { } }\n';
+		const { analysis } = runPipeline(docFrom(src), defs);
+		expect(analysis.diagnostics.some(d => d.code === 'LSL070')).toBe(true);
+	});
+
+	it('errors when a function and global share a name', async () => {
+		const defs = await loadTestDefs();
+		const src = 'integer same() { return 1; }\ninteger same;\ndefault { state_entry() { } }\n';
+		const { analysis } = runPipeline(docFrom(src), defs);
+		expect(analysis.diagnostics.some(d => d.code === 'LSL070')).toBe(true);
+	});
+
+	it('errors when a state shares a name with a global or function', async () => {
+		const defs = await loadTestDefs();
+		const globalCollision = 'integer Ready;\ndefault { state_entry() { } }\nstate Ready { state_entry() { } }\n';
+		const functionCollision = 'integer Ready() { return 1; }\ndefault { state_entry() { } }\nstate Ready { state_entry() { } }\n';
+		const g = runPipeline(docFrom(globalCollision), defs).analysis;
+		const f = runPipeline(docFrom(functionCollision), defs).analysis;
+		expect(g.diagnostics.some(d => d.code === 'LSL070' && /Duplicate declaration of state Ready/.test(d.message))).toBe(true);
+		expect(f.diagnostics.some(d => d.code === 'LSL070' && /Duplicate declaration of state Ready/.test(d.message))).toBe(true);
+	});
 });
