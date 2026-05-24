@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.11
+- Fixed include preprocessing so inactive conditional spans are tracked per source file instead of suppressing unrelated included tokens at matching offsets.
+- Fixed angle-bracket include resolution so include paths take precedence over the including file's directory, preventing self-include skips in shared module layouts.
+- Improved diagnostics around macro-heavy ARES scripts by preserving valid expanded token streams across nested includes.
+
 ## 0.1.10
 - Split the implementation into reusable `core`, `server`, `client-vscode`, and `cli` packages.
 - Added a standalone bundled `lsl-lsp` CLI for diagnostics, formatting, preprocessing, symbols, definitions, hovers, and definition dumps.
