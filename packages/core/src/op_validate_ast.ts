@@ -533,7 +533,6 @@ export function validateOperatorsFromAst(
 			return { ok: true, warn: { message: 'Implicit string-to-key conversion', code: LSL_DIAGCODES.IMPLICIT_STRING_TO_KEY } };
 		}
 		// Allow weak numeric coercions similar to LSL
-		if (expected === 'integer' && got === 'float') return { ok: true };
 		if (expected === 'float' && got === 'integer') return { ok: true };
 		// LSL implicitly stringifies many values when a string is expected
 		if (expected === 'string' && (got === 'integer' || got === 'float' || got === 'key')) return { ok: true };

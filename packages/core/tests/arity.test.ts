@@ -35,4 +35,22 @@ describe('arity counting', () => {
 		const wrong = analysis.diagnostics.find(d => d.code === 'LSL011');
 		expect(wrong).toBeTruthy();
 	});
+
+	it('rejects float arguments for integer parameters', async () => {
+		const defs = await loadTestDefs();
+		const code = 'integer foo(integer v){ return v; } default { state_entry() { float f = 1.5; foo(f); llSay(f, "x"); } }';
+		const doc = docFrom(code);
+		const { analysis } = runPipeline(doc, defs);
+		const wrong = analysis.diagnostics.filter(d => d.code === 'LSL011');
+		expect(wrong.length).toBeGreaterThanOrEqual(2);
+	});
+
+	it('accepts integer arguments for float parameters', async () => {
+		const defs = await loadTestDefs();
+		const code = 'float foo(float v){ return v; } default { state_entry() { integer i = 1; foo(i); } }';
+		const doc = docFrom(code);
+		const { analysis } = runPipeline(doc, defs);
+		const wrong = analysis.diagnostics.filter(d => d.code === 'LSL011');
+		expect(wrong.length).toBe(0);
+	});
 });
