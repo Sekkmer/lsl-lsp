@@ -39,4 +39,11 @@ describe('duplicate declarations', () => {
 		const { analysis } = runPipeline(docFrom(src), defs);
 		expect(analysis.diagnostics.some(d => d.code === 'LSL070')).toBe(true);
 	});
+
+	it('errors on duplicate state names in the same script', async () => {
+		const defs = await loadTestDefs();
+		const src = 'default { state_entry() { } }\nstate S { state_entry() { } }\nstate S { touch_start(integer n) { } }\n';
+		const { analysis } = runPipeline(docFrom(src), defs);
+		expect(analysis.diagnostics.some(d => d.code === 'LSL070' && /Duplicate declaration of state S/.test(d.message))).toBe(true);
+	});
 });

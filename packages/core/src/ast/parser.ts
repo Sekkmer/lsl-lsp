@@ -333,12 +333,18 @@ class Parser {
 			// try state decl
 			if (this.peek().kind === 'keyword' && this.peek().value === 'state') {
 				const st = this.parseState();
+				if (states.has(st.name)) {
+					this.diagnostics.push({ span: st.span, message: `Duplicate declaration of state ${st.name}`, severity: 'error', code: 'LSL070' });
+				}
 				states.set(st.name, st);
 				continue;
 			}
 			// default state without explicit 'state' keyword
 			if (this.peek().kind === 'keyword' && this.peek().value === 'default') {
 				const st = this.parseDefaultState();
+				if (states.has(st.name)) {
+					this.diagnostics.push({ span: st.span, message: `Duplicate declaration of state ${st.name}`, severity: 'error', code: 'LSL070' });
+				}
 				states.set(st.name, st);
 				continue;
 			}
