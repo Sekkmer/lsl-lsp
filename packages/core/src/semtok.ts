@@ -134,9 +134,15 @@ export function buildSemanticTokens(
 		b.push(start.line, start.character, len, type, mods);
 	}
 
+	function isInactiveOffset(offset: number): boolean {
+		const ranges = pre?.inactiveRanges ?? [];
+		return ranges.some(r => offset >= r.start && offset < r.end);
+	}
+
 	// Pre-highlight include path target as string, but only the quoted path within the directive
 	if (pre && pre.includeTargets && pre.includeTargets.length > 0) {
 		for (const it of pre.includeTargets) {
+			if (isInactiveOffset(it.start)) continue;
 			// Extract the directive text and find the quoted path
 			const text = doc.getText().slice(it.start, it.end);
 			const qm1 = text.indexOf('"');

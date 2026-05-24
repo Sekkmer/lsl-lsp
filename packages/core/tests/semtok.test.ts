@@ -88,4 +88,18 @@ integer k = __LINE__;
 		expect(findAt(1, 0)?.type).toBe(idx('type'));
 		expect(findAt(1, 12)?.type).toBe(idx('enumMember'));
 	});
+
+	it('does not color include paths in inactive branches', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom([
+			'#if 0',
+			'#include "inactive.h"',
+			'#endif',
+		].join('\n'));
+		const { sem } = runPipeline(doc, defs);
+		const spans = semToSpans(doc, sem);
+		const hasInactiveIncludePath = spans.some(s => s.line === 1 && s.type === idx('string'));
+
+		expect(hasInactiveIncludePath).toBe(false);
+	});
 });
