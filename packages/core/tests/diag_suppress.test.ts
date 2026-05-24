@@ -93,6 +93,16 @@ describe('diagnostic suppression directives', () => {
 		expect(analysis.diagnostics.find(d => d.code === 'LSL001')).toBeTruthy();
 	});
 
+	it('suppresses preprocessor diagnostics with all-code next-line directives', async () => {
+		const code = [
+			'// lsl-disable-next-line',
+			'#include "missing.lsl"',
+			'default { state_entry(){} }',
+		].join('\n');
+		const { pre } = await analyze(code);
+		expect(pre.preprocDiagnostics?.some(d => d.code === 'LSL-include-missing')).toBe(false);
+	});
+
 	it('still honors numeric codes for low-level errors and ignores named alias when disallowed', async () => {
 		const code = `default {
 		state_entry(){

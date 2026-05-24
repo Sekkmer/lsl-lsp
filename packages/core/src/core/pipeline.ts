@@ -177,8 +177,24 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 		message: `Cannot resolve include "${mi.file}"`,
 		code: 'LSL-include-missing',
 	}));
-	const preprocDiagnostics = (pre.diagnostics || []).concat(structuralDiags, missingIncludeDiags);
 	const diagDirectives: import('./preproc').DiagDirectives = { disableLine, disableNextLine, blocks };
+	const lineSuppression = (map: Map<number, Set<string> | null>, line: number) => {
+		if (map.has(line)) return map.get(line);
+		if (map.has(line + 1)) return map.get(line + 1); // tolerate previous storage style
+		return undefined;
+	};
+	const suppressesCode = (codes: Set<string> | null | undefined, code?: string) =>
+		codes !== undefined && (!codes || (!!code && codes.has(code)));
+	const isSuppressed = (start: number, code?: string) => {
+		const line = lineOf(start);
+		if (suppressesCode(lineSuppression(disableLine, line), code)) return true;
+		const prevLine = disableNextLine.has(line - 1) ? disableNextLine.get(line - 1) : undefined;
+		if (suppressesCode(prevLine, code)) return true;
+		return blocks.some(b => start >= b.start && start <= b.end && suppressesCode(b.codes, code));
+	};
+	const preprocDiagnostics = (pre.diagnostics || [])
+		.concat(structuralDiags, missingIncludeDiags)
+		.filter(d => !isSuppressed(d.start, d.code));
 	// Build funcMacros map: function-like macro definitions body string as stored in macros table ("(params) body")
 	const funcMacros: Record<string,string> = {};
 	for (const [name, val] of Object.entries(pre.macros)) {
