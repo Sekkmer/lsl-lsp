@@ -170,6 +170,12 @@ function componentAtValue(v: Value, prop: 'x' | 'y' | 'z' | 's'): number | null 
 	return v.value[idx] ?? null;
 }
 
+function vectorishValuesEqual(l: Value, r: Value): boolean | null {
+	if (l.kind !== 'value' || r.kind !== 'value') return null;
+	if ((l.type !== 'vector' && l.type !== 'rotation') || l.type !== r.type) return null;
+	return l.value.length === r.value.length && l.value.every((component, i) => component === r.value[i]);
+}
+
 export function evalExpr(expr: Expr | null, env: Env = new Env(), options?: EvalOptions): Value {
 	return evalExprInner(expr, env, new EvalContext(options));
 }
@@ -338,6 +344,10 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 								return { kind: 'value', type: 'integer', value: dl - dr };
 							}
 							return runtime.unknown('integer');
+						}
+						const vectorishEqual = vectorishValuesEqual(l, r);
+						if (vectorishEqual !== null) {
+							return { kind: 'value', type: 'integer', value: (expr.op === '==') === vectorishEqual ? 1 : 0 };
 						}
 					}
 					// falls through for non-list equality

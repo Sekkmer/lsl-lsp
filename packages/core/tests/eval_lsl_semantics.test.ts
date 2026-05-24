@@ -71,6 +71,19 @@ describe('evaluator LSL semantic fixtures', () => {
 		expect(evalSource('integer', '[1, []] == [1]')).toEqual({ kind: 'unknown', type: 'integer' });
 	});
 
+	it('folds vector and rotation equality when all components are known', () => {
+		const vectorValue: Value = { kind: 'value', type: 'vector', value: [1, 2, 3] };
+		const rotationValue: Value = { kind: 'value', type: 'rotation', value: [3, 2, 1, 0] };
+		const env = new Env(new Map([
+			['v', vectorValue],
+			['r', rotationValue],
+		]));
+		expect(evalSource('integer', 'v == <1,2,3>', env)).toEqual({ kind: 'value', type: 'integer', value: 1 });
+		expect(evalSource('integer', 'v != <1,2,3>', env)).toEqual({ kind: 'value', type: 'integer', value: 0 });
+		expect(evalSource('integer', 'v == <r.z, r.y, r.x>', env)).toEqual({ kind: 'value', type: 'integer', value: 1 });
+		expect(evalSource('integer', 'r == <v.z, v.y, v.x, 0>', env)).toEqual({ kind: 'value', type: 'integer', value: 1 });
+	});
+
 	it('does not fold literal member access that SL rejects, but can fold variable member values', () => {
 		expect(evalSource('float', '<1,2,3>.x')).toEqual({ kind: 'unknown', type: 'float' });
 
@@ -131,5 +144,24 @@ default {
 		const falsy = analysis.diagnostics.filter(d => d.code === LSL_DIAGCODES.ALWAYS_FALSE_CONDITION);
 		expect(truthy).toHaveLength(4);
 		expect(falsy).toHaveLength(4);
+	});
+
+	it('uses folded vector and rotation equality for constant-condition diagnostics', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+	state_entry() {
+		vector v = <1,2,3>;
+		rotation r = <3,2,1,0>;
+		if (v == <1,2,3>) { }
+		if (v == <r.z, r.y, r.x>) { }
+		if (r == <v.z, v.y, v.x, 0>) { }
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///eval-vector-rotation-equality.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const truthy = analysis.diagnostics.filter(d => d.code === LSL_DIAGCODES.ALWAYS_TRUE_CONDITION);
+		expect(truthy).toHaveLength(3);
 	});
 });
