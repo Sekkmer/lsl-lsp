@@ -1,4 +1,5 @@
 packages:
   - packages/core
+  - packages/cli
   - packages/server
   - packages/client-vscode

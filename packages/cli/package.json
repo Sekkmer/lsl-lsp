@@ -1,0 +1,31 @@
+{
+  "name": "@lsl-lsp/cli",
+  "version": "0.1.9",
+  "private": true,
+  "license": "MIT",
+  "author": {
+    "name": "Sekkmer",
+    "email": "sekkmer@gmail.com"
+  },
+  "type": "module",
+  "bin": {
+    "lsl-lsp": "out/lsl-lsp.cjs"
+  },
+  "scripts": {
+    "build": "node ../../scripts/clean-dir.cjs out && pnpm run typecheck && pnpm run bundle",
+    "bundle": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --minify --sourcemap --loader:.yaml=text --outfile=out/lsl-lsp.cjs",
+    "start": "node out/lsl-lsp.cjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "watch": "tsc -w -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix"
+  },
+  "dependencies": {
+    "@lsl-lsp/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "esbuild": "0.28.0",
+    "typescript": "^6.0.3"
+  }
+}

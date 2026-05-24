@@ -512,7 +512,10 @@ async function resolveDefinitionPath(defPath: string): Promise<{ raw: string; re
 
 export async function loadDefs(defPath: string): Promise<Defs> {
 	const { raw, resolvedPath } = await resolveDefinitionPath(defPath);
+	return loadDefsFromSource(raw, resolvedPath);
+}
 
+export async function loadDefsFromSource(raw: string, resolvedPath = '<memory>'): Promise<Defs> {
 	const obj = yaml.load(raw, { json: true });
 	if (!obj) {
 		throw new Error(`Definition file "${resolvedPath}" appears to be empty or could not be parsed`);

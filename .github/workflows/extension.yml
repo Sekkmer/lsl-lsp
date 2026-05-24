@@ -33,6 +33,9 @@ jobs:
       - name: Build core
         run: pnpm -C packages/core build
 
+      - name: Build CLI bundle
+        run: pnpm -C packages/cli build
+
       - name: Build server
         run: pnpm -C packages/server build
 
@@ -51,6 +54,14 @@ jobs:
           name: vscode-lsl-lsp-vsix
           path: packages/client-vscode/*.vsix
 
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lsl-lsp-cli
+          path: |
+            packages/cli/out/lsl-lsp.cjs
+            packages/cli/out/lsl-lsp.cjs.map
+
       - name: Add run summary
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -60,9 +71,11 @@ jobs:
             echo;
             echo "- Open the run: ${RUN_URL}";
             echo "- Download from the Artifacts section: vscode-lsl-lsp-vsix";
+            echo "- CLI bundle artifact: lsl-lsp-cli";
             echo;
             echo "Tip (GitHub CLI):";
             echo "\`gh run download ${{ github.run_id }} -n vscode-lsl-lsp-vsix\`";
+            echo "\`gh run download ${{ github.run_id }} -n lsl-lsp-cli\`";
           } >> "$GITHUB_STEP_SUMMARY"
 
   release:
@@ -77,11 +90,20 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: vscode-lsl-lsp-vsix
-          path: dist
+          path: release-assets
+
+      - name: Download CLI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lsl-lsp-cli
+          path: release-assets
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.vsix
+          files: |
+            release-assets/*.vsix
+            release-assets/lsl-lsp.cjs
+            release-assets/lsl-lsp.cjs.map
           generate_release_notes: true
           fail_on_unmatched_files: true
