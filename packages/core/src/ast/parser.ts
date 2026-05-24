@@ -281,6 +281,8 @@ class Parser {
 		const functions = new Map<string, FnWithOrigin>();
 		const states = new Map<string, State>();
 		const globals = new Map<string, GlobalWithOrigin>();
+		let sawStateDeclaration = false;
+		let sawRealDefaultState = false;
 		// Helper to normalize identifier names so that leading/trailing "noise" characters
 		// (historically tolerated in LSL tooling: # $ ? \ ' ") do not cause distinct symbols.
 		// The lexer already strips these for identifier tokens produced after unification, but
@@ -332,11 +334,20 @@ class Parser {
 			}
 			// try state decl
 			if (this.peek().kind === 'keyword' && this.peek().value === 'state') {
+				const stateTok = this.peek();
+				const nameTok = this.lookAheadNonTrivia(2)[1];
+				const declaresDefaultWithStateKeyword = nameTok?.kind === 'keyword' && nameTok.value === 'default';
+				if (declaresDefaultWithStateKeyword) {
+					this.report(nameTok, 'default state must be declared as `default { ... }`; use `default {` instead of `state default {`', 'LSL000');
+				} else if (!sawRealDefaultState) {
+					this.report(stateTok, 'default state must be declared before other states', 'LSL000');
+				}
 				const st = this.parseState();
 				if (states.has(st.name)) {
 					this.diagnostics.push({ span: st.span, message: `Duplicate declaration of state ${st.name}`, severity: 'error', code: 'LSL070' });
 				}
 				states.set(st.name, st);
+				sawStateDeclaration = true;
 				continue;
 			}
 			// default state without explicit 'state' keyword
@@ -346,11 +357,16 @@ class Parser {
 					this.diagnostics.push({ span: st.span, message: `Duplicate declaration of state ${st.name}`, severity: 'error', code: 'LSL070' });
 				}
 				states.set(st.name, st);
+				sawStateDeclaration = true;
+				sawRealDefaultState = true;
 				continue;
 			}
 			// function or global var: only start if next is a type keyword
 			const nextTok = this.peek();
 			if (nextTok.kind === 'keyword' && isTypeName(nextTok.value)) {
+				if (sawStateDeclaration) {
+					this.report(nextTok, 'Global declarations must appear before state declarations', 'LSL000');
+				}
 				const ahead = this.lookAheadNonTrivia(3);
 				const afterParen = ahead[1] && ahead[1].kind === 'id' && ahead[2] && ahead[2].kind === 'punct' && ahead[2].value === '('
 					? this.tokenAfterMatchedParenAt(2)
@@ -400,6 +416,9 @@ class Parser {
 					|| (this.disableSourceHeuristics && !!afterImplicitParen && afterImplicitParen.kind === 'punct' && afterImplicitParen.value === '{')
 			);
 			if (implicitFn) {
+				if (sawStateDeclaration) {
+					this.report(nextTok, 'Global declarations must appear before state declarations', 'LSL000');
+				}
 				const leading = this.consumeLeadingComment();
 				const nameTok = this.eat('id');
 				this.eat('punct', '(');

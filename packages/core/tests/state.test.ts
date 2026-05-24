@@ -14,7 +14,7 @@ describe('state transitions', () => {
 
 	it('no error when state declared', async () => {
 		const defs = await loadTestDefs();
-		const code = 'state ready { state_entry(){} } default { state_entry() { state ready; } }';
+		const code = 'default { state_entry() { state ready; } } state ready { state_entry(){} }';
 		const doc = docFrom(code);
 		const { analysis } = runPipeline(doc, defs);
 		const err = analysis.diagnostics.find(d => d.code === 'LSL030');
