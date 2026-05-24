@@ -367,7 +367,8 @@ function formatCore(text: string, disabledRanges: { start: number; end: number }
 
 export function formatDocumentEdits(doc: TextDocument, pre: PreprocResult, settings: FormatSettings): TextEdit[] {
 	const text = doc.getText();
-	const { out } = formatCore(text, pre.disabledRanges, settings);
+	const skippedRanges = pre.inactiveRanges ?? pre.disabledRanges;
+	const { out } = formatCore(text, skippedRanges, settings);
 	if (out === text) return [];
 	const full: Range = { start: doc.positionAt(0), end: doc.positionAt(text.length) };
 	return [{ range: full, newText: out }];
@@ -411,7 +412,8 @@ export function formatRangeEdits(doc: TextDocument, pre: PreprocResult, settings
 	const end = doc.offsetAt(range.end);
 	const target = text.slice(start, end);
 	// Compute initial state before the range using the whole doc, skipping disabled ranges
-	const init = computeInitialStateBefore(text, pre.disabledRanges, start);
+	const skippedRanges = pre.inactiveRanges ?? pre.disabledRanges;
+	const init = computeInitialStateBefore(text, skippedRanges, start);
 	// In a targeted range format, we intentionally allow formatting inside disabled ranges.
 	// So we pass an empty disabledRanges array for the slice, but still preserve directives.
 	const { out } = formatCore(target, [], settings, detectIndent(text), init);

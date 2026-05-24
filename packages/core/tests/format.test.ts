@@ -7,6 +7,7 @@ function fmt(input: string, settings?: Partial<FormatSettings>, pre?: Partial<Pr
 	const doc = TextDocument.create('file:///t.lsl', 'lsl', 1, input);
 	const preFull: PreprocResult = {
 		disabledRanges: pre?.disabledRanges ?? [],
+		inactiveRanges: pre?.inactiveRanges,
 		macros: {},
 		funcMacros: {},
 		includes: [],
@@ -61,6 +62,15 @@ describe('formatter basics', () => {
 		const src = '#if 0\nif(true){a,b;}\n#endif\n';
 		const out = fmt(src, undefined, { disabledRanges: [{ start: 0, end: src.length - 1 }] });
 		expect(out).toBe(src);
+	});
+
+	it('formats live code inside diagnostic disable blocks', () => {
+		const src = '// lsl-disable\nif(true){a,b;}\n// lsl-enable\n';
+		const start = src.indexOf('if(true)');
+		const end = src.indexOf('// lsl-enable') - 1;
+		const out = fmt(src, undefined, { disabledRanges: [{ start, end }], inactiveRanges: [] });
+		expect(out).toContain('if (true)');
+		expect(out).toContain('a, b');
 	});
 
 	it('adds newline after ; outside for header', () => {
