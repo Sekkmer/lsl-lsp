@@ -212,8 +212,8 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 				for (const element of expr.elements) {
 					const value = evalExprInner(element, env, ctx);
 					if (value.kind === 'unknown' && value.type === 'list') return runtime.unknown('list');
-					if (value.kind === 'value' && value.type === 'list') values.push(...value.value);
-					else values.push(value);
+					if (value.kind === 'value' && value.type === 'list') return runtime.unknown('list');
+					values.push(value);
 				}
 				return { kind: 'value', type: 'list', value: values };
 			}
@@ -297,18 +297,7 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 			}
 
 			case 'Binary': {
-			// Some operations are easier to fold directly from the AST (lists, vectors).
-			// List equality/inequality: == compares lengths equal; != returns length difference.
-				if ((expr.op === '==' || expr.op === '!=') && expr.left.kind === 'ListLiteral' && expr.right.kind === 'ListLiteral') {
-					const dl = expr.left.elements.length;
-					const dr = expr.right.elements.length;
-					if (expr.op === '==') {
-						return { kind: 'value', type: 'integer', value: dl === dr ? 1 : 0 };
-					} else {
-						return { kind: 'value', type: 'integer', value: dl - dr };
-					}
-				}
-
+				// Some operations are easier to fold directly from the AST (vectors).
 				// Vector dot / cross when both sides are literal vectors.
 				if (expr.op === '*' || expr.op === '%') {
 					const L = extractNumericVectorOrRotation(env, expr.left, ctx);
@@ -333,7 +322,18 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 
 				switch (expr.op) {
 					case '==':
-					case '!=':
+					case '!=': {
+						if (l.type === 'list' || r.type === 'list') {
+							if (l.kind === 'value' && l.type === 'list' && r.kind === 'value' && r.type === 'list') {
+								const dl = l.value.length;
+								const dr = r.value.length;
+								if (expr.op === '==') return { kind: 'value', type: 'integer', value: dl === dr ? 1 : 0 };
+								return { kind: 'value', type: 'integer', value: dl - dr };
+							}
+							return runtime.unknown('integer');
+						}
+					}
+					// falls through for non-list equality
 					case '<':
 					case '<=':
 					case '>':

@@ -454,8 +454,8 @@ export function validateOperatorsFromAst(
 						|| (comp.kind === 'Identifier' && symbolTypes.get(comp.name) === 'list');
 					if (flattensList) {
 						diagnostics.push({
-							code: LSL_DIAGCODES.LIST_LITERAL_FLATTENS_LIST,
-							message: 'List value in list literal is flattened into the surrounding list',
+							code: LSL_DIAGCODES.LIST_LITERAL_CONTAINS_LIST,
+							message: 'List value inside list literal causes a runtime error in LSL',
 							range: mk(doc, comp.span.start, comp.span.end),
 							severity: DiagnosticSeverity.Warning,
 						});

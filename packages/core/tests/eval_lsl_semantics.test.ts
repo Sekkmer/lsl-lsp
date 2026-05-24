@@ -50,11 +50,12 @@ describe('evaluator LSL semantic fixtures', () => {
 	});
 
 	it('materializes literal list and vector values for condition folding', () => {
-		expect(evalSource('list', '[1, []]')).toEqual({
+		expect(evalSource('list', '[1]')).toEqual({
 			kind: 'value',
 			type: 'list',
 			value: [{ kind: 'value', type: 'integer', value: 1 }],
 		});
+		expect(evalSource('list', '[1, []]')).toEqual({ kind: 'unknown', type: 'list' });
 		expect(evalSource('vector', '<1,2,3>')).toEqual({ kind: 'value', type: 'vector', value: [1, 2, 3] });
 		expect(evalSource('rotation', '<0,0,0,1>')).toEqual({ kind: 'value', type: 'rotation', value: [0, 0, 0, 1] });
 	});
@@ -64,6 +65,7 @@ describe('evaluator LSL semantic fixtures', () => {
 		expect(evalSource('integer', '[1] == ["x"]')).toEqual({ kind: 'value', type: 'integer', value: 1 });
 		expect(evalSource('integer', '[1, 2] != ["x"]')).toEqual({ kind: 'value', type: 'integer', value: 1 });
 		expect(evalSource('integer', '[1] != ["x", "y", "z"]')).toEqual({ kind: 'value', type: 'integer', value: -2 });
+		expect(evalSource('integer', '[1, []] == [1]')).toEqual({ kind: 'unknown', type: 'integer' });
 	});
 
 	it('does not fold literal member access that SL rejects, but can fold variable member values', () => {
