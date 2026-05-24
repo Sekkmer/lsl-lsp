@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Token } from './tokens';
 import { Tokenizer } from './tokenizer';
 import { type MacroDefines, type IncludeResolver, preprocessAndExpandNew, MacroConditionalProcessor } from './macro';
-import type { ConditionalGroup, PreprocDiagnostic } from './preproc';
+import type { ConditionalGroup, DisabledRange, PreprocDiagnostic } from './preproc';
 import { normalizeDiagCode } from '../analysisTypes';
 
 // Maintain previous macro snapshot for delta detection between successive preprocessForAst calls
@@ -26,11 +26,11 @@ function attachFile(t: Token, filePath: string) {
 }
 
 export function buildIncludeResolver(opts: IncludeResolverOptions): IncludeResolver {
-	return (target, fromId) => {
+	return (target, fromId, includeOpts) => {
 		const fs = opts.fs || require('node:fs');
 		// resolve relative to including file first, then search includePaths
 		const candidates: string[] = [];
-		if (fromId) {
+		if (fromId && !includeOpts?.system) {
 			const baseDir = path.dirname(fromId);
 			candidates.push(path.join(baseDir, target));
 		}
@@ -56,8 +56,8 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	funcMacros: Record<string, string>;
 	macroDefs?: Record<string, { start: number; end: number; file: string }>;
 	includes: string[];
-	disabledRanges: { start: number; end: number }[];
-	inactiveRanges: { start: number; end: number }[];
+	disabledRanges: DisabledRange[];
+	inactiveRanges: DisabledRange[];
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[];
 	missingIncludes?: { start: number; end: number; file: string }[];
 	preprocDiagnostics?: PreprocDiagnostic[];
@@ -97,7 +97,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	// If codes list omitted, treat as disable all.
 	// We materialize disabledRanges as merged spans where ALL diagnostics are suppressed (only when codes list omitted),
 	// preserving code-specific maps in diagDirectives for analyzer filtering.
-	const disabledRanges: { start: number; end: number }[] = [];
+	const disabledRanges: DisabledRange[] = [];
 	const disableLine = new Map<number, Set<string> | null>();
 	const disableNextLine = new Map<number, Set<string> | null>();
 	const blockStack: { startOffset: number; codes: Set<string> | null }[] = [];
@@ -158,17 +158,17 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	}
 	// Merge overlapping/adjacent all-code disabled ranges.
 	disabledRanges.sort((a, b) => a.start - b.start);
-	const merged: { start: number; end: number }[] = [];
+	const merged: DisabledRange[] = [];
 	for (const r of disabledRanges) {
-		if (!merged.length || r.start > merged[merged.length - 1].end + 1) merged.push({ ...r });
+		if (!merged.length || merged[merged.length - 1].file !== r.file || r.start > merged[merged.length - 1].end + 1) merged.push({ ...r });
 		else if (r.end > merged[merged.length - 1].end) merged[merged.length - 1].end = r.end;
 	}
 	// Replace with merged list
 	disabledRanges.length = 0; for (const r of merged) disabledRanges.push(r);
 	// Merge inactive conditional branch spans into disabledRanges (all-codes suppression)
-	const inactiveRanges = pre.inactiveSpans ? pre.inactiveSpans.map(r => ({ start: r.start, end: r.end })) : [];
+	const inactiveRanges = pre.inactiveSpans ? pre.inactiveSpans.map(r => ({ start: r.start, end: r.end, file: r.file })) : [];
 	if (pre.inactiveSpans && pre.inactiveSpans.length) {
-		for (const r of pre.inactiveSpans) disabledRanges.push({ start: r.start, end: r.end });
+		for (const r of pre.inactiveSpans) disabledRanges.push({ start: r.start, end: r.end, file: r.file });
 	}
 	// Collect includeTargets & missingIncludes from preprocessor
 	const includeTargets = pre.includeTargets ?? [];
@@ -234,15 +234,22 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	// Update snapshot to final table for subsequent call when no explicit defines provided
 	_prevMacroSnapshot.macros = { ...pre.macros };
 	// Build inactive span index for fast filtering
-	const inactive: { start: number; end: number }[] = pre.inactiveSpans ? [...pre.inactiveSpans] : [];
+	const inactive: DisabledRange[] = pre.inactiveSpans ? [...pre.inactiveSpans] : [];
 	if (inactive.length) inactive.sort((a,b)=> a.start-b.start);
 	function isInactive(t: Token): boolean {
 		if (!inactive.length) return false;
+		const tokenFile = t.file || t.span.file;
 		const pos = t.span.start;
 		// binary search last span with start<=pos
 		let lo=0, hi=inactive.length-1, cand=-1;
 		while(lo<=hi){const mid=(lo+hi)>>1; const s=inactive[mid]!.start; if(s<=pos){cand=mid; lo=mid+1;} else hi=mid-1; }
-		if (cand<0) return false; const span=inactive[cand]!; return pos>=span.start && pos<=span.end;
+		for (let i = cand; i >= 0; i--) {
+			const span = inactive[i]!;
+			if (span.end < pos) break;
+			if (span.file && tokenFile && span.file !== tokenFile) continue;
+			if (pos >= span.start && pos <= span.end) return true;
+		}
+		return false;
 	}
 	const allCodeTokens = pre.tokens.filter(t=> t.kind !== 'directive' && t.kind !== 'comment-line' && t.kind !== 'comment-block');
 	const activeTokens = allCodeTokens.filter(t=> !isInactive(t));

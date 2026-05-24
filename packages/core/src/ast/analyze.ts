@@ -427,7 +427,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					const leading = /^[\t ]*/.exec(match[0])?.[0].length ?? 0;
 					const eventStart = match.index + leading;
 					const inactiveRanges = pre.inactiveRanges ?? pre.disabledRanges;
-					const disabled = inactiveRanges.some(r => eventStart >= r.start && eventStart < r.end);
+					const disabled = inactiveRanges.some(r => (!r.file || !currentFile || r.file === currentFile) && eventStart >= r.start && eventStart < r.end);
 					if (disabled) continue;
 					const eventName = match[1] ?? '';
 					diagnostics.push({

@@ -8,9 +8,13 @@ import { fileUriToPath } from './protocol';
 
 export type SimpleToken = { kind: string; value: string; start: number; end: number };
 
-function isDisabledOffset(pre: PreprocResult, offset: number): boolean {
+function rangeMatchesFile(rangeFile: string | undefined, currentFile: string | undefined): boolean {
+	return !rangeFile || !currentFile || rangeFile === currentFile;
+}
+
+function isDisabledOffset(pre: PreprocResult, offset: number, currentFile?: string): boolean {
 	const inactiveRanges = pre.inactiveRanges ?? pre.disabledRanges;
-	return inactiveRanges.some(r => offset >= r.start && offset < r.end);
+	return inactiveRanges.some(r => rangeMatchesFile(r.file, currentFile) && offset >= r.start && offset < r.end);
 }
 
 function localMacroDefNameSpan(doc: TextDocument, pre: PreprocResult, name: string): { start: number; end: number } | null {
@@ -51,7 +55,8 @@ export function prepareRename(
 ): Range | null {
 	const w = getWordAt(doc, offset);
 	if (!w) return null;
-	if (isDisabledOffset(pre, offset)) return null;
+	const currentFile = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined;
+	if (isDisabledOffset(pre, offset, currentFile)) return null;
 	if (isKeyword(w.text)) return null;
 
 	const atDecl = analysis.symbolAt(offset);
@@ -92,7 +97,8 @@ export function computeRenameEdits(
 
 	const w = getWordAt(doc, offset);
 	if (!w) return { changes };
-	if (isDisabledOffset(pre, offset)) return { changes };
+	const currentFile = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined;
+	if (isDisabledOffset(pre, offset, currentFile)) return { changes };
 	const oldName = w.text;
 	if (oldName === newName) return { changes };
 	if (!/^[A-Za-z_]\w*$/.test(newName)) return { changes };
@@ -121,7 +127,7 @@ export function computeRenameEdits(
 		if (!defSpan) return { changes };
 		addEdit(doc.uri, defSpan.start, defSpan.end);
 		for (const t of tokens) {
-			if (t.kind === 'id' && t.value === oldName && !isDisabledOffset(pre, t.start)) {
+			if (t.kind === 'id' && t.value === oldName && !isDisabledOffset(pre, t.start, currentFile)) {
 				const resolved = analysis.refAt(t.start);
 				if (!resolved) addEdit(doc.uri, t.start, t.end);
 			}
@@ -165,14 +171,15 @@ export function findAllReferences(
 
 	const w = getWordAt(doc, offset);
 	if (!w) return out;
-	if (isDisabledOffset(pre, offset)) return out;
+	const currentFile = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined;
+	if (isDisabledOffset(pre, offset, currentFile)) return out;
 	const name = w.text;
 
 	if (isActiveMacro(pre, name)) {
 		const defSpan = localMacroDefNameSpan(doc, pre, name);
 		if (includeDecl && defSpan) pushLoc(doc.uri, { start: doc.positionAt(defSpan.start), end: doc.positionAt(defSpan.end) });
 		for (const t of tokens) {
-			if (t.kind === 'id' && t.value === name && !isDisabledOffset(pre, t.start)) {
+			if (t.kind === 'id' && t.value === name && !isDisabledOffset(pre, t.start, currentFile)) {
 				const resolved = analysis.refAt(t.start);
 				if (!resolved) pushLoc(doc.uri, { start: doc.positionAt(t.start), end: doc.positionAt(t.end) });
 			}

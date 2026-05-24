@@ -1,5 +1,6 @@
 import { type Token } from './tokens';
 import { tokenize } from './tokenizer';
+import type { DisabledRange } from './preproc';
 
 export type MacroDefines = Record<string, string | number | boolean>;
 
@@ -13,7 +14,7 @@ type DirKind =
 	| { kind: 'define_obj'; name: string; body?: string }
 	| { kind: 'define_fn'; name: string; params: string; body: string }
 	| { kind: 'undef'; name: string }
-	| { kind: 'include'; target: string };
+	| { kind: 'include'; target: string; system?: boolean };
 
 // --- New segmentation data structures (work-in-progress experimental API) ---
 export interface DirectiveSeg {
@@ -113,7 +114,7 @@ export interface PreprocessResultNew {
 	macroDefs?: Record<string, { start: number; end: number; file: string }>; // definition span for each macro
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; // each include directive
 	missingIncludes?: { start: number; end: number; file: string }[]; // unresolved include directives
-	inactiveSpans?: { start: number; end: number }[]; // spans of inactive conditional branches (for disabledRanges)
+	inactiveSpans?: DisabledRange[]; // spans of inactive conditional branches (for disabledRanges)
 }
 
 interface ProcessCtx {
@@ -250,7 +251,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 	const macroDefs: Record<string,{start:number; end:number; file:string}> = {};
 	const includeTargets: { start: number; end: number; file: string; resolved: string | null }[] = [];
 	const missingIncludes: { start: number; end: number; file: string }[] = [];
-	const inactiveSpans: { start: number; end: number }[] = [];
+	const inactiveSpans: DisabledRange[] = [];
 	const pushInclude = (id: string) => { if (!includesLocal.includes(id)) includesLocal.push(id); if (!ctx.includeOrder.includes(id)) ctx.includeOrder.push(id); };
 	const noteDup = (name: string, span: {start:number; end:number}, previous: unknown, next: unknown) => {
 		if (JSON.stringify(previous) !== JSON.stringify(next)) ctx.diagnostics.push({ message: `Duplicate macro ${name}`, code: 'LSL-macro-dup', start: span.start, end: span.end, file: fileId });
@@ -287,13 +288,13 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 		if (process.env.LSL_DEBUG_COND) {
 			try { console.log('[preproc-if-chain]', { file: fileId, at: d.span.start, kind: d.kind, expr: (d.kind === 'if' ? d.expr : d.kind === 'ifdef' || d.kind === 'ifndef' ? d.name : undefined), activeSpans: [...activeSpans], inactiveSpans: [...chainInactive], debug: chainDebug }); } catch { /* ignore */ }
 		}
-		for (const isp of chainInactive) inactiveSpans.push(isp);
+		for (const isp of chainInactive) inactiveSpans.push({ ...isp, file: fileId });
 		for (let j=startIndex+1;j<next;j++) {
 			const sj = segs[j]!;
 			if (sj.type === 'raw') {
 				let anyActive = false;
 				for (const tk of sj.tokens) { if (spansContain(activeSpans, tk.span.start, tk.span.end)) { out.push(tk); anyActive = true; } }
-				if (!anyActive && sj.tokens.length) inactiveSpans.push({ start: sj.tokens[0]!.span.start, end: sj.tokens[sj.tokens.length-1]!.span.end });
+				if (!anyActive && sj.tokens.length) inactiveSpans.push({ start: sj.tokens[0]!.span.start, end: sj.tokens[sj.tokens.length-1]!.span.end, file: fileId });
 				continue;
 			}
 			// directives inside chain
@@ -306,7 +307,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 			if (dk === 'include') {
 				includeTargets.push({ start: sj.dir.span.start, end: sj.dir.span.end, file: sj.dir.target, resolved: null });
 				if (!activeDir || !ctx.includeResolver) continue;
-				const inc = ctx.includeResolver(sj.dir.target, fileId);
+				const inc = ctx.includeResolver(sj.dir.target, fileId, { system: sj.dir.system });
 				if (!inc) { missingIncludes.push({ start: sj.dir.span.start, end: sj.dir.span.end, file: sj.dir.target }); continue; }
 				// update last include target with resolved id
 				includeTargets[includeTargets.length-1] = { start: sj.dir.span.start, end: sj.dir.span.end, file: sj.dir.target, resolved: inc.id };
@@ -332,7 +333,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 		if (d.kind === 'undef') { delete macros[d.name]; continue; }
 		if (d.kind === 'include') {
 			if (!ctx.includeResolver) { includeTargets.push({ start: d.span.start, end: d.span.end, file: d.target, resolved: null }); continue; }
-			const inc = ctx.includeResolver(d.target, fileId);
+			const inc = ctx.includeResolver(d.target, fileId, { system: d.system });
 			if (!inc) { includeTargets.push({ start: d.span.start, end: d.span.end, file: d.target, resolved: null }); missingIncludes.push({ start: d.span.start, end: d.span.end, file: d.target }); continue; }
 			includeTargets.push({ start: d.span.start, end: d.span.end, file: d.target, resolved: inc.id });
 			if (ctx.collecting.includes(inc.id)) continue;
@@ -349,7 +350,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 	return { tokens: out, macros, diagnostics: ctx.diagnostics, includes: includesLocal, macroDefs, includeTargets, missingIncludes, inactiveSpans };
 }
 
-export function preprocessAndExpandNew(fileId: string, version: number, tokens: Token[], initialMacros: MacroDefines, includeResolver?: IncludeResolver): { tokens: Token[]; macros: MacroDefines; diagnostics: { message: string; code?: string; start: number; end: number; file?: string }[]; includes: string[]; macroDefs?: Record<string,{start:number; end:number; file:string}>; includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; missingIncludes?: { start: number; end: number; file: string }[]; inactiveSpans?: { start: number; end: number }[] } {
+export function preprocessAndExpandNew(fileId: string, version: number, tokens: Token[], initialMacros: MacroDefines, includeResolver?: IncludeResolver): { tokens: Token[]; macros: MacroDefines; diagnostics: { message: string; code?: string; start: number; end: number; file?: string }[]; includes: string[]; macroDefs?: Record<string,{start:number; end:number; file:string}>; includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; missingIncludes?: { start: number; end: number; file: string }[]; inactiveSpans?: DisabledRange[] } {
 	const ctx: ProcessCtx = { includeResolver, seen: new Set<string>([fileId]), collecting: [fileId], includeOrder: [], diagnostics: [] };
 	const pre = preprocessFileNew(fileId, version, tokens, initialMacros, ctx);
 	const expanded = expandActiveTokens(pre.tokens, pre.macros);
@@ -370,7 +371,10 @@ function parseDirectiveKind(raw: string): DirKind | null {
 	if (head === 'ifdef') { const raw = rest.split(/\s+/)[0] || ''; const name = stripNoise(raw); return { kind: 'ifdef', name }; }
 	if (head === 'ifndef') { const raw = rest.split(/\s+/)[0] || ''; const name = stripNoise(raw); return { kind: 'ifndef', name }; }
 	if (head === 'undef') { const raw = rest.split(/\s+/)[0] || ''; const name = stripNoise(raw); return { kind: 'undef', name }; }
-	if (head === 'include') { const target = parseIncludeTarget(rest) || ''; return { kind: 'include', target }; }
+	if (head === 'include') {
+		const include = parseIncludeTarget(rest);
+		return { kind: 'include', target: include?.target || '', system: include?.system };
+	}
 	if (head === 'define') {
 		const leadingStripped = lstripNoise(rest);
 		if (!leadingStripped) return null;
@@ -392,12 +396,12 @@ function parseDirectiveKind(raw: string): DirKind | null {
 	return null;
 }
 
-function parseIncludeTarget(rest: string): string | null {
+function parseIncludeTarget(rest: string): { target: string; system: boolean } | null {
 	const s = stripDirectiveLineComments(rest).trim();
 	const q1 = s.indexOf('"');
-	if (q1 >= 0) { const q2 = s.indexOf('"', q1 + 1); if (q2 > q1 + 1) return s.slice(q1 + 1, q2); }
+	if (q1 >= 0) { const q2 = s.indexOf('"', q1 + 1); if (q2 > q1 + 1) return { target: s.slice(q1 + 1, q2), system: false }; }
 	const a1 = s.indexOf('<');
-	if (a1 >= 0) { const a2 = s.indexOf('>', a1 + 1); if (a2 > a1 + 1) return s.slice(a1 + 1, a2); }
+	if (a1 >= 0) { const a2 = s.indexOf('>', a1 + 1); if (a2 > a1 + 1) return { target: s.slice(a1 + 1, a2), system: true }; }
 	return null;
 }
 
@@ -441,7 +445,7 @@ function parseMacroValue(v: string): string | number | boolean {
 
 type Frame = { enabled: boolean; sawElse: boolean; taken: boolean };
 
-export type IncludeResolver = (target: string, fromId?: string) => { tokens: Token[]; id: string } | null;
+export type IncludeResolver = (target: string, fromId?: string, opts?: { system?: boolean }) => { tokens: Token[]; id: string } | null;
 
 export class MacroConditionalProcessor {
 	private readonly tokens: Token[];
@@ -520,7 +524,7 @@ export class MacroConditionalProcessor {
 			if (d.kind === 'undef') { delete macros[d.name]; continue; }
 			if (d.kind === 'include') {
 				if (!this.resolveInclude) continue;
-				const inc = this.resolveInclude(d.target, this.fromId);
+				const inc = this.resolveInclude(d.target, this.fromId, { system: d.system });
 				if (!inc) continue;
 				this.includeIds.push(inc.id);
 				// Detect include cycles: if the target is already on the include stack, skip recursion to avoid infinite loop

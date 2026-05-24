@@ -7,6 +7,7 @@ import { Analysis } from './analysisTypes';
 import type { Decl } from './analysisTypes';
 import { isKeyword as isAstKeyword, isKeyword } from './ast/lexer';
 import { isType } from './ast/types';
+import { fileUriToPath } from './protocol';
 
 const tokenTypes = [
 	'namespace', 'type', 'class', 'enum', 'interface', 'struct', 'typeParameter',
@@ -134,9 +135,10 @@ export function buildSemanticTokens(
 		b.push(start.line, start.character, len, type, mods);
 	}
 
+	const currentFile = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined;
 	function isInactiveOffset(offset: number): boolean {
 		const ranges = pre?.inactiveRanges ?? [];
-		return ranges.some(r => offset >= r.start && offset < r.end);
+		return ranges.some(r => (!r.file || !currentFile || r.file === currentFile) && offset >= r.start && offset < r.end);
 	}
 
 	// Pre-highlight include path target as string, but only the quoted path within the directive

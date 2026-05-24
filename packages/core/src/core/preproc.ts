@@ -1,7 +1,7 @@
 import type { MacroDefines } from './macro';
 import type { Token } from './tokens';
 
-export type DisabledRange = { start: number; end: number };
+export type DisabledRange = { start: number; end: number; file?: string };
 
 export type DiagDirectives = {
 	disableLine: Map<number, Set<string> | null>;
