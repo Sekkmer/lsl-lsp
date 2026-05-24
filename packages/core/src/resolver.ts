@@ -35,6 +35,64 @@ function readIncludeFileLines(file: string): string[] {
 
 export interface ExternalDefHit { file: string; line: number; startChar: number; endChar: number; kind: ResolvedTarget['kind']; }
 
+function stripComments(line: string, state: { inBlockComment: boolean }): string {
+	let out = '';
+	for (let i = 0; i < line.length;) {
+		if (state.inBlockComment) {
+			if (line[i] === '*' && line[i + 1] === '/') {
+				out += '  ';
+				i += 2;
+				state.inBlockComment = false;
+			} else {
+				out += ' ';
+				i++;
+			}
+			continue;
+		}
+		if (line[i] === '/' && line[i + 1] === '*') {
+			out += '  ';
+			i += 2;
+			state.inBlockComment = true;
+			continue;
+		}
+		if (line[i] === '/' && line[i + 1] === '/') {
+			out += ' '.repeat(line.length - i);
+			break;
+		}
+		out += line[i];
+		i++;
+	}
+	return out;
+}
+
+function stripStringLiterals(line: string): string {
+	let out = '';
+	let quote: string | null = null;
+	for (let i = 0; i < line.length;) {
+		const ch = line[i]!;
+		if (quote) {
+			out += ' ';
+			if (ch === '\\' && i + 1 < line.length) {
+				out += ' ';
+				i += 2;
+				continue;
+			}
+			if (ch === quote) quote = null;
+			i++;
+			continue;
+		}
+		if (ch === '"' || ch === '\'') {
+			quote = ch;
+			out += ' ';
+			i++;
+			continue;
+		}
+		out += ch;
+		i++;
+	}
+	return out;
+}
+
 export function scanIncludesForSymbol(name: string, pre?: PreprocResult): ExternalDefHit | null {
 	if (!pre || !pre.includeTargets || !name) return null;
 	const queue: string[] = [];
@@ -47,10 +105,13 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 		// TEMP DEBUG: log traversal for transitive include resolution in tests
 		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[scanIncludes]', name, 'visiting', file); } catch { /* ignore */ }
 		const lines = readIncludeFileLines(file);
+		const commentState = { inBlockComment: false };
 		for (let i = 0; i < lines.length; i++) {
 			const L = lines[i]!;
+			const codeLine = stripComments(L, commentState);
+			const symbolLine = stripStringLiterals(codeLine);
 			// Discover further includes transitively
-			const inc = /^\s*#\s*include\s+["<]([^">]+)[">]/.exec(L);
+			const inc = /^\s*#\s*include\s+["<]([^">]+)[">]/.exec(codeLine);
 			if (inc) {
 				const target = inc[1];
 				const candidate = path.isAbsolute(target) ? target : path.join(path.dirname(file), target);
@@ -58,26 +119,26 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 				if (!seen.has(candidate) && fs.existsSync(candidate)) queue.push(candidate);
 			}
 			// Macro definition
-			const mMacro = /^\s*#\s*define\s+([A-Za-z_]\w*)/.exec(L);
+			const mMacro = /^\s*#\s*define\s+([A-Za-z_]\w*)/.exec(codeLine);
 			if (mMacro && mMacro[1] === name) {
 				try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND macro', name, 'in', file, 'line', i); } catch { /* ignore */ }
-				const col = L.indexOf(name);
-				return { file, line: i, startChar: col, endChar: col + name.length, kind: (/\w+\s*\(/.test(L) ? 'macro-func' : 'macro-obj') } as ExternalDefHit;
+				const col = codeLine.indexOf(name);
+				return { file, line: i, startChar: col, endChar: col + name.length, kind: (/\w+\s*\(/.test(codeLine) ? 'macro-func' : 'macro-obj') } as ExternalDefHit;
 			}
 			// Function prototype/definition
 			const funcRe = new RegExp(`(^|[^A-Za-z0-9_])([A-Za-z_]\\w*)\\s+(${name})\\s*\\(`);
-			const fm = funcRe.exec(L);
+			const fm = funcRe.exec(symbolLine);
 			if (fm) {
 				try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND function', name, 'in', file, 'line', i); } catch { /* ignore */ }
-				const col = L.indexOf(name, fm.index);
+				const col = symbolLine.indexOf(name, fm.index);
 				if (col >= 0) return { file, line: i, startChar: col, endChar: col + name.length, kind: 'function' } as ExternalDefHit;
 			}
 			// Global variable
 			const gvRe = new RegExp(`(^|[^A-Za-z0-9_])([A-Za-z_]\\w*)\\s+(${name})(?=\\n|[ \t]*[=;])`);
-			const gvm = gvRe.exec(L);
-			if (gvm && !/\(\s*$/.test(L.slice(gvm.index))) {
+			const gvm = gvRe.exec(symbolLine);
+			if (gvm && !/\(\s*$/.test(symbolLine.slice(gvm.index))) {
 				try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND global', name, 'in', file, 'line', i); } catch { /* ignore */ }
-				const col = L.indexOf(name, gvm.index);
+				const col = symbolLine.indexOf(name, gvm.index);
 				if (col >= 0) return { file, line: i, startChar: col, endChar: col + name.length, kind: 'global' } as ExternalDefHit;
 			}
 		}

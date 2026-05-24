@@ -68,4 +68,25 @@ describe('goto definition for macros', () => {
 		expect(locFoo).toBeTruthy();
 		expect(locFoo!.uri.endsWith('b.lslh')).toBe(true);
 	});
+
+	it('does not jump to commented declarations inside included files', async () => {
+		const fs = await import('node:fs/promises');
+		const base = path.join(__dirname, 'tmp_includes', 'definition_comments');
+		await fs.mkdir(base, { recursive: true });
+		await fs.writeFile(path.join(base, 'comments.lslh'), [
+			'// integer llOwnerSay(string msg);',
+			'/*',
+			'integer llSay(integer channel, string msg);',
+			'*/',
+			'string text = "integer llGetOwner();";',
+		].join('\n'), 'utf8');
+		const code = '#include "comments.lslh"\ndefault { state_entry() { llOwnerSay("hi"); } }\n';
+		const doc = docFrom(code, 'file:///proj/goto_comment_decl.lsl');
+		const defs = await loadTestDefs();
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [base] });
+		const callLine = code.split(/\r?\n/)[1]!;
+		const pos = { line: 1, character: callLine.indexOf('llOwnerSay') + 1 };
+		const loc = gotoDefinition(doc, pos, analysis, pre, defs);
+		expect(loc).toBeNull();
+	});
 });
