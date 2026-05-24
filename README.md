@@ -4,12 +4,13 @@ LSL (Linden Scripting Language) language tooling for VS Code.
 
 ## Repository Layout
 
-- `packages/server/`: TypeScript language server with preprocessing, parsing, analysis, diagnostics, hover, completions, signature help, semantic tokens, formatting, and navigation.
+- `packages/core/`: Reusable LSL preprocessing, parsing, analysis, diagnostics, hover, completions, signature help, semantic tokens, formatting, and navigation.
+- `packages/server/`: Language Server Protocol process that wires core analysis into VS Code/editor LSP requests.
 - `packages/client-vscode/`: VS Code extension that bundles and starts the server.
 - `third_party/lsl-definitions/`: Git submodule for the official [secondlife/lsl-definitions](https://github.com/secondlife/lsl-definitions) YAML used by the server, tests, and extension bundle.
 - `common/`: Local schema and override metadata used while loading official definitions.
 
-The runtime definition source is `third_party/lsl-definitions/lsl_definitions.yaml`. Server builds copy it to `packages/server/out/lsl_definitions.yaml`; extension packaging includes the built server output.
+The runtime definition source is `third_party/lsl-definitions/lsl_definitions.yaml`. Core builds copy it to `packages/core/out/lsl_definitions.yaml`, server builds copy it to `packages/server/out/lsl_definitions.yaml`, and extension packaging includes the built server output.
 
 ## Requirements
 
@@ -24,7 +25,7 @@ The runtime definition source is `third_party/lsl-definitions/lsl_definitions.ya
 - Watch during dev: `pnpm watch`
 - Lint: `pnpm lint`
 - Format/lint fix: `pnpm lint:fix`
-- Run server tests: `pnpm -C packages/server test`
+- Run core tests: `pnpm -C packages/core test`
 - Build VS Code package: `pnpm -C packages/client-vscode package`
 
 ## Definitions

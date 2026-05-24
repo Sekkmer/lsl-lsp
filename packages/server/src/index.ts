@@ -26,23 +26,40 @@ import {
 } from 'vscode-languageserver/node';
 import 'source-map-support/register.js';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { documentSymbols, gotoDefinition } from './symbols';
 import { URI } from 'vscode-uri';
-import { prepareRename as navPrepareRename, computeRenameEdits, findAllReferences } from './navigation';
-import { parseScriptFromText } from './ast/parser';
-import { analyzeAst } from './ast/analyze';
-import { isType } from './ast/types';
-import { Defs, loadDefs } from './defs';
-import type { PreprocResult } from './core/preproc';
-import { Analysis, LSL_DIAGCODES, diagCodeFriendly } from './analysisTypes';
-import { filterDiagnostics, parseDisabledDiagList } from './diagSettings';
-import { lex } from './lexer';
-import { semanticTokensLegend, buildSemanticTokens } from './semtok';
-import { lslCompletions, resolveCompletion, lslSignatureHelp } from './completions';
-import { lslHover } from './hover';
-import { formatDocumentEdits, formatRangeEdits, detectIndent, type FormatSettings } from './format';
-import { preprocessForAst } from './core/pipeline';
-import { clearIncludeResolverCache } from './core/pipeline';
+import {
+	type Analysis,
+	type Defs,
+	type DiagCode,
+	LSL_DIAGCODES,
+	type FormatSettings,
+	type PreprocResult,
+	type Script,
+	analyzeAst,
+	buildSemanticTokens,
+	clearIncludeResolverCache,
+	computeRenameEdits,
+	detectIndent,
+	diagCodeFriendly,
+	documentSymbols,
+	filterDiagnostics,
+	findAllReferences,
+	formatDocumentEdits,
+	formatRangeEdits,
+	gotoDefinition,
+	isType,
+	lex,
+	loadDefs,
+	lslCompletions,
+	lslHover,
+	lslSignatureHelp,
+	parseDisabledDiagList,
+	parseScriptFromText,
+	prepareRename as navPrepareRename,
+	preprocessForAst,
+	resolveCompletion,
+	semanticTokensLegend,
+} from '@lsl-lsp/core';
 
 const connection: Connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
@@ -72,7 +89,7 @@ const settings = {
 	}
 };
 
-let disabledDiagCodes = new Set<import('./analysisTypes').DiagCode>();
+let disabledDiagCodes = new Set<DiagCode>();
 
 function setsEqual<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
 	if (a.size !== b.size) return false;
@@ -98,7 +115,7 @@ type PipelineCache = {
 	tokens: ReturnType<typeof lex>;
 	analysis: Analysis;
 	// AST script used by the analysis pipeline
-	ast?: import('./ast/types').Script;
+	ast?: Script;
 	sem?: SemanticTokens & { resultId?: string };
 	// Track macros-only includes to avoid unnecessary reindex work
 	macrosOnlyIncludes?: string[];
@@ -197,7 +214,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 		conditionalGroups: full.conditionalGroups,
 	};
 	const tokens = lex(doc, pre.disabledRanges);
-	const ast: import('./ast/types').Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, includePaths: settings.includePaths, pre: full });
+	const ast: Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, includePaths: settings.includePaths, pre: full });
 	const analysis: Analysis = analyzeAst(doc, ast, defs, pre);
 	const entry: PipelineCache = { version: currentVersion, textHash: currentTextHash, pre, tokens, analysis, ast, macrosOnlyIncludes, configHash: currentHash };
 	pipelineCache.set(key, entry);

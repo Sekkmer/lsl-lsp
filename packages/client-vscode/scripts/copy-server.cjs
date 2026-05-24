@@ -6,6 +6,7 @@ const path = require('node:path');
 
 function copyDir(src, dest) {
 	if (!fs.existsSync(src)) return;
+	fs.rmSync(dest, { recursive: true, force: true });
 	fs.mkdirSync(dest, { recursive: true });
 	for (const entry of fs.readdirSync(src)) {
 		const s = path.join(src, entry);

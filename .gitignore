@@ -1,7 +1,7 @@
 /.github/prompts/
 node_modules/
 out/
-/packages/server/tests/tmp_includes/
+/packages/core/tests/tmp_includes/
 
 *.vsix
 *.log

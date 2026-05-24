@@ -1,0 +1,47 @@
+{
+  "name": "@lsl-lsp/core",
+  "version": "0.1.9",
+  "private": true,
+  "license": "MIT",
+  "author": {
+    "name": "Sekkmer",
+    "email": "sekkmer@gmail.com"
+  },
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./out/index.d.ts",
+      "default": "./out/index.js"
+    },
+    "./*": {
+      "types": "./out/*.d.ts",
+      "default": "./out/*.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "postbuild": "node scripts/copy-defs.cjs",
+    "watch": "tsc -w -p tsconfig.json",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "js-yaml": "^4.1.1",
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12",
+    "vscode-uri": "^3.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^24.12.4",
+    "@vitest/coverage-v8": "4.1.7",
+    "source-map-support": "^0.5.21",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.7"
+  }
+}

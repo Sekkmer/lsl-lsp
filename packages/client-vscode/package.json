@@ -125,7 +125,7 @@
 		"build": "tsc -p tsconfig.json",
 		"bundle": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --outfile=out/extension.js --sourcemap",
 		"bundle:server": "esbuild ../server/src/index.ts --bundle --platform=node --target=node18 --outfile=server/out/index.js --sourcemap",
-		"vscode:prepublish": "pnpm -C ../server build && node scripts/copy-server.cjs && pnpm run bundle:server && pnpm run bundle",
+		"vscode:prepublish": "pnpm -C ../core build && pnpm -C ../server build && node scripts/copy-server.cjs && pnpm run bundle:server && pnpm run bundle",
 		"package": "pnpm exec vsce package --no-dependencies",
 		"publish": "pnpm exec vsce publish",
 		"watch": "tsc -w -p tsconfig.json",
