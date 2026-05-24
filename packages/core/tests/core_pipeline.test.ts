@@ -62,4 +62,17 @@ describe('core pipeline', () => {
 		const ids = tokens.filter(t => t.kind === 'id').map(t => t.value);
 		expect(ids).toEqual(['y', 'y', 'z', 'x']);
 	});
+
+	it('preserves empty fixed macro arguments for positional binding', () => {
+		const src = [
+			'#define FIRST(a,b) a',
+			'#define SECOND(a,b) b',
+			'integer x = SECOND(, 2);',
+			'integer y = FIRST(1, );',
+		].join('\n');
+		const { tokens } = preprocessTokens(src, { includePaths: [] });
+		const values = tokens.map(t => t.value);
+		expect(values.slice(values.indexOf('x'), values.indexOf(';', values.indexOf('x')))).toEqual(['x', '=', '2']);
+		expect(values.slice(values.indexOf('y'), values.indexOf(';', values.indexOf('y')))).toEqual(['y', '=', '1']);
+	});
 });

@@ -26,6 +26,19 @@ describe('preprocessor: varargs macros', () => {
 		expect(asText.includes('42')).toBe(true);
 	});
 
+	it('does not expand __VA_OPT__ for an empty trailing variadic argument', async () => {
+		const defs = await loadTestDefs();
+		const code = [
+			'#define LOG(fmt, ...) llSay(0, fmt __VA_OPT__(,) __VA_ARGS__)',
+			'default { state_entry() { LOG("A",); } }',
+		].join('\n');
+		const doc = docFrom(code);
+		const { pre } = runPipeline(doc, defs);
+		const asText = (pre.expandedTokens ?? []).map(t => t.value).join(' ');
+		expect(asText).toContain('"A"');
+		expect(asText).not.toContain('"A" ,');
+	});
+
 	it('joins __VA_ARGS__ with commas for multiple args', async () => {
 		const defs = await loadTestDefs();
 		const code = [

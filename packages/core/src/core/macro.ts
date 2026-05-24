@@ -1021,6 +1021,7 @@ function parseMacroCall(tokens: Token[], startIndex: number): MacroCall | null {
 	let current = '';
 	const args: string[] = [];
 	let prevWasWord = false;
+	let sawTopLevelComma = false;
 	const isWord = (t: Token) => t.kind === 'id' || t.kind === 'number' || t.kind === 'keyword';
 	for (; i < tokens.length; i++) {
 		const tk = tokens[i]!;
@@ -1029,14 +1030,12 @@ function parseMacroCall(tokens: Token[], startIndex: number): MacroCall | null {
 			if (tk.value === ')') {
 				depth--; if (depth === 0) {
 					const trimmed = current.trim();
-					if (trimmed.length) args.push(trimmed); // only push non-empty arg content
-					// If the only collected argument is an empty string, treat as zero args (e.g., MACRO())
-					if (args.length === 1 && args[0] === '') args.length = 0;
+					if (trimmed.length || sawTopLevelComma) args.push(trimmed);
 					return { args, nextIndex: i+1, endSpanEnd: tk.span.end };
 				}
 				current += tk.value; prevWasWord = false; continue;
 			}
-			if (tk.value === ',' && depth === 1) { args.push(current.trim()); current=''; prevWasWord=false; continue; }
+			if (tk.value === ',' && depth === 1) { args.push(current.trim()); current=''; prevWasWord=false; sawTopLevelComma=true; continue; }
 			// other punctuation is significant
 			current += tk.value; prevWasWord=false; continue;
 		}
@@ -1057,9 +1056,7 @@ function parseMacroCall(tokens: Token[], startIndex: number): MacroCall | null {
 function expandFunctionMacro(name: string, def: FuncMacroDef, callArgs: string[], obj: Record<string, string | number | boolean>, fn: Record<string, FuncMacroDef>, callStart: number, callEnd: number, file?: string): Token[] {
 	const fixedCount = def.params.length;
 	const hasVar = def.hasVarArgs;
-	// Normalize callArgs: drop any empty-string entries that can arise from edge parsing cases
-	callArgs = callArgs.filter(a => a.length > 0);
-	const varProvided = hasVar ? callArgs.length > fixedCount : false;
+	const varProvided = hasVar ? callArgs.slice(fixedCount).some(arg => arg.trim().length > 0) : false;
 	const mapping = new Map<string,string>();
 	for (let i=0;i<fixedCount;i++) mapping.set(def.params[i]!, (callArgs[i] ?? '').trim());
 	const vaList = hasVar ? callArgs.slice(fixedCount).map(s=>s.trim()).filter(Boolean) : [];
