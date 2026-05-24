@@ -20,11 +20,6 @@ export function validateOperatorsFromAst(
 	callSignatures?: Map<string, SimpleType[][]>,
 	opts?: { flagSuspiciousAssignment?: boolean; constantNames?: ReadonlySet<string> },
 ) {
-	const unwrapParen = (expr: Expr): Expr => {
-		let cur = expr;
-		while (cur.kind === 'Paren') cur = cur.expression;
-		return cur;
-	};
 	for (const e of exprs) walk(e);
 
 	// Helper: report when an expression with inferred type 'void' is used as a value
@@ -488,10 +483,9 @@ export function validateOperatorsFromAst(
 			}
 			case 'Member': {
 				walk(e.object);
-				const base = unwrapParen(e.object);
 				const memberBaseOk =
-					base.kind === 'Member' ||
-					(base.kind === 'Identifier' && !opts?.constantNames?.has(base.name));
+					e.object.kind === 'Member' ||
+					(e.object.kind === 'Identifier' && !opts?.constantNames?.has(e.object.name));
 				if (!memberBaseOk) {
 					diagnostics.push({
 						code: LSL_DIAGCODES.SYNTAX,

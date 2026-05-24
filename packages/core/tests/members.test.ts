@@ -51,6 +51,7 @@ default {
 	state_entry() {
 		vector v = <1,2,3>;
 		float ok = v.x;
+		float parenBase = (v).x;
 		float callBase = makeVector().x;
 		float literalBase = <1,2,3>.x;
 		float constantBase = ZERO_VECTOR.x;
@@ -60,7 +61,7 @@ default {
 		const doc = docFrom(code, 'file:///proj/members_value_base.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		const memberBaseErrors = analysis.diagnostics.filter(d => d.message.includes('Member access is only allowed on vector/rotation variables or components'));
-		expect(memberBaseErrors.length).toBe(3);
+		expect(memberBaseErrors.length).toBe(4);
 		expect(analysis.diagnostics.some(d => d.message.includes('Unknown member') && d.message.includes('ok'))).toBe(false);
 	});
 });
