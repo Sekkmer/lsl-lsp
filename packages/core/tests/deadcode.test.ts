@@ -10,29 +10,30 @@ describe('dead code diagnostics', () => {
 		const { analysis } = runPipeline(doc, defs);
 		const dead = analysis.diagnostics.find(d => d.code === LSL_DIAGCODES.DEAD_CODE);
 		expect(dead).toBeTruthy();
+		expect(dead?.message).toContain('Dead code found beyond return statement');
 	});
 
-	it('flags code after state on same line', async () => {
+	it('does not flag code after state change', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('default{state_entry(){ state ready; integer x = 1; }} state ready { state_entry(){} }');
 		const { analysis } = runPipeline(doc, defs);
 		const dead = analysis.diagnostics.find(d => d.code === LSL_DIAGCODES.DEAD_CODE);
-		expect(dead).toBeTruthy();
+		expect(dead).toBeFalsy();
 	});
 
-	it('flags code after jump on same line', async () => {
+	it('does not flag code after jump', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('default{state_entry(){ jump L; integer x = 1; @L; }}');
 		const { analysis } = runPipeline(doc, defs);
 		const dead = analysis.diagnostics.find(d => d.code === LSL_DIAGCODES.DEAD_CODE);
-		expect(dead).toBeTruthy();
+		expect(dead).toBeFalsy();
 	});
 
-	it('does not flag code on next line', async () => {
+	it('flags code after return on next line', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('integer f(){ return 0;\ninteger x = 1; }');
 		const { analysis } = runPipeline(doc, defs);
 		const dead = analysis.diagnostics.find(d => d.code === LSL_DIAGCODES.DEAD_CODE);
-		expect(dead).toBeFalsy();
+		expect(dead).toBeTruthy();
 	});
 });

@@ -832,7 +832,6 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (!stmt) return;
 		switch (stmt.kind) {
 			case 'BlockStmt': {
-				// Dead code detection within a block: if a terminating stmt is followed by another stmt on the same line
 				// Also detect duplicate local declarations in the same block
 				const blockScope = pushScope(scope, 'block');
 				const blockTypeScope = pushTypeScope(typeScope);
@@ -847,16 +846,12 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 								diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Duplicate declaration of ${s.name}`, range: spanToRange(doc, s.span), severity: DiagnosticSeverity.Error });
 							} else localNames.add(s.name);
 						}
-						const isTerm = s && (s.kind === 'ReturnStmt' || s.kind === 'StateChangeStmt' || s.kind === 'JumpStmt');
-						if (!isTerm) continue;
+						if (!s || s.kind !== 'ReturnStmt') continue;
 						const next = stmt.statements[i + 1];
 						if (!next) continue;
-						// same line?
 						const sEnd = spanToRange(doc, s.span).end;
 						const nStart = spanToRange(doc, next.span).start;
-						if (sEnd.line === nStart.line) {
-							diagnostics.push({ code: LSL_DIAGCODES.DEAD_CODE, message: 'Unreachable code after terminating statement on the same line', range: { start: sEnd, end: nStart }, severity: DiagnosticSeverity.Warning });
-						}
+						diagnostics.push({ code: LSL_DIAGCODES.DEAD_CODE, message: 'Dead code found beyond return statement', range: { start: sEnd, end: nStart }, severity: DiagnosticSeverity.Warning });
 					}
 				} finally {
 					valueEnvStack.pop();
@@ -993,16 +988,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				if (elseIsEmptyStmt || elseEmptyBlock) diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body has no effect', range: spanToRange(doc, stmt.else.span), severity: DiagnosticSeverity.Warning });
 			}
 		}
-		// Dead code detection: if next statement starts on same line after a terminating stmt (return/state-change/jump)
-		const term = (s: Stmt | null) => s && (s.kind === 'ReturnStmt' || s.kind === 'StateChangeStmt' || s.kind === 'JumpStmt');
-		if (term(stmt)) {
-			// We don't have direct access to following tokens here; approximate by comparing end line of this stmt to start line of next sibling within a containing block.
-			// This check is best-effort: actual parser already slices spans including semicolons, so next sibling starting on same line can be detected at block visit.
-		}
 	}
-
-	// Override BlockStmt visiting to emit DEAD_CODE when two consecutive statements share a line and the first is terminating.
-	const _visitStmt = visitStmt; // not used; staying inline in switch
 
 	function isWithinEventScope(scope: Scope): boolean {
 		// Walk up scope chain and look for an explicitly tagged 'event' scope
