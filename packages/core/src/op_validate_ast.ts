@@ -446,22 +446,7 @@ export function validateOperatorsFromAst(
 				break;
 			}
 			case 'ListLiteral': {
-				// Walk and validate elements: LSL does not allow lists inside lists
-				for (const comp of e.elements) {
-					walk(comp);
-					const ct = inferExprTypeFromAst(comp, symbolTypes, functionReturnTypes);
-					const isListy = ct === 'list'
-						|| comp.kind === 'ListLiteral'
-						|| (comp.kind === 'Identifier' && symbolTypes.get(comp.name) === 'list');
-					if (isListy) {
-						diagnostics.push({
-							code: LSL_DIAGCODES.WRONG_TYPE,
-							message: 'List element cannot be a list',
-							range: mk(doc, comp.span.start, comp.span.end),
-							severity: DiagnosticSeverity.Error,
-						});
-					}
-				}
+				e.elements.forEach(walk);
 				break;
 			}
 			case 'VectorLiteral': {
