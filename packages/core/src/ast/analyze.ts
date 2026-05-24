@@ -797,10 +797,10 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			if (expr.left.kind === 'Identifier') {
 				if (expr.op === '=') {
 					const rhsVal = evalLocalConstant(expr.right);
-					currentValueEnv().setVar(expr.left.name, rhsVal);
+					currentValueEnv().setExistingOrLocal(expr.left.name, rhsVal);
 				} else {
 					const t = normalizeType(inferTypeOf(expr.left, typeScope));
-					currentValueEnv().setVar(expr.left.name, { kind: 'unknown', type: t } as Value);
+					currentValueEnv().setExistingOrLocal(expr.left.name, { kind: 'unknown', type: t } as Value);
 				}
 			}
 		}
@@ -808,7 +808,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			const arg = expr.argument;
 			if (arg.kind === 'Identifier') {
 				const t = normalizeType(inferTypeOf(arg, typeScope));
-				currentValueEnv().setVar(arg.name, { kind: 'unknown', type: t } as Value);
+				currentValueEnv().setExistingOrLocal(arg.name, { kind: 'unknown', type: t } as Value);
 			}
 		}
 	}
@@ -860,25 +860,32 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			case 'BlockStmt': {
 				// Dead code detection within a block: if a terminating stmt is followed by another stmt on the same line
 				// Also detect duplicate local declarations in the same block
+				const blockScope = pushScope(scope, 'block');
+				const blockTypeScope = pushTypeScope(typeScope);
+				valueEnvStack.push(currentValueEnv().child());
 				const localNames = new Set<string>();
-				for (let i = 0; i < stmt.statements.length; i++) {
-					const s = stmt.statements[i];
-					visitStmt(s, scope, typeScope);
-					if (s && s.kind === 'VarDecl') {
-						if (localNames.has(s.name)) {
-							diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Duplicate declaration of ${s.name}`, range: spanToRange(doc, s.span), severity: DiagnosticSeverity.Error });
-						} else localNames.add(s.name);
+				try {
+					for (let i = 0; i < stmt.statements.length; i++) {
+						const s = stmt.statements[i];
+						visitStmt(s, blockScope, blockTypeScope);
+						if (s && s.kind === 'VarDecl') {
+							if (localNames.has(s.name)) {
+								diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Duplicate declaration of ${s.name}`, range: spanToRange(doc, s.span), severity: DiagnosticSeverity.Error });
+							} else localNames.add(s.name);
+						}
+						const isTerm = s && (s.kind === 'ReturnStmt' || s.kind === 'StateChangeStmt' || s.kind === 'JumpStmt');
+						if (!isTerm) continue;
+						const next = stmt.statements[i + 1];
+						if (!next) continue;
+						// same line?
+						const sEnd = spanToRange(doc, s.span).end;
+						const nStart = spanToRange(doc, next.span).start;
+						if (sEnd.line === nStart.line) {
+							diagnostics.push({ code: LSL_DIAGCODES.DEAD_CODE, message: 'Unreachable code after terminating statement on the same line', range: { start: sEnd, end: nStart }, severity: DiagnosticSeverity.Warning });
+						}
 					}
-					const isTerm = s && (s.kind === 'ReturnStmt' || s.kind === 'StateChangeStmt' || s.kind === 'JumpStmt');
-					if (!isTerm) continue;
-					const next = stmt.statements[i + 1];
-					if (!next) continue;
-					// same line?
-					const sEnd = spanToRange(doc, s.span).end;
-					const nStart = spanToRange(doc, next.span).start;
-					if (sEnd.line === nStart.line) {
-						diagnostics.push({ code: LSL_DIAGCODES.DEAD_CODE, message: 'Unreachable code after terminating statement on the same line', range: { start: sEnd, end: nStart }, severity: DiagnosticSeverity.Warning });
-					}
+				} finally {
+					valueEnvStack.pop();
 				}
 				break;
 			}

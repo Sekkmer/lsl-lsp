@@ -61,6 +61,22 @@ export class Env {
 		this._vars.set(name, value);
 	}
 
+	setExistingOrLocal(name: string, value: Value): void {
+		if (this._vars.has(name)) {
+			this._vars.set(name, value);
+			return;
+		}
+		if (this._parent?.hasVar(name)) {
+			this._parent.setExistingOrLocal(name, value);
+			return;
+		}
+		this._vars.set(name, value);
+	}
+
+	private hasVar(name: string): boolean {
+		return this._vars.has(name) || !!this._parent?.hasVar(name);
+	}
+
 	child(): Env {
 		return new Env(new Map(), this._functionReturnTypes, this);
 	}

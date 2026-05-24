@@ -25,4 +25,11 @@ describe('duplicate declarations', () => {
 		const sameBlock = analysis.diagnostics.find(d => d.code === 'LSL070');
 		expect(sameBlock).toBeTruthy();
 	});
+
+	it('does not leak nested block locals into the enclosing block', async () => {
+		const defs = await loadTestDefs();
+		const src = 'default { state_entry() { if (TRUE) { integer hidden = 1; } hidden = 2; } }\n';
+		const { analysis } = runPipeline(docFrom(src), defs);
+		expect(analysis.diagnostics.some(d => d.message === 'Unknown identifier hidden')).toBe(true);
+	});
 });
