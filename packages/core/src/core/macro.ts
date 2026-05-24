@@ -275,6 +275,15 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 		if (!(d.kind === 'if' || d.kind === 'ifdef' || d.kind === 'ifndef')) return startIndex;
 		if (d.kind === 'if') collectIfUndef(d.expr, d.span);
 		const { next, activeSpans, inactiveSpans: chainInactive, debug: chainDebug } = evalConditionalChain(segs, startIndex, macros);
+		let chainDepth = 1;
+		for (let j=startIndex+1;j<next;j++) {
+			const sj = segs[j]!;
+			if (sj.type !== 'directive') continue;
+			const dk = sj.dir.kind;
+			if (dk === 'if' || dk === 'ifdef' || dk === 'ifndef') { chainDepth++; continue; }
+			if (dk === 'endif') { chainDepth--; continue; }
+			if (dk === 'elif' && chainDepth === 1) collectIfUndef(sj.dir.expr, sj.dir.span);
+		}
 		if (process.env.LSL_DEBUG_COND) {
 			try { console.log('[preproc-if-chain]', { file: fileId, at: d.span.start, kind: d.kind, expr: (d.kind === 'if' ? d.expr : d.kind === 'ifdef' || d.kind === 'ifndef' ? d.name : undefined), activeSpans: [...activeSpans], inactiveSpans: [...chainInactive], debug: chainDebug }); } catch { /* ignore */ }
 		}

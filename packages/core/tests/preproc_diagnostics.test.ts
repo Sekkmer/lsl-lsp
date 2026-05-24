@@ -33,6 +33,14 @@ describe('preprocessor diagnostics', () => {
 		expect(msgs.some(m => /Malformed #elif expression/i.test(m))).toBe(true);
 	});
 
+	it('reports undefined identifiers in #elif expressions', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('#if 0\nint A;\n#elif MISSING_SYMBOL\nint B;\n#endif\n');
+		const { pre } = runPipeline(doc, defs);
+		const msgs = messages(pre);
+		expect(msgs.some(m => /Identifier 'MISSING_SYMBOL' not defined in preprocessor expression/i.test(m))).toBe(true);
+	});
+
 	it('reports stray #elif and #else and #endif', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('#elif 1\n#else\n#endif\n');
