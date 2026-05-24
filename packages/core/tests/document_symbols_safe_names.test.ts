@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { documentSymbols } from '../src/symbols';
 import type { Analysis } from '../src/analysisTypes';
-import type { Range } from 'vscode-languageserver/node';
+import type { Range } from '../src/protocol';
 
 const r: Range = { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } };
 

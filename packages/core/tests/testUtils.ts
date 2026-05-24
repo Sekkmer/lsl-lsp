@@ -1,17 +1,17 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { TextDocument } from '../src/protocol';
 import type { Defs } from '../src/defs';
 import type { PreprocResult } from '../src/core/preproc';
 import { preprocessForAst } from '../src/core/pipeline';
 import { lex } from '../src/lexer';
 import { buildSemanticTokens } from '../src/semtok';
-import type { Hover, MarkedString, MarkupContent } from 'vscode-languageserver/node';
+import type { Hover, MarkedString, MarkupContent } from '../src/protocol';
 import type { Token as LexToken } from '../src/lexer';
 import type { SimpleToken } from '../src/navigation';
 import { parseScriptFromText } from '../src/ast/parser';
 import { analyzeAst } from '../src/ast/analyze';
-import { URI } from 'vscode-uri';
+import { fileUriToPath } from '../src/protocol';
 import { basenameFromUri } from '../src/builtins';
 
 export function docFrom(code: string, uri = 'file:///test.lsl') {
@@ -27,7 +27,7 @@ export type RunPipelineOptions = { macros?: Record<string, string | number | boo
 
 export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOptions) {
 	// Use new tokenizer+macro pipeline for disabled ranges/macros/includes, mirroring server integration
-	const fromPath = URI.parse(doc.uri).fsPath;
+	const fromPath = fileUriToPath(doc.uri) ?? '';
 	const full = preprocessForAst(doc.getText(), { includePaths: opts?.includePaths ?? [], fromPath, defines: opts?.macros ?? {} });
 	const pre: PreprocResult = {
 		disabledRanges: full.disabledRanges,

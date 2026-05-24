@@ -3,7 +3,7 @@ import { docFrom } from './testUtils';
 import { loadDefs } from '../src/defs';
 import path from 'node:path';
 import { runPipeline } from './testUtils';
-import { DiagnosticSeverity } from 'vscode-languageserver/node';
+import { DiagnosticSeverity } from '../src/protocol';
 import { parseScriptFromText } from '../src/ast/parser';
 import { inferExprTypeFromAst } from '../src/ast/infer';
 import type { SimpleType } from '../src/ast/infer';

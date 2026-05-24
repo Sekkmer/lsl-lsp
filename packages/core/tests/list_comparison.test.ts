@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { DiagnosticSeverity } from 'vscode-languageserver/node';
+import { DiagnosticSeverity } from '../src/protocol';
 import { docFrom, runPipeline } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
 

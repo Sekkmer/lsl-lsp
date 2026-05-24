@@ -1,5 +1,5 @@
-import type { TextDocument } from 'vscode-languageserver-textdocument';
-import type { Range } from 'vscode-languageserver/node';
+import type { TextDocument } from '../protocol';
+import type { Range } from '../protocol';
 
 export type Span = { start: number; end: number };
 

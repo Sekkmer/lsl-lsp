@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { TextDocument } from '../src/protocol';
 import { loadTestDefs } from './loadDefs.testutil';
 import { runPipeline } from './testUtils';
 

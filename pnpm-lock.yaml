@@ -57,15 +57,6 @@ importers:
       js-yaml:
         specifier: ^4.1.1
         version: 4.1.1
-      vscode-languageserver:
-        specifier: ^9.0.1
-        version: 9.0.1
-      vscode-languageserver-textdocument:
-        specifier: ^1.0.12
-        version: 1.0.12
-      vscode-uri:
-        specifier: ^3.1.0
-        version: 3.1.0
     devDependencies:
       '@types/js-yaml':
         specifier: ^4.0.9

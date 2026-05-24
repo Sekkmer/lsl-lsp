@@ -1,4 +1,5 @@
-import type { DiagnosticSeverity, Range } from 'vscode-languageserver/node';
+import type { Range } from './protocol';
+import { DiagnosticSeverity } from './protocol';
 
 export const LSL_DIAGCODES = {
 	SYNTAX: 'LSL000',

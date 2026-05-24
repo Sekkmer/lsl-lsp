@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { docFrom, runPipeline } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
 import { computeRenameEdits } from '../src/navigation';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { TextDocument } from '../src/protocol';
 
 function posOf(doc: TextDocument, needle: string) {
 	const idx = doc.getText().indexOf(needle);

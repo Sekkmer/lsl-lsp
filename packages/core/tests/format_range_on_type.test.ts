@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { TextDocument } from 'vscode-languageserver-textdocument';
-import { Range } from 'vscode-languageserver/node';
+import { TextDocument } from '../src/protocol';
+import type { Range } from '../src/protocol';
 import type { PreprocResult } from '../src/core/preproc';
 import { formatRangeEdits, type FormatSettings } from '../src/format';
 

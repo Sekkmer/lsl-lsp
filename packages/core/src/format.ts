@@ -1,5 +1,5 @@
-import { TextDocument } from 'vscode-languageserver-textdocument';
-import { TextEdit, Range } from 'vscode-languageserver/node';
+import type { TextDocument } from './protocol';
+import type { TextEdit, Range } from './protocol';
 import type { PreprocResult } from './core/preproc';
 
 export interface FormatSettings {

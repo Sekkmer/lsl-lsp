@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { parseScriptFromText } from '../src/ast/parser';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { TextDocument } from '../src/protocol';
 import { analyzeAst } from '../src/ast/analyze';
 import { loadTestDefs } from './loadDefs.testutil';
 

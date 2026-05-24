@@ -12,6 +12,7 @@ import type { MacroDefines } from '../core/macro';
 import { basenameFromUri } from '../builtins';
 import { Tokenizer } from '../core/tokenizer';
 import { TokenStream } from '../core/tokens';
+import { fileUriToPath } from '../protocol';
 // (macro expansion already applied via preprocessForAst.expandedTokens)
 
 type ParseOptions = {
@@ -23,7 +24,7 @@ type ParseOptions = {
 
 export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', opts?: ParseOptions): Script {
 	// Reuse provided pre result when available to avoid double preprocessing (important for tests/pipeline).
-	const fromPath = uri.startsWith('file://') ? require('vscode-uri').URI.parse(uri).fsPath : undefined;
+	const fromPath = uri.startsWith('file://') ? fileUriToPath(uri) : undefined;
 	const basename = basenameFromUri(uri);
 	// Avoid redefining __FILE__ early; builtin expansion handles it.
 	const baseDefines = { ...(opts?.macros ?? {}) };

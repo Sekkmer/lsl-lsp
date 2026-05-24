@@ -1,5 +1,5 @@
-import { TextDocument } from 'vscode-languageserver-textdocument';
-import { DiagnosticSeverity } from 'vscode-languageserver/node';
+import type { TextDocument } from './protocol';
+import { DiagnosticSeverity } from './protocol';
 import { Expr } from './ast/types';
 import { inferExprTypeFromAst, isZeroLiteral, type SimpleType } from './ast/infer';
 import { Diag, DiagCode, LSL_DIAGCODES } from './analysisTypes';

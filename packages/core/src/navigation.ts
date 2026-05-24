@@ -1,5 +1,5 @@
-import { TextDocument } from 'vscode-languageserver-textdocument';
-import { Range, TextEdit } from 'vscode-languageserver/node';
+import type { TextDocument } from './protocol';
+import type { Range, TextEdit } from './protocol';
 import type { Analysis } from './analysisTypes';
 import type { PreprocResult } from './core/preproc';
 import type { Token as LexToken } from './lexer';

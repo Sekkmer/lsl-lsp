@@ -1,5 +1,5 @@
-import { SemanticTokens, SemanticTokensBuilder, SemanticTokensLegend } from 'vscode-languageserver/node';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { SemanticTokensBuilder, type SemanticTokens, type SemanticTokensLegend } from './protocol';
+import type { TextDocument } from './protocol';
 import { Token } from './lexer';
 import { Defs } from './defs';
 import type { PreprocResult } from './core/preproc';

@@ -1,8 +1,13 @@
 import {
-	CompletionItem, CompletionItemKind,
-	Position, CompletionParams, SignatureHelp, SignatureInformation, ParameterInformation
-} from 'vscode-languageserver/node';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+	CompletionItemKind,
+	ParameterInformation,
+	SignatureInformation,
+	type CompletionItem,
+	type CompletionParams,
+	type Position,
+	type SignatureHelp,
+} from './protocol';
+import type { TextDocument } from './protocol';
 import { Defs, normalizeType } from './defs';
 import { computeMacroAliases } from './core/macro';
 import type { Analysis, Decl } from './analysisTypes';

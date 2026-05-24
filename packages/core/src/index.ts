@@ -9,6 +9,7 @@ export * from './lexer';
 export * from './navigation';
 export * from './op_validate_ast';
 export * from './parser';
+export * from './protocol';
 export * from './resolver';
 export * from './semtok';
 export * from './symbols';

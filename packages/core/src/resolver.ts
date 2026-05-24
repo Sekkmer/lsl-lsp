@@ -1,9 +1,9 @@
-import { Position, Range } from 'vscode-languageserver/node';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { filePathToUri, type Position, type Range } from './protocol';
+import type { TextDocument } from './protocol';
 import type { Analysis } from './analysisTypes';
 import type { Defs } from './defs';
 import type { PreprocResult } from './core/preproc';
-import { URI } from 'vscode-uri';
+
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -12,6 +12,10 @@ export type ResolvedTarget =
 	| { kind: 'macro-obj' | 'macro-func'; name: string; uri: string; range: Range; from: 'local' | 'include' }
 	| { kind: 'function' | 'global' | 'state' | 'event' | 'var' | 'param'; name: string; uri: string; range: Range; from: 'local' | 'include' }
 	| { kind: 'builtin-func' | 'builtin-const' | 'keyword' | 'type'; name: string };
+
+export interface ResolverOptions {
+	filePathToUri?: (filePath: string) => string;
+}
 
 // Simple one-run cache of include file contents -> lines for definition scanning
 const includeFileCache: Map<string, { mtimeMs: number; lines: string[]; text: string }> = new Map();
@@ -104,16 +108,18 @@ export function resolveSymbolAt(
 	pos: Position,
 	analysis: Analysis,
 	pre?: PreprocResult,
-	defs?: Defs
+	defs?: Defs,
+	options: ResolverOptions = {}
 ): ResolvedTarget | null {
 	const offset = doc.offsetAt(pos);
+	const toUri = options.filePathToUri ?? filePathToUri;
 	try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] pos', pos.line, pos.character); } catch { /* ignore */ }
 
 	// If on an #include target, navigate to the resolved file
 	if (pre && pre.includeTargets) {
 		for (const it of pre.includeTargets) {
 			if (offset >= it.start && offset <= it.end && it.resolved) {
-				return { kind: 'include-target', uri: URI.file(it.resolved).toString(), range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } };
+				return { kind: 'include-target', uri: toUri(it.resolved), range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } };
 			}
 		}
 	}
@@ -128,7 +134,7 @@ export function resolveSymbolAt(
 		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] very-early include scan', earlyWord); } catch { /* ignore */ }
 		const veryEarly = scanIncludesForSymbol(earlyWord, pre);
 		if (veryEarly) {
-			const uri = veryEarly.file.startsWith('file://') ? veryEarly.file : URI.file(path.resolve(veryEarly.file)).toString();
+			const uri = veryEarly.file.startsWith('file://') ? veryEarly.file : toUri(path.resolve(veryEarly.file));
 			return { kind: veryEarly.kind as ResolvedTarget['kind'], name: earlyWord, uri, range: { start: { line: veryEarly.line, character: veryEarly.startChar }, end: { line: veryEarly.line, character: veryEarly.endChar } }, from: 'include' };
 		}
 	}
@@ -175,7 +181,7 @@ export function resolveSymbolAt(
 		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] early cross-include scan', refName); } catch { /* ignore */ }
 		const earlyHit = scanIncludesForSymbol(refName, pre);
 		if (earlyHit) {
-			const uri = earlyHit.file.startsWith('file://') ? earlyHit.file : URI.file(path.resolve(earlyHit.file)).toString();
+			const uri = earlyHit.file.startsWith('file://') ? earlyHit.file : toUri(path.resolve(earlyHit.file));
 			return { kind: earlyHit.kind as ResolvedTarget['kind'], name: refName, uri, range: { start: { line: earlyHit.line, character: earlyHit.startChar }, end: { line: earlyHit.line, character: earlyHit.endChar } }, from: 'include' };
 		}
 	}
@@ -229,7 +235,7 @@ export function resolveSymbolAt(
 		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] cross-include scan (late)', refName); } catch { /* ignore */ }
 		const hit = scanIncludesForSymbol(refName, pre);
 		if (hit) {
-			const uri = hit.file.startsWith('file://') ? hit.file : URI.file(path.resolve(hit.file)).toString();
+			const uri = hit.file.startsWith('file://') ? hit.file : toUri(path.resolve(hit.file));
 			return { kind: hit.kind as ResolvedTarget['kind'], name: refName, uri, range: { start: { line: hit.line, character: hit.startChar }, end: { line: hit.line, character: hit.endChar } }, from: 'include' };
 		}
 	}

@@ -541,7 +541,7 @@ connection.onDefinition((params, token): Definition | LocationLink[] | null => {
 	if (!doc || !defs) return null;
 
 	const entry = getPipeline(doc); if (!entry) return null;
-	return gotoDefinition(doc, params.position, entry.analysis, entry.pre, defs);
+	return gotoDefinition(doc, params.position, entry.analysis, entry.pre, defs, { filePathToUri: p => URI.file(p).toString() });
 });
 
 // Provide clickable links for include paths

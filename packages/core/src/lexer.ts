@@ -1,4 +1,4 @@
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import type { TextDocument } from './protocol';
 import type { DisabledRange } from './core/preproc';
 
 export type TokKind = 'id' | 'num' | 'str' | 'kw' | 'type' | 'const' | 'punc' | 'op' | 'comment' | 'pp';

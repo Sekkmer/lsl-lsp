@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { TextDocument } from '../src/protocol';
 import { formatDocumentEdits, type FormatSettings } from '../src/format';
 
 function fmt(input: string, braceStyle: 'same-line' | 'next-line' = 'same-line') {

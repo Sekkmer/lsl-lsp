@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import path from 'node:path';
-import { DiagnosticSeverity } from 'vscode-languageserver/node';
+import { DiagnosticSeverity } from '../src/protocol';
 import { parseScriptFromText } from '../src/ast/parser';
 import { Env, evalExpr } from '../src/ast/eval';
 import type { Expr, Type } from '../src/ast/types';

@@ -1,11 +1,11 @@
-import { DocumentSymbol, Location, Position, SymbolKind } from 'vscode-languageserver/node';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { DocumentSymbol, SymbolKind, filePathToUri, type Location, type Position } from './protocol';
+import type { TextDocument } from './protocol';
 import { Analysis } from './analysisTypes';
 import type { Defs } from './defs';
 import type { PreprocResult } from './core/preproc';
-import { resolveSymbolAt, scanIncludesForSymbol } from './resolver';
+import { resolveSymbolAt, scanIncludesForSymbol, type ResolverOptions } from './resolver';
 import path from 'node:path';
-import { URI } from 'vscode-uri';
+
 
 export function documentSymbols(a: Analysis): DocumentSymbol[] {
 	const safeName = (name?: string | null): string | null => {
@@ -59,8 +59,9 @@ export function documentSymbols(a: Analysis): DocumentSymbol[] {
 	return top;
 }
 
-export function gotoDefinition(doc: TextDocument, pos: Position, a: Analysis, pre?: PreprocResult, defs?: Defs): Location | null {
-	const target = resolveSymbolAt(doc, pos, a, pre, defs);
+export function gotoDefinition(doc: TextDocument, pos: Position, a: Analysis, pre?: PreprocResult, defs?: Defs, options: ResolverOptions = {}): Location | null {
+	const toUri = options.filePathToUri ?? filePathToUri;
+	const target = resolveSymbolAt(doc, pos, a, pre, defs, options);
 	if (!target) return null;
 	if ('uri' in target && 'range' in target) {
 		return { uri: target.uri, range: target.range };
@@ -80,7 +81,7 @@ export function gotoDefinition(doc: TextDocument, pos: Position, a: Analysis, pr
 			if (text[k] === '(') {
 				const hit = scanIncludesForSymbol(name, pre);
 				if (hit) {
-					const uri = hit.file.startsWith('file://') ? hit.file : URI.file(path.resolve(hit.file)).toString();
+					const uri = hit.file.startsWith('file://') ? hit.file : toUri(path.resolve(hit.file));
 					return { uri, range: { start: { line: hit.line, character: hit.startChar }, end: { line: hit.line, character: hit.endChar } } };
 				}
 			}

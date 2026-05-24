@@ -1,5 +1,5 @@
-import { TextDocument } from 'vscode-languageserver-textdocument';
-import { DiagnosticSeverity, Range } from 'vscode-languageserver/node';
+import type { TextDocument } from '../protocol';
+import { DiagnosticSeverity, fileUriToPath, type Range } from '../protocol';
 import type { Defs } from '../defs';
 import type { PreprocResult } from '../core/preproc';
 import { Script, Expr, Function as AstFunction, State as AstState, spanToRange, isType as isLslType, Stmt, Type } from './types';
@@ -1125,7 +1125,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	try {
 		const expandedEarly = pre.expandedTokens as unknown as Token[] | undefined;
 		if (expandedEarly && expandedEarly.length) {
-			let primaryFsPath: string | undefined; try { const u = (doc.uri.startsWith('file://') ? require('vscode-uri').URI.parse(doc.uri).fsPath : undefined); primaryFsPath = u; } catch { /* ignore */ }
+			let primaryFsPath: string | undefined; try { primaryFsPath = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined; } catch { /* ignore */ }
 			// Current declared names
 			const declaredFuncNames = new Set<string>(); for (const d of decls) if (d.kind === 'func') declaredFuncNames.add(d.name);
 			const declaredVarNames = new Set<string>(); for (const d of decls) if (d.kind === 'var') declaredVarNames.add(d.name);
@@ -1219,7 +1219,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			// We only care when originFile differs from primary doc (heuristic: token has originFile and
 			// that path is different from current file path resolved from doc.uri) and the name clashes.
 			let primaryFsPath: string | undefined;
-			try { const u = (doc.uri.startsWith('file://') ? require('vscode-uri').URI.parse(doc.uri).fsPath : undefined); primaryFsPath = u; } catch { /* ignore */ }
+			try { primaryFsPath = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined; } catch { /* ignore */ }
 			const toks = expanded as Token[];
 			for (let i = 0; i < toks.length; i++) {
 				const t = toks[i]!;

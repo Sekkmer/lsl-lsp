@@ -9,7 +9,7 @@
   },
   "main": "out/index.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node ../../scripts/clean-dir.cjs out && tsc -p tsconfig.json",
     "postbuild": "node ../core/scripts/copy-defs.cjs out/lsl_definitions.yaml",
     "watch": "tsc -w -p tsconfig.json",
     "start": "node out/index.js",

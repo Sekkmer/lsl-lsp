@@ -1,5 +1,5 @@
-import { Hover, MarkupKind, Position } from 'vscode-languageserver/node';
-import { TextDocument } from 'vscode-languageserver-textdocument';
+import { MarkupKind, type Hover, type Position } from './protocol';
+import type { TextDocument } from './protocol';
 import { Defs } from './defs';
 import type { DefFunction } from './defs';
 import fs from 'node:fs';
