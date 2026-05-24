@@ -333,11 +333,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	if (script.states.size === 0) {
 		const text: string = doc.getText ? doc.getText() : '';
 		const uri: string = doc.uri || '';
-		const startsWithPreproc = /^[\s\r\n]*#/.test(text);
 		const headerLike = /\/include\//.test(uri)
 			|| /^[ \t]*#pragma\s+once/m.test(text)
-			|| /^[ \t]*#ifndef\s+INCLUDE_/m.test(text)
-			|| startsWithPreproc; // common include guards or header-style first line
+			|| /^[ \t]*#ifndef\s+INCLUDE_/m.test(text);
 		if (!headerLike) {
 			// Only consider actual LSL event names at start-of-line
 			const eventNames = Array.from(defs.events.keys());
