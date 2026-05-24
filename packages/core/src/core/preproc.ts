@@ -14,6 +14,7 @@ export type ConditionalGroup = { head: { start: number; end: number }; branches:
 
 export interface PreprocResult {
 	disabledRanges: DisabledRange[];
+	inactiveRanges?: DisabledRange[];
 	macros: MacroDefines;
 	funcMacros: Record<string, string>;
 	macroDefs?: Record<string, { start: number; end: number; file: string }>;

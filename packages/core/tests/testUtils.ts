@@ -31,6 +31,7 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOpt
 	const full = preprocessForAst(doc.getText(), { includePaths: opts?.includePaths ?? [], fromPath, defines: opts?.macros ?? {} });
 	const pre: PreprocResult = {
 		disabledRanges: full.disabledRanges,
+		inactiveRanges: full.inactiveRanges,
 		macros: { ...full.macros },
 		funcMacros: full.funcMacros,
 		macroDefs: full.macroDefs,
@@ -48,7 +49,7 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOpt
 
 	// Original lexed tokens (pre-expansion) still useful for semantic tokens; however
 	// tests validating macro expansion want the fully expanded stream. Expose both.
-	const rawTokens = lex(doc, pre.disabledRanges);
+	const rawTokens = lex(doc, pre.inactiveRanges ?? pre.disabledRanges);
 	const expanded: LexToken[] | undefined = full.expandedTokens
 		? full.expandedTokens.map(t => ({ kind: t.kind as unknown as LexToken['kind'], value: t.value, start: t.span.start, end: t.span.end }))
 		: undefined;

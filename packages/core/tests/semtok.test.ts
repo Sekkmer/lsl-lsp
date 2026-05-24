@@ -73,4 +73,19 @@ integer k = __LINE__;
 		// Line 6: #include -> 'include' as keyword
 		expect(findAt(6, 1)?.type).toBe(idx('keyword'));
 	});
+
+	it('colors live code inside diagnostic disable blocks', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom([
+			'// lsl-disable',
+			'integer x = TRUE;',
+			'// lsl-enable',
+		].join('\n'));
+		const { sem } = runPipeline(doc, defs);
+		const spans = semToSpans(doc, sem);
+		const findAt = (line: number, col: number) => spans.find(s => s.line === line && col >= s.char && col < s.char + s.len);
+
+		expect(findAt(1, 0)?.type).toBe(idx('type'));
+		expect(findAt(1, 12)?.type).toBe(idx('enumMember'));
+	});
 });

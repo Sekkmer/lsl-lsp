@@ -52,6 +52,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	macroDefs?: Record<string, { start: number; end: number; file: string }>;
 	includes: string[];
 	disabledRanges: { start: number; end: number }[];
+	inactiveRanges: { start: number; end: number }[];
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[];
 	missingIncludes?: { start: number; end: number; file: string }[];
 	preprocDiagnostics?: { start: number; end: number; message: string; code?: string }[];
@@ -160,6 +161,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	// Replace with merged list
 	disabledRanges.length = 0; for (const r of merged) disabledRanges.push(r);
 	// Merge inactive conditional branch spans into disabledRanges (all-codes suppression)
+	const inactiveRanges = pre.inactiveSpans ? pre.inactiveSpans.map(r => ({ start: r.start, end: r.end })) : [];
 	if (pre.inactiveSpans && pre.inactiveSpans.length) {
 		for (const r of pre.inactiveSpans) disabledRanges.push({ start: r.start, end: r.end });
 	}
@@ -229,6 +231,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 		macroDefs: pre.macroDefs,
 		includes: pre.includes,
 		disabledRanges,
+		inactiveRanges,
 		includeTargets,
 		missingIncludes,
 		preprocDiagnostics,

@@ -268,6 +268,7 @@ async function readAndPreprocessFile(file: string, opts: CliOptions) {
 function toPreprocResult(full: ReturnType<typeof preprocessForAst>): PreprocResult {
 	const pre: PreprocResult = {
 		disabledRanges: full.disabledRanges,
+		inactiveRanges: full.inactiveRanges,
 		macros: full.macros,
 		funcMacros: full.funcMacros,
 		macroDefs: full.macroDefs,

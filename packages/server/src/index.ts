@@ -204,6 +204,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 	if (!arraysShallowEqual(hit?.macrosOnlyIncludes, macrosOnlyIncludes)) indexIncludesList(key, macrosOnlyIncludes);
 	const pre: PreprocResult = {
 		disabledRanges: full.disabledRanges,
+		inactiveRanges: full.inactiveRanges,
 		macros: full.macros,
 		funcMacros: full.funcMacros,
 		macroDefs: full.macroDefs,
@@ -214,7 +215,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 		diagDirectives: full.diagDirectives,
 		conditionalGroups: full.conditionalGroups,
 	};
-	const tokens = lex(doc, pre.disabledRanges);
+	const tokens = lex(doc, pre.inactiveRanges ?? pre.disabledRanges);
 	const ast: Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, includePaths: settings.includePaths, pre: full });
 	const analysis: Analysis = analyzeAst(doc, ast, defs, pre);
 	const entry: PipelineCache = { version: currentVersion, textHash: currentTextHash, pre, tokens, analysis, ast, macrosOnlyIncludes, configHash: currentHash };

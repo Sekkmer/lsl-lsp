@@ -9,7 +9,8 @@ import { fileUriToPath } from './protocol';
 export type SimpleToken = { kind: string; value: string; start: number; end: number };
 
 function isDisabledOffset(pre: PreprocResult, offset: number): boolean {
-	return pre.disabledRanges.some(r => offset >= r.start && offset < r.end);
+	const inactiveRanges = pre.inactiveRanges ?? pre.disabledRanges;
+	return inactiveRanges.some(r => offset >= r.start && offset < r.end);
 }
 
 function localMacroDefNameSpan(doc: TextDocument, pre: PreprocResult, name: string): { start: number; end: number } | null {

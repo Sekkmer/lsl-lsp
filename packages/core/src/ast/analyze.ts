@@ -346,7 +346,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				for (const match of codeText.matchAll(sigRe)) {
 					const leading = /^[\t ]*/.exec(match[0])?.[0].length ?? 0;
 					const eventStart = match.index + leading;
-					const disabled = pre.disabledRanges.some(r => eventStart >= r.start && eventStart < r.end);
+					const inactiveRanges = pre.inactiveRanges ?? pre.disabledRanges;
+					const disabled = inactiveRanges.some(r => eventStart >= r.start && eventStart < r.end);
 					if (disabled) continue;
 					const eventName = match[1] ?? '';
 					diagnostics.push({
