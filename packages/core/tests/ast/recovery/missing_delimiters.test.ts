@@ -7,7 +7,7 @@ describe('AST parser recovery: missing delimiters', () => {
 	it('missing ) in call args recovers', () => {
 		const src = [
 			'default {',
-			'    event(){',
+			'    state_entry(){',
 			'        llSay(0, "x"',
 			'        integer y = 1;',
 			'    }',
@@ -24,7 +24,7 @@ describe('AST parser recovery: missing delimiters', () => {
 		const src = [
 			'integer x;',
 			'default {',
-			'    event(){',
+			'    state_entry(){',
 			'        list L = [1, 2, 3;',
 			'        x = 1;',
 			'    }',
@@ -41,7 +41,7 @@ describe('AST parser recovery: missing delimiters', () => {
 			'integer f(integer a, integer b {',
 			'    return a + b;',
 			'}',
-			'default { event(){ } }',
+			'default { state_entry(){ } }',
 		].join('\n');
 		const s = parseScriptFromText(src);
 		expect(s.functions.has('f')).toBe(true);

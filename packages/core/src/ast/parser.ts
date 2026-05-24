@@ -300,8 +300,12 @@ class Parser {
 		while (this.peek().kind !== 'eof') {
 			// skip any directives that may have been peeked
 			if (this.peek().kind === 'directive') { this.look = null; this.lx.next(); continue; }
-			// skip stray semicolons
-			if (this.maybe('punct', ';')) continue;
+			// top-level empty statements are not valid LSL
+			const straySemi = this.maybe('punct', ';');
+			if (straySemi) {
+				this.report(straySemi, 'unexpected \';\' at top-level', 'LSL000');
+				continue;
+			}
 			// Detect and report illegal global state-change statements: "state <id>;"
 			if (this.peek().kind === 'keyword' && this.peek().value === 'state') {
 				const tState = this.peek();
@@ -570,7 +574,11 @@ class Parser {
 			if (++loopGuard > 10000) { this.report(this.peek(), 'parser recovery limit reached inside state', 'LSL000'); break; }
 			// Skip directives and stray semicolons
 			while (this.peek().kind === 'directive') { this.look = null; this.lx.next(); }
-			if (this.maybe('punct', ';')) continue;
+			const straySemi = this.maybe('punct', ';');
+			if (straySemi) {
+				this.report(straySemi, 'Only event handlers are allowed directly inside a state body', 'LSL000');
+				continue;
+			}
 			// If we see a new top-level declaration inside a state body, assume missing '}' before it
 			const look = this.peek();
 			if (look.kind === 'keyword') {
@@ -585,6 +593,10 @@ class Parser {
 				if (tokenStateDecl || tokenDefaultDecl || tokenFuncDecl) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
 			}
 			if (look.kind === 'eof') { this.report(look, 'missing } before end of file', 'LSL000'); break; }
+			if (look.kind === 'keyword') {
+				this.reportInvalidStateBodyMember(look);
+				continue;
+			}
 			const t = this.peek();
 			if (t.kind === 'id') {
 				const evNameTok = this.next();
@@ -597,14 +609,11 @@ class Parser {
 					events.push(ev);
 					continue;
 				} else {
-					// Not an event declaration; attempt to recover by parsing as statement and discarding
-					try { this.parseStmt(false); }
-					catch { /* ignored; error already reported by parseStmt */ }
+					this.reportInvalidStateBodyMember(evNameTok);
 					continue;
 				}
 			}
-			// Fallback: try to parse a statement to advance and recover
-			try { this.parseStmt(false); } catch { /* errors already reported */ }
+			this.reportInvalidStateBodyMember(t);
 		}
 		return { span: spanFrom(kw.span.start, this.peek().span.end), kind: 'State', name, events };
 	}
@@ -617,7 +626,11 @@ class Parser {
 		while (!this.maybe('punct', '}')) {
 			if (++loopGuard > 10000) { this.report(this.peek(), 'parser recovery limit reached inside default state', 'LSL000'); break; }
 			while (this.peek().kind === 'directive') { this.look = null; this.lx.next(); }
-			if (this.maybe('punct', ';')) continue;
+			const straySemi = this.maybe('punct', ';');
+			if (straySemi) {
+				this.report(straySemi, 'Only event handlers are allowed directly inside a state body', 'LSL000');
+				continue;
+			}
 			const look = this.peek();
 			if (look.kind === 'keyword') {
 				const ahead = this.lookAheadNonTrivia(3);
@@ -629,6 +642,10 @@ class Parser {
 				if (tokenStateDecl || tokenDefaultDecl || tokenFuncDecl) { this.report(look, 'missing } before next declaration', 'LSL000'); break; }
 			}
 			if (look.kind === 'eof') { this.report(look, 'missing } before end of file', 'LSL000'); break; }
+			if (look.kind === 'keyword') {
+				this.reportInvalidStateBodyMember(look);
+				continue;
+			}
 			const t = this.peek();
 			if (t.kind === 'id') {
 				// Treat any identifier followed by '(' as an event declaration. This keeps unknown event
@@ -643,13 +660,34 @@ class Parser {
 					events.push(ev);
 					continue;
 				}
-				// Otherwise parse as a statement
-				try { this.parseStmt(false); } catch { /* ignore */ }
+				this.reportInvalidStateBodyMember(t);
 				continue;
 			}
-			try { this.parseStmt(false); } catch { /* ignore */ }
+			this.reportInvalidStateBodyMember(t);
 		}
 		return { span: spanFrom(def.span.start, this.peek().span.end), kind: 'State', name: 'default', events };
+	}
+
+	private reportInvalidStateBodyMember(t: Token) {
+		this.report(t, 'Only event handlers are allowed directly inside a state body', 'LSL000');
+		this.consumeInvalidStateBodyMember();
+	}
+
+	private consumeInvalidStateBodyMember() {
+		let braceDepth = 0;
+		let parenDepth = 0;
+		for (;;) {
+			const t = this.peek();
+			if (t.kind === 'eof') return;
+			if (braceDepth === 0 && parenDepth === 0 && t.kind === 'punct' && t.value === '}') return;
+			const cur = this.next();
+			if (cur.kind !== 'punct') continue;
+			if (cur.value === '(') parenDepth++;
+			else if (cur.value === ')' && parenDepth > 0) parenDepth--;
+			else if (cur.value === '{') braceDepth++;
+			else if (cur.value === '}' && braceDepth > 0) braceDepth--;
+			else if (cur.value === ';' && braceDepth === 0 && parenDepth === 0) return;
+		}
 	}
 
 	private parseBlock(inFunctionOrEvent = false): Stmt {
