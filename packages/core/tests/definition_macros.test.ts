@@ -4,6 +4,7 @@ import path from 'node:path';
 import { loadTestDefs } from './loadDefs.testutil';
 import { runPipeline, docFrom } from './testUtils';
 import { gotoDefinition } from '../src/symbols';
+import { resolveSymbolAt } from '../src/resolver';
 
 describe('goto definition for macros', () => {
 	it('jumps to local #define for object-like macro', async () => {
@@ -133,5 +134,47 @@ describe('goto definition for macros', () => {
 		const loc2 = gotoDefinition(doc2, { line: 1, character: line2.indexOf('Bar') + 1 }, second.analysis, second.pre, defs);
 		expect(loc2?.uri.endsWith('api.lslh')).toBe(true);
 		expect(second.analysis.diagnostics.some(d => d.message.includes('Undefined function: Bar'))).toBe(false);
+	});
+
+	it('does not jump to inactive definitions inside included files', async () => {
+		const fs = await import('node:fs/promises');
+		const base = path.join(__dirname, 'tmp_includes', 'definition_inactive');
+		await fs.mkdir(base, { recursive: true });
+		await fs.writeFile(path.join(base, 'api.lslh'), [
+			'#if 0',
+			'#define HIDDEN_CONST 7',
+			'integer Hidden(integer x) { return x; }',
+			'#endif',
+		].join('\n'), 'utf8');
+		const code = '#include "api.lslh"\ndefault { state_entry() { integer a = HIDDEN_CONST; Hidden(1); } }\n';
+		const doc = docFrom(code, 'file:///definition-inactive.lsl');
+		const defs = await loadTestDefs();
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [base] });
+		const line = code.split(/\r?\n/)[1]!;
+
+		const macroLoc = gotoDefinition(doc, { line: 1, character: line.indexOf('HIDDEN_CONST') + 1 }, analysis, pre, defs);
+		const funcLoc = gotoDefinition(doc, { line: 1, character: line.indexOf('Hidden') + 1 }, analysis, pre, defs);
+
+		expect(macroLoc).toBeNull();
+		expect(funcLoc).toBeNull();
+	});
+
+	it('classifies parenthesized include macros as object-like definitions', async () => {
+		const fs = await import('node:fs/promises');
+		const base = path.join(__dirname, 'tmp_includes', 'definition_macro_kind');
+		await fs.mkdir(base, { recursive: true });
+		await fs.writeFile(path.join(base, 'api.lslh'), '#define PARENED (1 + 1)\r\n#define CALL(x) (x)\r\n', 'utf8');
+		const code = '#include "api.lslh"\ninteger a = PARENED;\ninteger b = CALL(1);\n';
+		const doc = docFrom(code, 'file:///definition-macro-kind.lsl');
+		const defs = await loadTestDefs();
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [base] });
+
+		const line1 = code.split(/\r?\n/)[1]!;
+		const line2 = code.split(/\r?\n/)[2]!;
+		const parened = resolveSymbolAt(doc, { line: 1, character: line1.indexOf('PARENED') + 1 }, analysis, pre, defs);
+		const call = resolveSymbolAt(doc, { line: 2, character: line2.indexOf('CALL') + 1 }, analysis, pre, defs);
+
+		expect(parened?.kind).toBe('macro-obj');
+		expect(call?.kind).toBe('macro-func');
 	});
 });

@@ -20,18 +20,49 @@ export interface ResolverOptions {
 // Simple cache of include file contents -> lines for definition scanning.
 const includeFileCache: Map<string, { lines: string[]; text: string }> = new Map();
 
-function readIncludeFileLines(file: string): string[] {
+function readIncludeFile(file: string): { lines: string[]; text: string } {
 	try {
 		const text = fs.readFileSync(file, 'utf8');
 		const cached = includeFileCache.get(file);
-		if (cached && cached.text === text) return cached.lines;
+		if (cached && cached.text === text) return cached;
 		const lines = text.split(/\r?\n/);
-		includeFileCache.set(file, { lines, text });
-		return lines;
-	} catch { return []; }
+		const entry = { lines, text };
+		includeFileCache.set(file, entry);
+		return entry;
+	} catch { return { lines: [], text: '' }; }
 }
 
 export interface ExternalDefHit { file: string; line: number; startChar: number; endChar: number; kind: ResolvedTarget['kind']; }
+
+function lineOffsetsFor(text: string): number[] {
+	const offsets: number[] = [];
+	let offset = 0;
+	for (const line of text.split(/\r?\n/)) {
+		offsets.push(offset);
+		offset += line.length;
+		if (text[offset] === '\r' && text[offset + 1] === '\n') offset += 2;
+		else if (text[offset] === '\n') offset += 1;
+	}
+	return offsets;
+}
+
+function hasActiveTokenOnLine(pre: PreprocResult, file: string, line: number, lineOffsets: number[], lines: string[]): boolean {
+	const expanded = pre.expandedTokens;
+	if (!expanded || expanded.length === 0) return true;
+	const start = lineOffsets[line] ?? 0;
+	const end = start + (lines[line]?.length ?? 0);
+	return expanded.some(t => t.file === file && t.span.start >= start && t.span.start <= end);
+}
+
+function activeMacroDefineLine(pre: PreprocResult, name: string, file: string, lineOffsets: number[], lines: string[]): number | null {
+	const def = pre.macroDefs?.[name];
+	if (!def || def.file !== file) return null;
+	const line = lineOffsets.findIndex((start, index) => {
+		const end = start + (lines[index]?.length ?? 0);
+		return def.start >= start && def.start <= end;
+	});
+	return line >= 0 ? line : null;
+}
 
 function stripComments(line: string, state: { inBlockComment: boolean }): string {
 	let out = '';
@@ -128,7 +159,8 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 		seen.add(file);
 		// TEMP DEBUG: log traversal for transitive include resolution in tests
 		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[scanIncludes]', name, 'visiting', file); } catch { /* ignore */ }
-		const lines = readIncludeFileLines(file);
+		const { lines, text } = readIncludeFile(file);
+		const lineOffsets = lineOffsetsFor(text);
 		const strippedLines: string[] = [];
 		const commentState = { inBlockComment: false };
 		for (const line of lines) strippedLines.push(stripStringLiterals(stripComments(line, commentState)));
@@ -148,9 +180,12 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 			// Macro definition
 			const mMacro = /^\s*#\s*define\s+([A-Za-z_]\w*)/.exec(codeLine);
 			if (mMacro && mMacro[1] === name) {
+				const activeLine = activeMacroDefineLine(pre, name, file, lineOffsets, lines);
+				if (activeLine !== i) continue;
 				try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND macro', name, 'in', file, 'line', i); } catch { /* ignore */ }
 				const col = codeLine.indexOf(name);
-				return { file, line: i, startChar: col, endChar: col + name.length, kind: (/\w+\s*\(/.test(codeLine) ? 'macro-func' : 'macro-obj') } as ExternalDefHit;
+				const afterName = codeLine.slice(col + name.length);
+				return { file, line: i, startChar: col, endChar: col + name.length, kind: (/^\(/.test(afterName) ? 'macro-func' : 'macro-obj') } as ExternalDefHit;
 			}
 			// Function definition. Includes are textual LSL, so C-style prototypes are not declarations.
 			const funcRe = new RegExp(`(^|[^A-Za-z0-9_])([A-Za-z_]\\w*)\\s+(${name})\\s*\\(`);
@@ -159,6 +194,7 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 				const col = symbolLine.indexOf(name, fm.index);
 				const openParen = symbolLine.indexOf('(', col + name.length);
 				if (col >= 0 && openParen >= 0 && hasFunctionBodyAfterOpenParen(strippedLines, i, openParen)) {
+					if (!hasActiveTokenOnLine(pre, file, i, lineOffsets, lines)) continue;
 					try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND function', name, 'in', file, 'line', i); } catch { /* ignore */ }
 					return { file, line: i, startChar: col, endChar: col + name.length, kind: 'function' } as ExternalDefHit;
 				}
@@ -167,6 +203,7 @@ export function scanIncludesForSymbol(name: string, pre?: PreprocResult): Extern
 			const gvRe = new RegExp(`(^|[^A-Za-z0-9_])([A-Za-z_]\\w*)\\s+(${name})(?=\\n|[ \t]*[=;])`);
 			const gvm = gvRe.exec(symbolLine);
 			if (gvm && !/\(\s*$/.test(symbolLine.slice(gvm.index))) {
+				if (!hasActiveTokenOnLine(pre, file, i, lineOffsets, lines)) continue;
 				try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('  FOUND global', name, 'in', file, 'line', i); } catch { /* ignore */ }
 				const col = symbolLine.indexOf(name, gvm.index);
 				if (col >= 0) return { file, line: i, startChar: col, endChar: col + name.length, kind: 'global' } as ExternalDefHit;
