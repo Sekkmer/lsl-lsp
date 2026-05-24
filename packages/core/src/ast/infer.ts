@@ -84,6 +84,7 @@ export function inferExprTypeFromAst(
 			if (expr.op[0] === '/') {
 				if (lt === 'vector' && isNumeric(rt)) return 'vector';
 				if (lt === 'vector' && rt === 'rotation') return 'vector';
+				if (lt === 'rotation' && rt === 'rotation') return 'rotation';
 				return 'any';
 			}
 			return 'any';

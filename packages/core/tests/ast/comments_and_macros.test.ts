@@ -16,6 +16,29 @@ describe('AST parser: comments and macros', () => {
 		expect(gv!.comment).toContain('gv doc');
 	});
 
+	it('handles long comment banners before globals without pathological backtracking', () => {
+		const src = [
+			'// synthetic parser stress banner',
+			'// generated fixture line alpha beta gamma delta epsilon',
+			'// generated fixture line zeta eta theta iota kappa',
+			'// generated fixture instructions',
+			'//',
+			'//          ******** ******** ********',
+			'//          * cell-a * * cell-b * * cell-c *',
+			'//          ******** ******** ********',
+			'//',
+			'//          ******** ******** ********',
+			'//          * cell-d * * cell-e * * cell-f *',
+			'//          ******** ******** ********',
+			'string firstValue = "1.1";',
+			'string secondValue = "8.4";',
+			'',
+			'string thirdValue = "menu";',
+		].join('\n');
+		const script = parseScriptFromText(src);
+		expect(script.globals.get('thirdValue')).toBeTruthy();
+	});
+
 	it('expands object-like macros', () => {
 		const src = '#define TEN 10\ninteger x = TEN + 5;';
 		const script = parseScriptFromText(src);

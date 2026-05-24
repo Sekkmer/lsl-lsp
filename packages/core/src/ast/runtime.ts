@@ -246,6 +246,29 @@ export function llBase64ToString(src: Value): Value {
 // ===== List helpers =====
 const toList = (v: Value): Value[] | null => v.kind === 'value' && v.type === 'list' ? v.value : null;
 
+function valueContainsUnknown(value: Value): boolean {
+	if (value.kind === 'unknown') return true;
+	return value.type === 'list' && value.value.some(valueContainsUnknown);
+}
+
+function valuesEqualKnown(a: Value, b: Value): boolean | null {
+	if (a.kind === 'unknown' || b.kind === 'unknown') return null;
+	if (a.type !== b.type) return false;
+	switch (a.type) {
+		case 'vector':
+			return b.type === 'vector' && a.value.every((component, i) => component === b.value[i]);
+		case 'rotation':
+			return b.type === 'rotation' && a.value.every((component, i) => component === b.value[i]);
+		case 'list':
+			return null;
+		case 'integer':
+		case 'float':
+		case 'string':
+		case 'key':
+			return a.value === b.value;
+	}
+}
+
 export function llGetListLength(list: Value): Value {
 	const arr = toList(list);
 	return arr === null ? unknown('integer') : { kind: 'value', type: 'integer', value: arr.length };
@@ -306,14 +329,21 @@ export function llListFindList(list: Value, sub: Value): Value {
 	const subarr = toList(sub);
 	if (arr === null || subarr === null) return unknown('integer');
 	if (subarr.length === 0) return { kind: 'value', type: 'integer', value: 0 };
-	// naive search
+	if (arr.length < subarr.length) return { kind: 'value', type: 'integer', value: -1 };
+	if (arr.some(valueContainsUnknown) || subarr.some(valueContainsUnknown)) return unknown('integer');
+	let possibleUnknownMatch = false;
 	for (let i = 0; i <= arr.length - subarr.length; i++) {
-		let ok = true;
+		let definite = true;
+		let possible = true;
 		for (let j = 0; j < subarr.length; j++) {
-			if (arr[i + j] !== subarr[j]) { ok = false; break; }
+			const eq = valuesEqualKnown(arr[i + j]!, subarr[j]!);
+			if (eq === false) { possible = false; break; }
+			if (eq === null) definite = false;
 		}
-		if (ok) return { kind: 'value', type: 'integer', value: i };
+		if (possible && definite) return { kind: 'value', type: 'integer', value: i };
+		if (possible) possibleUnknownMatch = true;
 	}
+	if (possibleUnknownMatch) return unknown('integer');
 	return { kind: 'value', type: 'integer', value: -1 };
 }
 

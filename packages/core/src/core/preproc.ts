@@ -12,6 +12,8 @@ export type DiagDirectives = {
 export type ConditionalBranch = { span: { start: number; end: number }; active: boolean };
 export type ConditionalGroup = { head: { start: number; end: number }; branches: ConditionalBranch[]; end: number };
 
+export type PreprocDiagnostic = { start: number; end: number; message: string; code?: string; file?: string };
+
 export interface PreprocResult {
 	disabledRanges: DisabledRange[];
 	inactiveRanges?: DisabledRange[];
@@ -21,7 +23,7 @@ export interface PreprocResult {
 	includes: string[];
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[];
 	missingIncludes?: { start: number; end: number; file: string }[];
-	preprocDiagnostics?: { start: number; end: number; message: string; code?: string }[];
+	preprocDiagnostics?: PreprocDiagnostic[];
 	diagDirectives?: DiagDirectives;
 	conditionalGroups?: ConditionalGroup[];
 	expandedTokens?: Token[];

@@ -22,6 +22,10 @@ function evalSource(type: Type, source: string, env?: Env): Value {
 	return evalExpr(parseInitializer(type, source), env);
 }
 
+function evalSourceWithRuntime(type: Type, source: string, env?: Env): Value {
+	return evalExpr(parseInitializer(type, source), env, { allowRuntimeCalls: true });
+}
+
 describe('evaluator LSL semantic fixtures', () => {
 	it('folds scalar expressions that are valid LSL constants', () => {
 		expect(evalSource('integer', '1 + 2 * 3')).toEqual({ kind: 'value', type: 'integer', value: 7 });
@@ -44,12 +48,22 @@ describe('evaluator LSL semantic fixtures', () => {
 		expect(evalSource('integer', '1.0 | 0')).toEqual({ kind: 'unknown', type: 'integer' });
 	});
 
-	it('keeps valid non-scalar operation result shapes when values are not materialized', () => {
+	it('folds valid vector and rotation arithmetic when operands are known', () => {
 		expect(evalSource('list', '[] + "x"')).toEqual({ kind: 'unknown', type: 'list' });
 		expect(evalSource('list', '[1] + ["a", "b"]')).toEqual({ kind: 'unknown', type: 'list' });
-		expect(evalSource('vector', '<1,2,3> + <4,5,6>')).toEqual({ kind: 'unknown', type: 'vector' });
-		expect(evalSource('rotation', '<0,0,0,1> * <0,0,0,1>')).toEqual({ kind: 'unknown', type: 'rotation' });
-		expect(evalSource('vector', '<1,2,3> * <0,0,0,1>')).toEqual({ kind: 'unknown', type: 'vector' });
+		expect(evalSource('vector', '<1,2,3> + <4,5,6>')).toEqual({ kind: 'value', type: 'vector', value: [5, 7, 9] });
+		expect(evalSource('vector', '<4,5,6> - <1,2,3>')).toEqual({ kind: 'value', type: 'vector', value: [3, 3, 3] });
+		expect(evalSource('float', '<1,2,3> * <4,5,6>')).toEqual({ kind: 'value', type: 'float', value: 32 });
+		expect(evalSource('vector', '<1,0,0> % <0,1,0>')).toEqual({ kind: 'value', type: 'vector', value: [0, 0, 1] });
+		expect(evalSource('vector', '<1,2,3> * 2')).toEqual({ kind: 'value', type: 'vector', value: [2, 4, 6] });
+		expect(evalSource('vector', '2 * <1,2,3>')).toEqual({ kind: 'value', type: 'vector', value: [2, 4, 6] });
+		expect(evalSource('vector', '<2,4,6> / 2')).toEqual({ kind: 'value', type: 'vector', value: [1, 2, 3] });
+		expect(evalSource('rotation', '<1,2,3,4> + <4,3,2,1>')).toEqual({ kind: 'value', type: 'rotation', value: [5, 5, 5, 5] });
+		expect(evalSource('rotation', '<4,3,2,1> - <1,2,3,4>')).toEqual({ kind: 'value', type: 'rotation', value: [3, 1, -1, -3] });
+		expect(evalSource('rotation', '<0,0,0,1> * <0,0,0,1>')).toEqual({ kind: 'value', type: 'rotation', value: [0, 0, 0, 1] });
+		expect(evalSource('rotation', '<0,0,0,1> / <0,0,0,1>')).toEqual({ kind: 'value', type: 'rotation', value: [0, 0, 0, 1] });
+		expect(evalSource('vector', '<1,2,3> * <0,0,0,1>')).toEqual({ kind: 'value', type: 'vector', value: [1, 2, 3] });
+		expect(evalSource('vector', '<1,2,3> / <0,0,0,1>')).toEqual({ kind: 'value', type: 'vector', value: [1, 2, 3] });
 	});
 
 	it('materializes literal list and vector values for condition folding', () => {
@@ -69,6 +83,19 @@ describe('evaluator LSL semantic fixtures', () => {
 		expect(evalSource('integer', '[1, 2] != ["x"]')).toEqual({ kind: 'value', type: 'integer', value: 1 });
 		expect(evalSource('integer', '[1] != ["x", "y", "z"]')).toEqual({ kind: 'value', type: 'integer', value: -2 });
 		expect(evalSource('integer', '[1, []] == [1]')).toEqual({ kind: 'unknown', type: 'integer' });
+	});
+
+	it('does not fold runtime calls with unknown-bearing arguments', () => {
+		const env = new Env(new Map([
+			['runtimeString', { kind: 'unknown', type: 'string' }],
+			['runtimeList', { kind: 'unknown', type: 'list' }],
+		]));
+		expect(evalSourceWithRuntime('integer', 'llListFindList(["a", "b"], ["b"])')).toEqual({ kind: 'value', type: 'integer', value: 1 });
+		expect(evalSourceWithRuntime('integer', 'llListFindList(["a", "b"], [runtimeString])', env)).toEqual({ kind: 'unknown', type: 'integer' });
+		expect(evalSourceWithRuntime('integer', 'llListFindList([runtimeString], ["a"])', env)).toEqual({ kind: 'unknown', type: 'integer' });
+		expect(evalSourceWithRuntime('integer', 'llListFindList([], [runtimeString])', env)).toEqual({ kind: 'value', type: 'integer', value: -1 });
+		expect(evalSourceWithRuntime('integer', 'llListFindList([runtimeString], [])', env)).toEqual({ kind: 'value', type: 'integer', value: 0 });
+		expect(evalSourceWithRuntime('integer', 'llListFindList(runtimeList, ["a"])', env)).toEqual({ kind: 'unknown', type: 'integer' });
 	});
 
 	it('folds vector and rotation equality when all components are known', () => {

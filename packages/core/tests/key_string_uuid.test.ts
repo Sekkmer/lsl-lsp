@@ -65,6 +65,46 @@ default {
 		expect(wrongType).toBeFalsy();
 	});
 
+	it('allows UUID-valued builtin string constants for key parameter without warning', async () => {
+		const defs = await loadDefs(join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
+		const code = `
+integer foo(key _k) { return 0; }
+
+default {
+	state_entry() {
+		foo(NULL_KEY);
+		foo(TEXTURE_BLANK);
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///uuid-valued-const-key-param.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const warning = analysis.diagnostics.find(d => d.code === 'LSL013');
+		expect(warning).toBeFalsy();
+		const wrongType = analysis.diagnostics.find(d => d.code === 'LSL011');
+		expect(wrongType).toBeFalsy();
+	});
+
+	it('still warns for non-builtin string identifiers passed to key parameter', async () => {
+		const defs = await loadDefs(join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml'));
+		const code = `
+string notKey = "not-a-uuid";
+integer foo(key _k) { return 0; }
+
+default {
+	state_entry() {
+		foo(notKey);
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///non-builtin-string-key-param.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const warnings = analysis.diagnostics.filter(d => d.code === 'LSL013');
+		expect(warnings.length).toBeGreaterThan(0);
+		const wrongType = analysis.diagnostics.find(d => d.code === 'LSL011');
+		expect(wrongType).toBeFalsy();
+	});
+
 	it('still warns for whitespace-only string literal passed to key parameter', async () => {
 		const defs = await loadTestDefs();
 		const code = `

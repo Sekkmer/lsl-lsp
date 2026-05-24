@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { Token } from './tokens';
 import { Tokenizer } from './tokenizer';
 import { type MacroDefines, type IncludeResolver, preprocessAndExpandNew, MacroConditionalProcessor } from './macro';
-import type { ConditionalGroup } from './preproc';
+import type { ConditionalGroup, PreprocDiagnostic } from './preproc';
 import { normalizeDiagCode } from '../analysisTypes';
 
 // Maintain previous macro snapshot for delta detection between successive preprocessForAst calls
@@ -19,6 +19,11 @@ export type IncludeResolverOptions = {
 type CachedEntry = { id: string; tokens: Token[]; text: string };
 const includeCache = new Map<string, CachedEntry>();
 export function clearIncludeResolverCache() { includeCache.clear(); }
+
+function attachFile(t: Token, filePath: string) {
+	if (!t.file || t.file === '<unknown>') (t as Token).file = filePath;
+	if (!t.span.file || t.span.file === '<unknown>') t.span.file = filePath;
+}
 
 export function buildIncludeResolver(opts: IncludeResolverOptions): IncludeResolver {
 	return (target, fromId) => {
@@ -37,7 +42,7 @@ export function buildIncludeResolver(opts: IncludeResolverOptions): IncludeResol
 				if (prev && prev.text === src) return { id: prev.id, tokens: prev.tokens };
 				const tz = new Tokenizer(src);
 				const toks: Token[] = [];
-				for (;;) { const t = tz.next(); if (!t.file || t.file === '<unknown>') (t as Token).file = filePath; toks.push(t); if (t.kind === 'eof') break; }
+				for (;;) { const t = tz.next(); attachFile(t, filePath); toks.push(t); if (t.kind === 'eof') break; }
 				includeCache.set(filePath, { id: filePath, tokens: toks, text: src });
 				return { id: filePath, tokens: toks };
 			} catch { /* try next */ }
@@ -55,7 +60,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	inactiveRanges: { start: number; end: number }[];
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[];
 	missingIncludes?: { start: number; end: number; file: string }[];
-	preprocDiagnostics?: { start: number; end: number; message: string; code?: string }[];
+	preprocDiagnostics?: PreprocDiagnostic[];
 	diagDirectives?: import('./preproc').DiagDirectives;
 	conditionalGroups?: ConditionalGroup[];
 	expandedTokens: Token[]; // active-only tokens (inactive conditional branches removed)
@@ -66,7 +71,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	// Tokenize root file
 	const tz = new Tokenizer(text);
 	const rootTokens: Token[] = [];
-	for (;;) { const t = tz.next(); if (!t.file || t.file === '<unknown>') (t as Token).file = opts.fromPath ? opts.fromPath : '<unknown>'; rootTokens.push(t); if (t.kind === 'eof') break; }
+	for (;;) { const t = tz.next(); attachFile(t, opts.fromPath ? opts.fromPath : '<unknown>'); rootTokens.push(t); if (t.kind === 'eof') break; }
 	// Run new unified preprocessor (includes + macro expansion)
 	const resolver = buildIncludeResolver(opts);
 	const initialDefines: MacroDefines = opts.defines ? { ...opts.defines } : {};
@@ -176,6 +181,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 		end: mi.end,
 		message: `Cannot resolve include "${mi.file}"`,
 		code: 'LSL-include-missing',
+		file: opts.fromPath,
 	}));
 	const diagDirectives: import('./preproc').DiagDirectives = { disableLine, disableNextLine, blocks };
 	const lineSuppression = (map: Map<number, Set<string> | null>, line: number) => {

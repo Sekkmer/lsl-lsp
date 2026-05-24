@@ -108,7 +108,7 @@ export function invalidateFileSegmentation(fileId: string) {
 export interface PreprocessResultNew {
 	tokens: Token[];            // concatenated active tokens from this file (includes eagerly inlined)
 	macros: MacroDefines;       // resulting macro table after processing this file & its includes
-	diagnostics: { message: string; code?: string; start: number; end: number }[]; // preprocessor diagnostics
+	diagnostics: { message: string; code?: string; start: number; end: number; file?: string }[]; // preprocessor diagnostics
 	includes: string[];         // file ids included (unique order of first encounter)
 	macroDefs?: Record<string, { start: number; end: number; file: string }>; // definition span for each macro
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; // each include directive
@@ -121,7 +121,7 @@ interface ProcessCtx {
 	seen: Set<string>; // unique include ids encountered for reporting
 	collecting: string[]; // active include stack for cycle detection
 	includeOrder: string[];
-	diagnostics: { message: string; code?: string; start: number; end: number }[];
+	diagnostics: { message: string; code?: string; start: number; end: number; file?: string }[];
 }
 
 // Evaluate a conditional directive chain starting at index; returns next index after chain and whether block active
@@ -253,7 +253,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 	const inactiveSpans: { start: number; end: number }[] = [];
 	const pushInclude = (id: string) => { if (!includesLocal.includes(id)) includesLocal.push(id); if (!ctx.includeOrder.includes(id)) ctx.includeOrder.push(id); };
 	const noteDup = (name: string, span: {start:number; end:number}, previous: unknown, next: unknown) => {
-		if (JSON.stringify(previous) !== JSON.stringify(next)) ctx.diagnostics.push({ message: `Duplicate macro ${name}`, code: 'LSL-macro-dup', start: span.start, end: span.end });
+		if (JSON.stringify(previous) !== JSON.stringify(next)) ctx.diagnostics.push({ message: `Duplicate macro ${name}`, code: 'LSL-macro-dup', start: span.start, end: span.end, file: fileId });
 	};
 	const collectIfUndef = (expr: string, span: {start:number; end:number}) => {
 		// naive scan of identifiers; ignore those following defined or part of defined(IDENT)
@@ -264,7 +264,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 			const id = ids[i]!;
 			if (id === 'defined') { i++; continue; }
 			if (!Object.prototype.hasOwnProperty.call(macros, id)) {
-				ctx.diagnostics.push({ message: `Identifier '${id}' not defined in preprocessor expression`, code: 'LSL-preproc-undef', start: span.start, end: span.end });
+				ctx.diagnostics.push({ message: `Identifier '${id}' not defined in preprocessor expression`, code: 'LSL-preproc-undef', start: span.start, end: span.end, file: fileId });
 			}
 		}
 	};
@@ -349,7 +349,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 	return { tokens: out, macros, diagnostics: ctx.diagnostics, includes: includesLocal, macroDefs, includeTargets, missingIncludes, inactiveSpans };
 }
 
-export function preprocessAndExpandNew(fileId: string, version: number, tokens: Token[], initialMacros: MacroDefines, includeResolver?: IncludeResolver): { tokens: Token[]; macros: MacroDefines; diagnostics: { message: string; code?: string; start: number; end: number }[]; includes: string[]; macroDefs?: Record<string,{start:number; end:number; file:string}>; includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; missingIncludes?: { start: number; end: number; file: string }[]; inactiveSpans?: { start: number; end: number }[] } {
+export function preprocessAndExpandNew(fileId: string, version: number, tokens: Token[], initialMacros: MacroDefines, includeResolver?: IncludeResolver): { tokens: Token[]; macros: MacroDefines; diagnostics: { message: string; code?: string; start: number; end: number; file?: string }[]; includes: string[]; macroDefs?: Record<string,{start:number; end:number; file:string}>; includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; missingIncludes?: { start: number; end: number; file: string }[]; inactiveSpans?: { start: number; end: number }[] } {
 	const ctx: ProcessCtx = { includeResolver, seen: new Set<string>([fileId]), collecting: [fileId], includeOrder: [], diagnostics: [] };
 	const pre = preprocessFileNew(fileId, version, tokens, initialMacros, ctx);
 	const expanded = expandActiveTokens(pre.tokens, pre.macros);
@@ -1055,7 +1055,7 @@ function objectMacroToTokens(v: string | number | boolean, file?: string): Token
 	const text = String(v);
 	if (!text.length) return [];
 	let toks = tokenize(text).filter(t=> t.kind !== 'eof' && t.kind !== 'directive');
-	if (file) { for (const tk of toks) if (!tk.file) (tk as Token).file = file; }
+	if (file) { for (const tk of toks) { if (!tk.file || tk.file === '<unknown>') (tk as Token).file = file; if (!tk.span.file || tk.span.file === '<unknown>') tk.span.file = file; } }
 	// If object-like macro is a single parenthesized literal or identifier, unwrap redundant parens so AST tests expecting NumberLiteral succeed
 	if (toks.length >=3 && toks[0].kind==='punct' && toks[0].value==='(' && toks[toks.length-1].kind==='punct' && toks[toks.length-1].value===')') {
 		let depth=0, ok=true; for (let i=0;i<toks.length;i++){ const tk=toks[i]!; if (tk.kind==='punct'){ if (tk.value==='(') depth++; else if (tk.value===')') depth--; if (depth===0 && i < toks.length-1) { ok=false; break; } } }
@@ -1085,6 +1085,11 @@ function parseMacroCall(tokens: Token[], startIndex: number): MacroCall | null {
 	const isWord = (t: Token) => t.kind === 'id' || t.kind === 'number' || t.kind === 'keyword';
 	for (; i < tokens.length; i++) {
 		const tk = tokens[i]!;
+		if (tk.kind === 'comment-line' || tk.kind === 'comment-block' || tk.kind === 'directive') {
+			if (prevWasWord) current += ' ';
+			prevWasWord = false;
+			continue;
+		}
 		if (tk.kind === 'punct') {
 			if (tk.value === '(') { depth++; current += tk.value; prevWasWord = false; prevCanStartAngleLiteral = true; continue; }
 			if (tk.value === ')') {
@@ -1188,7 +1193,7 @@ function expandFunctionMacro(name: string, def: FuncMacroDef, callArgs: string[]
 		.replace(/;\s*;/g, ';');
 	// Turn into tokens (lex body) and distribute span
 	let toks = body.length ? tokenize(body).filter(t=> t.kind !== 'eof' && t.kind !== 'directive') : [];
-	if (file) { for (const tk of toks) if (!tk.file) (tk as Token).file = file; }
+	if (file) { for (const tk of toks) { if (!tk.file || tk.file === '<unknown>') (tk as Token).file = file; if (!tk.span.file || tk.span.file === '<unknown>') tk.span.file = file; } }
 	// Drop single enclosing paren pair if they wrap the entire expansion and aren't needed syntactically (e.g., ("text") or ((2)+(3))) so tests see inner node
 	if (toks.length >=3 && toks[0].kind==='punct' && toks[0].value==='(' && toks[toks.length-1].kind==='punct' && toks[toks.length-1].value===')') {
 		let depth=0, ok=true; for (let i=0;i<toks.length;i++){ const tk=toks[i]!; if (tk.kind==='punct'){ if (tk.value==='(') depth++; else if (tk.value===')') depth--; if (depth===0 && i < toks.length-1) { ok=false; break; } } }
@@ -1204,7 +1209,7 @@ function expandFunctionMacro(name: string, def: FuncMacroDef, callArgs: string[]
 			if (b && ((a.kind === 'id' || a.kind === 'number') && (b.kind === 'id' || b.kind === 'number'))) {
 				const combined = a.value + b.value;
 				if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(combined)) {
-					merged.push({ kind: 'id', value: combined, span: { start: a.span.start, end: b.span.end } } as Token);
+					merged.push({ kind: 'id', value: combined, span: { start: a.span.start, end: b.span.end, file: a.span.file || a.file }, file: a.file } as Token);
 					i++; // skip b
 					continue;
 				}
@@ -1224,12 +1229,12 @@ function applyTokenPasteSimple(s: string): string {
 }
 
 function distributeSpan(toks: Token[], start: number, end: number, file?: string): Token[] {
-	if (toks.length <= 1) return toks.map(t=> ({ ...t, span:{ start, end }, file: (t as Token).file || file || (t as Token).file }));
+	if (toks.length <= 1) return toks.map(t=> ({ ...t, span:{ start, end, file: file || t.span.file || (t as Token).file }, file: file || (t as Token).file }));
 	const width = Math.max(1, end-start);
 	return toks.map((t,i)=> {
 		const a = start + Math.floor((i/ toks.length)*width);
 		const b = (i===toks.length-1)? end : start + Math.floor(((i+1)/toks.length)*width);
-		return { ...t, span:{ start:a, end: Math.max(a,b) }, file: (t as Token).file || file || (t as Token).file };
+		return { ...t, span:{ start:a, end: Math.max(a,b), file: file || t.span.file || (t as Token).file }, file: file || (t as Token).file };
 	});
 }
 

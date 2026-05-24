@@ -105,7 +105,7 @@ describe('goto definition for macros', () => {
 		const pos = { line: 1, character: callLine.indexOf('Foo') + 1 };
 		const loc = gotoDefinition(doc, pos, analysis, pre, defs);
 		expect(loc).toBeNull();
-		expect(analysis.diagnostics.some(d => d.message.includes('expected \'{\' for function body'))).toBe(true);
+		expect(analysis.diagnostics.some(d => d.message.includes('expected \'{\' for function body'))).toBe(false);
 	});
 
 	it('refreshes include definitions when file content changes without an mtime change', async () => {

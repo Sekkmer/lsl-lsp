@@ -176,6 +176,61 @@ function vectorishValuesEqual(l: Value, r: Value): boolean | null {
 	return l.value.length === r.value.length && l.value.every((component, i) => component === r.value[i]);
 }
 
+function finiteVector(value: number[]): value is [number, number, number] {
+	return value.length === 3 && value.every(Number.isFinite);
+}
+
+function finiteRotation(value: number[]): value is [number, number, number, number] {
+	return value.length === 4 && value.every(Number.isFinite);
+}
+
+function vectorValue(v: Value): [number, number, number] | null {
+	return v.kind === 'value' && v.type === 'vector' && finiteVector(v.value) ? v.value : null;
+}
+
+function rotationValue(v: Value): [number, number, number, number] | null {
+	return v.kind === 'value' && v.type === 'rotation' && finiteRotation(v.value) ? v.value : null;
+}
+
+function qMul(a: [number, number, number, number], b: [number, number, number, number]): [number, number, number, number] {
+	const [ax, ay, az, as] = a;
+	const [bx, by, bz, bs] = b;
+	return [
+		as * bx + ax * bs + ay * bz - az * by,
+		as * by - ax * bz + ay * bs + az * bx,
+		as * bz + ax * by - ay * bx + az * bs,
+		as * bs - ax * bx - ay * by - az * bz,
+	];
+}
+
+function qInv(q: [number, number, number, number]): [number, number, number, number] | null {
+	const normSq = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+	if (!Number.isFinite(normSq) || normSq === 0) return null;
+	return [-q[0] / normSq, -q[1] / normSq, -q[2] / normSq, q[3] / normSq];
+}
+
+function qRotateVec(q: [number, number, number, number], v: [number, number, number]): [number, number, number] {
+	const u: [number, number, number] = [q[0], q[1], q[2]];
+	const s = q[3];
+	const cross = (a: [number, number, number], b: [number, number, number]): [number, number, number] => [
+		a[1] * b[2] - a[2] * b[1],
+		a[2] * b[0] - a[0] * b[2],
+		a[0] * b[1] - a[1] * b[0],
+	];
+	const t = cross(u, v).map(c => 2 * c) as [number, number, number];
+	const v1: [number, number, number] = [v[0] + s * t[0], v[1] + s * t[1], v[2] + s * t[2]];
+	const t2 = cross(u, t);
+	return [v1[0] + t2[0], v1[1] + t2[1], v1[2] + t2[2]];
+}
+
+function vectorVal(value: [number, number, number]): Value {
+	return { kind: 'value', type: 'vector', value };
+}
+
+function rotationVal(value: [number, number, number, number]): Value {
+	return { kind: 'value', type: 'rotation', value };
+}
+
 function coerceAssignedValue(value: Value, current: Value | undefined): Value {
 	if (!current) return value;
 	if (value.kind === 'unknown') return runtime.unknown(current.type);
@@ -346,7 +401,11 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 							const v = L.comps[0] * R.comps[0] + L.comps[1] * R.comps[1] + L.comps[2] * R.comps[2];
 							return { kind: 'value', type: 'float', value: v };
 						} else {
-						// cross product -> vector (we return unknown('vector') as we don't materialize vector values)
+							const [lx, ly, lz] = L.comps;
+							const [rx, ry, rz] = R.comps;
+							if (lx !== undefined && ly !== undefined && lz !== undefined && rx !== undefined && ry !== undefined && rz !== undefined) {
+								return vectorVal([ly * rz - lz * ry, lz * rx - lx * rz, lx * ry - ly * rx]);
+							}
 							return runtime.unknown('vector');
 						}
 					}
@@ -435,6 +494,12 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 						if (isStringValue(l) && isStringValue(r)) {
 							return { kind: 'value', type: 'string', value: l.value + r.value };
 						}
+						const lv = vectorValue(l);
+						const rv = vectorValue(r);
+						if (lv && rv) return vectorVal([lv[0] + rv[0], lv[1] + rv[1], lv[2] + rv[2]]);
+						const lr = rotationValue(l);
+						const rr = rotationValue(r);
+						if (lr && rr) return rotationVal([lr[0] + rr[0], lr[1] + rr[1], lr[2] + rr[2], lr[3] + rr[3]]);
 						// numeric addition
 						if (ln !== null && rn !== null) {
 							const isFloat = (isNumberValue(l) && l.type === 'float') || (isNumberValue(r) && r.type === 'float');
@@ -453,6 +518,29 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 					case '-':
 					case '*':
 					case '/': {
+						const lv = vectorValue(l);
+						const rv = vectorValue(r);
+						const lr = rotationValue(l);
+						const rr = rotationValue(r);
+						if (expr.op === '-' && lv && rv) return vectorVal([lv[0] - rv[0], lv[1] - rv[1], lv[2] - rv[2]]);
+						if (expr.op === '-' && lr && rr) return rotationVal([lr[0] - rr[0], lr[1] - rr[1], lr[2] - rr[2], lr[3] - rr[3]]);
+						if (expr.op === '*' && lv && rv) return { kind: 'value', type: 'float', value: lv[0] * rv[0] + lv[1] * rv[1] + lv[2] * rv[2] };
+						if (expr.op === '*' && lv && rn !== null) return vectorVal([lv[0] * rn, lv[1] * rn, lv[2] * rn]);
+						if (expr.op === '*' && ln !== null && rv) return vectorVal([ln * rv[0], ln * rv[1], ln * rv[2]]);
+						if (expr.op === '*' && lv && rr) return vectorVal(qRotateVec(rr, lv));
+						if (expr.op === '*' && lr && rr) return rotationVal(qMul(lr, rr));
+						if (expr.op === '/' && lv && rn !== null) {
+							if (rn === 0) return runtime.unknown('vector');
+							return vectorVal([lv[0] / rn, lv[1] / rn, lv[2] / rn]);
+						}
+						if (expr.op === '/' && lv && rr) {
+							const inv = qInv(rr);
+							return inv ? vectorVal(qRotateVec(inv, lv)) : runtime.unknown('vector');
+						}
+						if (expr.op === '/' && lr && rr) {
+							const inv = qInv(rr);
+							return inv ? rotationVal(qMul(lr, inv)) : runtime.unknown('rotation');
+						}
 						if (ln === null || rn === null) {
 							if (expr.op === '-' && l.type === 'vector' && r.type === 'vector') return runtime.unknown('vector');
 							if (expr.op === '-' && l.type === 'rotation' && r.type === 'rotation') return runtime.unknown('rotation');
@@ -461,6 +549,7 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 							if (expr.op === '*' && l.type === 'vector' && r.type === 'rotation') return runtime.unknown('vector');
 							if (expr.op === '*' && l.type === 'rotation' && r.type === 'rotation') return runtime.unknown('rotation');
 							if (expr.op === '/' && l.type === 'vector' && (isNumericType(r.type) || r.type === 'rotation')) return runtime.unknown('vector');
+							if (expr.op === '/' && l.type === 'rotation' && r.type === 'rotation') return runtime.unknown('rotation');
 							return runtime.unknown('integer');
 						}
 						const isFloat = (isNumberValue(l) && l.type === 'float') || (isNumberValue(r) && r.type === 'float') || expr.op === '/'; // division may still be integer, but decide below
@@ -498,8 +587,15 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 						const L = extractNumericVectorOrRotation(env, expr.left, ctx);
 						const R = extractNumericVectorOrRotation(env, expr.right, ctx);
 						if (L && R && !L.isRotation && !R.isRotation) {
-							return runtime.unknown('vector'); // could compute components if you model vectors in Value
+							const [lx, ly, lz] = L.comps;
+							const [rx, ry, rz] = R.comps;
+							if (lx !== undefined && ly !== undefined && lz !== undefined && rx !== undefined && ry !== undefined && rz !== undefined) {
+								return vectorVal([ly * rz - lz * ry, lz * rx - lx * rz, lx * ry - ly * rx]);
+							}
 						}
+						const lv = vectorValue(l);
+						const rv = vectorValue(r);
+						if (lv && rv) return vectorVal([lv[1] * rv[2] - lv[2] * rv[1], lv[2] * rv[0] - lv[0] * rv[2], lv[0] * rv[1] - lv[1] * rv[0]]);
 						if (l.type === 'vector' && r.type === 'vector') return runtime.unknown('vector');
 						return runtime.unknown('integer');
 					}

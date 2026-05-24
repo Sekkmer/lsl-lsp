@@ -3,7 +3,7 @@ import { TextDocument } from '../src/protocol';
 import { loadTestDefs } from './loadDefs.testutil';
 import { runPipeline } from './testUtils';
 
-// Essence of ARES macro: function-like define with line continuation (\\),
+// Function-like define with line continuation (\\),
 // casts, string concatenation, and an identifier parameter at the end.
 // All identifiers are sanitized/generic to avoid coupling to external code.
 

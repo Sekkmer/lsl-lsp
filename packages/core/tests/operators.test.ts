@@ -162,10 +162,13 @@ default {
 		vector a = v * s; // scale: ok
 		vector b = s * v; // commutative scale: ok
 		vector c = v * r; // rotate: ok
+		v *= r; // rotate assignment: ok
 		vector d = v / s; // scale: ok
 		vector e = v / r; // inverse rotate: ok
+		v /= r; // inverse rotate assignment: ok
 		rotation f = r + r; // component add: ok
 		rotation g = r - r; // component subtract: ok
+		rotation h = r / r; // inverse compose: ok
 		vector bad1 = r * v; // bad: order matters
 		rotation bad2 = r / s; // bad
 		rotation bad3 = r * s; // bad
@@ -178,6 +181,7 @@ default {
 		const msgs = analysis.diagnostics.map(d => `${d.message} @${d.severity}`);
 		expect(msgs.some(m => m.includes('vector * rotation'))).toBe(false);
 		expect(msgs.some(m => m.includes('vector / rotation'))).toBe(false);
+		expect(msgs.some(m => m.includes('rotation / rotation'))).toBe(false);
 		expect(msgs.some(m => m.includes('rotation * vector') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
 		expect(msgs.some(m => m.includes('rotation / float') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
 		expect(msgs.some(m => m.includes('rotation * float') && m.includes(String(DiagnosticSeverity.Error)))).toBe(true);
@@ -341,6 +345,7 @@ vector vectorModVector = <1,0,0> % <0,1,0>;
 rotation rotationSub = <2,4,6,8> - <1,1,1,1>;
 vector vectorTimesRotation = <1,2,3> * <0,0,0,1>;
 rotation rotationTimesRotation = <0,0,0,1> * <0,0,0,1>;
+rotation rotationDivRotation = <0,0,0,1> / <0,0,0,1>;
 float f;
 float floatPostInc = f++;
 vector negVector = -<1,2,3>;
@@ -359,6 +364,7 @@ rotation rotationDivScalar = <2,4,6,8> / 2.0;
 		expect(inferGlobal('rotationSub')).toBe('rotation');
 		expect(inferGlobal('vectorTimesRotation')).toBe('vector');
 		expect(inferGlobal('rotationTimesRotation')).toBe('rotation');
+		expect(inferGlobal('rotationDivRotation')).toBe('rotation');
 		expect(inferGlobal('floatPostInc')).toBe('float');
 		expect(inferGlobal('negVector')).toBe('vector');
 		expect(inferGlobal('negRotation')).toBe('rotation');

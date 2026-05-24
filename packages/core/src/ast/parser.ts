@@ -182,7 +182,7 @@ class Parser {
 	}
 	private err(t: Token, msg: string): Error { return new Error(`ParseError@${t.span.start}-${t.span.end}: ${msg}`); }
 
-	private report(t: Token, message: string, code = 'LSL000') { this.diagnostics.push({ span: { start: t.span.start, end: t.span.end }, message, severity: 'error', code }); }
+	private report(t: Token, message: string, code = 'LSL000') { this.diagnostics.push({ span: { start: t.span.start, end: t.span.end }, message, severity: 'error', code, file: t.file }); }
 
 	private recover(message: string, at: Token): Token {
 		// record and fabricate a harmless token matching expectation to allow progress
@@ -357,6 +357,7 @@ class Parser {
 					this.report(stateTok, 'default state must be declared before other states', 'LSL000');
 				}
 				const st = this.parseState();
+				st.originFile = stateTok.file || '<unknown>';
 				reportDuplicateTopLevel(st.name, st.span, stateTok.file, 'state');
 				states.set(st.name, st);
 				sawStateDeclaration = true;
@@ -366,6 +367,7 @@ class Parser {
 			if (this.peek().kind === 'keyword' && this.peek().value === 'default') {
 				const defaultTok = this.peek();
 				const st = this.parseDefaultState();
+				st.originFile = defaultTok.file || '<unknown>';
 				reportDuplicateTopLevel(st.name, st.span, defaultTok.file, 'state');
 				states.set(st.name, st);
 				sawStateDeclaration = true;
@@ -425,9 +427,9 @@ class Parser {
 				const body = this.parseBlock(/*inFunctionOrEvent*/ true);
 				const span = spanFrom(nameTok.span.start, body.span.end);
 				const norm = normalizeName(nameTok.value);
-				const node: FnNode = { span, kind: 'Function', name: norm, parameters: params, body, comment: leading, returnType: 'void' };
+				const node: FnNode = { span, kind: 'Function', name: norm, parameters: params, body, comment: leading, returnType: 'void', originFile: nameTok.file || '<unknown>' };
 				reportDuplicateTopLevel(norm, span, nameTok.file, 'function');
-				functions.set(norm, { ...node, originFile: nameTok.file });
+				functions.set(norm, { ...node, originFile: nameTok.file || '<unknown>' });
 				continue;
 			}
 			// otherwise, skip unexpected token at top-level
@@ -1208,6 +1210,10 @@ class Parser {
 			// Keep Paren nodes around identifiers/literals to influence assignability checks.
 			switch (e.kind) {
 				case 'Binary':
+					if (e.op === '=' || e.op === '+=' || e.op === '-=' || e.op === '*=' || e.op === '/=' || e.op === '%=') {
+						return this.parsePostfix({ span: spanFrom(t.span.start, close.span.end), kind: 'Paren', expression: e });
+					}
+					return this.parsePostfix({ ...e, span: spanFrom(t.span.start, close.span.end) } as Expr);
 				case 'Call':
 				case 'ListLiteral':
 				case 'VectorLiteral':
@@ -1316,11 +1322,23 @@ class Parser {
 	private consumeLeadingCommentFor(start: number): string | undefined {
 		const pending = this.consumeLeadingComment();
 		if (pending) return pending;
-		const before = this.src.slice(0, start);
-		const match = /(?:^|[\r\n])([ \t]*(?:(?:\/\/[^\r\n]*|\/\*[\s\S]*?\*\/)[ \t]*(?:\r?\n|$))+)[ \t]*$/.exec(before);
-		if (!match) return undefined;
-		return match[1]!
-			.split(/\r?\n/)
+		const lines = this.src.slice(0, start).split(/\r?\n/);
+		const commentLines: string[] = [];
+		for (let i = lines.length - 1; i >= 0; i--) {
+			const line = lines[i] ?? '';
+			if (!line.trim()) {
+				if (commentLines.length === 0) continue;
+				break;
+			}
+			if (/^[ \t]*\/\//.test(line) || /^[ \t]*\/\*/.test(line) || /^[ \t]*\*/.test(line) || /[ \t]*\*\/[ \t]*$/.test(line)) {
+				commentLines.push(line);
+				continue;
+			}
+			break;
+		}
+		if (commentLines.length === 0) return undefined;
+		return commentLines
+			.reverse()
 			.map(line => line.replace(/^[ \t]*\/\/[ \t]?/, '').replace(/^[ \t]*\/\*[ \t]?/, '').replace(/[ \t]*\*\/[ \t]*$/, '').replace(/^[ \t]*\*[ \t]?/, ''))
 			.join('\n')
 			.trim() || undefined;

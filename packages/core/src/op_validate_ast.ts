@@ -18,7 +18,7 @@ export function validateOperatorsFromAst(
 	symbolTypes: Map<string, SimpleType>,
 	functionReturnTypes?: Map<string, SimpleType>,
 	callSignatures?: Map<string, SimpleType[][]>,
-	opts?: { flagSuspiciousAssignment?: boolean; constantNames?: ReadonlySet<string> },
+	opts?: { flagSuspiciousAssignment?: boolean; constantNames?: ReadonlySet<string>; constantStringValues?: ReadonlyMap<string, string> },
 ) {
 	for (const e of exprs) walk(e);
 
@@ -36,7 +36,7 @@ export function validateOperatorsFromAst(
 		return true;
 	}
 
-	function walk(e: Expr | null) {
+	function walk(e: Expr | null, parenthesized = false, conditionContext = true) {
 		if (!e) return;
 		switch (e.kind) {
 			case 'Binary': {
@@ -65,7 +65,7 @@ export function validateOperatorsFromAst(
 				switch (op) {
 					case '=': {
 						// Only emit suspicious-assignment when explicitly validating a condition expression
-						if (opts?.flagSuspiciousAssignment) {
+						if (opts?.flagSuspiciousAssignment && conditionContext && !parenthesized) {
 							diagnostics.push({
 								code: LSL_DIAGCODES.SUSPICIOUS_ASSIGNMENT,
 								message: 'Suspicious assignment in condition: did you mean == ?',
@@ -117,8 +117,9 @@ export function validateOperatorsFromAst(
 					case '/=': {
 						const isNumericBoth = num(lt) && num(rt);
 						const isVectorDivScalar = lt === 'vector' && num(rt);
-						const isVectorDivRotation = lt === 'vector' && rt === 'rotation' && op !== '/=';
-						if (!isNumericBoth && !isVectorDivScalar && !isVectorDivRotation) {
+						const isVectorDivRotation = lt === 'vector' && rt === 'rotation';
+						const isRotationDivRotation = lt === 'rotation' && rt === 'rotation';
+						if (!isNumericBoth && !isVectorDivScalar && !isVectorDivRotation && !isRotationDivRotation) {
 							if (lt !== 'any' && rt !== 'any') {
 								diagnostics.push({
 									code: LSL_DIAGCODES.WRONG_TYPE,
@@ -313,13 +314,13 @@ export function validateOperatorsFromAst(
 				break;
 			}
 			case 'Paren': {
-				walk(e.expression);
+				walk(e.expression, true, conditionContext);
 				break;
 			}
 			case 'Call': {
 				// Walk callee and args
-				walk(e.callee);
-				e.args.forEach(walk);
+				walk(e.callee, false, false);
+				e.args.forEach(arg => walk(arg, false, false));
 				// If callee is an identifier and we have signatures, validate arg types
 				if (e.callee.kind === 'Identifier' && callSignatures) {
 					const name = e.callee.name;
@@ -382,7 +383,7 @@ export function validateOperatorsFromAst(
 			}
 			case 'Cast': {
 				// Walk down the argument
-				walk(e.argument);
+				walk(e.argument, false, false);
 				// Validate cast semantics based on inferred type
 				const target = e.type as SimpleType; // AST guarantees a known LSL type
 				const src = inferExprTypeFromAst(e.argument, symbolTypes, functionReturnTypes);
@@ -447,7 +448,7 @@ export function validateOperatorsFromAst(
 			}
 			case 'ListLiteral': {
 				for (const comp of e.elements) {
-					walk(comp);
+					walk(comp, false, false);
 					const ct = inferExprTypeFromAst(comp, symbolTypes, functionReturnTypes);
 					const flattensList = comp.kind === 'ListLiteral'
 						|| ct === 'list'
@@ -467,7 +468,7 @@ export function validateOperatorsFromAst(
 				// Each element in a vector literal should be numeric (integer or float).
 				// If we can infer a non-numeric, known type, flag it; otherwise allow 'any'.
 				for (const comp of e.elements) {
-					walk(comp); // continue walking inside component expressions
+					walk(comp, false, false); // continue walking inside component expressions
 					const ct = inferExprTypeFromAst(comp, symbolTypes, functionReturnTypes);
 					if (ct !== 'any' && ct !== 'integer' && ct !== 'float') {
 						diagnostics.push({
@@ -481,7 +482,7 @@ export function validateOperatorsFromAst(
 				break;
 			}
 			case 'Member': {
-				walk(e.object);
+				walk(e.object, false, false);
 				const memberBaseOk =
 					e.object.kind === 'Member' ||
 					(e.object.kind === 'Identifier' && !opts?.constantNames?.has(e.object.name));
@@ -529,6 +530,10 @@ export function validateOperatorsFromAst(
 		// Allow implicit string->key conversion: no warning for UUID literals, warning otherwise
 		if (expected === 'key' && got === 'string') {
 			if (expr && expr.kind === 'StringLiteral' && looksLikeKeyString(expr.value)) return { ok: true };
+			if (expr && expr.kind === 'Identifier') {
+				const constantString = opts?.constantStringValues?.get(expr.name);
+				if (constantString !== undefined && isKnownKeyString(constantString)) return { ok: true };
+			}
 			return { ok: true, warn: { message: 'Implicit string-to-key conversion', code: LSL_DIAGCODES.IMPLICIT_STRING_TO_KEY } };
 		}
 		// Allow weak numeric coercions similar to LSL

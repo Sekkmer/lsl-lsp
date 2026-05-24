@@ -1,6 +1,6 @@
 // Core token model for the new lexing/macro pipeline
 
-export type Span = { start: number; end: number };
+export type Span = { start: number; end: number; file?: string };
 
 export type TokenKind =
 	| 'id'

@@ -56,4 +56,26 @@ describe('preprocessor: varargs macros', () => {
 		expect(asText.includes('2')).toBe(true);
 		expect(asText.includes('3')).toBe(true);
 	});
+
+	it('drops comments while collecting multiline macro arguments', async () => {
+		const defs = await loadTestDefs();
+		const code = [
+			'#define TO_JSON(...) llList2Json(JSON_OBJECT, (list)(__VA_ARGS__))',
+			'#define STORE(id, payload) { string data = TO_JSON(payload); llOwnerSay(data); }',
+			'default {',
+			'\tstate_entry() {',
+			'\t\tSTORE("id", [',
+			'\t\t\t"name", "value", // inline note',
+			'\t\t\t"count", 1',
+			'\t\t]);',
+			'\t}',
+			'}',
+		].join('\n');
+		const doc = docFrom(code);
+		const { expandedTokens, analysis } = runPipeline(doc, defs);
+		const asText = expandedTokens?.map(t => t.value).join(' ') ?? '';
+		expect(asText).toContain('"count"');
+		expect(asText).not.toContain('// inline note');
+		expect(analysis.diagnostics.map(d => `${d.code}: ${d.message}`).join('\n')).not.toMatch(/LSL000/);
+	});
 });

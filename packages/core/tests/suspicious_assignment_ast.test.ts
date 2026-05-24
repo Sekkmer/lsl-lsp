@@ -32,4 +32,32 @@ integer foo(integer x) {
 		const msgs = analysis.diagnostics.map(d => d.message);
 		expect(msgs.some(m => m.includes('Suspicious assignment in condition'))).toBe(false);
 	});
+
+	it('does not warn on explicitly parenthesized assignment in a condition', async () => {
+		const defs = await loadTestDefs();
+		const code = `
+integer foo(integer x) {
+	if ((x = 1)) return 1;
+	return 0;
+}
+`;
+		const doc = docFrom(code, 'file:///suspicious-parenthesized.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.some(m => m.includes('Suspicious assignment in condition'))).toBe(false);
+	});
+
+	it('does not warn on assignments inside condition call arguments', async () => {
+		const defs = await loadTestDefs();
+		const code = `
+integer foo(integer x) {
+	if (llListFindList(["a"], [x = "a"])) return 1;
+	return 0;
+}
+`;
+		const doc = docFrom(code, 'file:///suspicious-call-arg.lsl');
+		const { analysis } = runPipeline(doc, defs);
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.some(m => m.includes('Suspicious assignment in condition'))).toBe(false);
+	});
 });

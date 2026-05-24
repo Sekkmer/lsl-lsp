@@ -82,6 +82,15 @@ function maskCommentsAndStrings(text: string): string {
 
 export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: PreprocResult): Analysis {
 	const diagnostics: Diag[] = [];
+	const currentFile = (() => {
+		try { return doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined; }
+		catch { return undefined; }
+	})();
+	const originFileOf = (node: { originFile?: string; span?: { file?: string } }): string | undefined => node.originFile || node.span?.file;
+	const isCurrentNode = (node: { originFile?: string; span?: { file?: string } }): boolean => {
+		const file = originFileOf(node);
+		return !file || file === '<unknown>' || !currentFile || file === currentFile;
+	};
 	// Merge parser diagnostics (previously only available on Script) into analysis diagnostics so
 	// downstream tests that inspect analysis.diagnostics see syntax/duplicate/state errors emitted
 	// during parsing (e.g. LSL070 duplicate globals/functions, LSL022 illegal state decls, missing
@@ -90,6 +99,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	try {
 		if (script.diagnostics && script.diagnostics.length) {
 			for (const pd of script.diagnostics) {
+				if (pd.file && pd.file !== '<unknown>' && currentFile && pd.file !== currentFile) continue;
 				const range = spanToRange(doc, pd.span);
 				// Map parser severity strings (if any) to LSP DiagnosticSeverity; default to Error.
 				let severity: DiagnosticSeverity = DiagnosticSeverity.Error;
@@ -149,9 +159,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const globalScope: Scope = { vars: new Map(), kind: 'global' };
 	const globalTypeScope: TypeScope = pushTypeScope();
 	const constantNames = new Set(defs.consts.keys());
+	const constantStringValues = new Map<string, string>();
 	// Seed type information for built-in constants so member validation sees their shapes.
 	for (const c of defs.consts.values()) {
 		if (c?.type) addType(globalTypeScope, c.name, c.type);
+		if (typeof c?.value === 'string') constantStringValues.set(c.name, c.value);
 	}
 	const mustUseFunctions = new Set<string>();
 	const functionMeta = new Map<string, { godMode: boolean; deprecated: boolean; deprecatedMessage?: string }>();
@@ -356,6 +368,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	}
 	// Track label declarations within the current function/event body (for validating jump targets)
 	let currentLabels: Set<string> | null = null;
+	let currentJumpTargets: Set<string> | null = null;
 	function collectLabels(stmt: Stmt | null): Set<string> {
 		const labels = new Set<string>();
 		function visit(s: Stmt | null) {
@@ -372,6 +385,25 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		}
 		visit(stmt);
 		return labels;
+	}
+	function collectJumpTargets(stmt: Stmt | null): Set<string> {
+		const targets = new Set<string>();
+		function visit(s: Stmt | null) {
+			if (!s) return;
+			switch (s.kind) {
+				case 'BlockStmt': for (const ch of s.statements) visit(ch); break;
+				case 'IfStmt': visit(s.then); if (s.else) visit(s.else); break;
+				case 'WhileStmt': visit(s.body); break;
+				case 'DoWhileStmt': visit(s.body); break;
+				case 'ForStmt': visit(s.body); break;
+				case 'JumpStmt':
+					if (s.target.kind === 'Identifier') targets.add(s.target.name);
+					break;
+				default: break;
+			}
+		}
+		visit(stmt);
+		return targets;
 	}
 
 	// Events declared outside any state are not captured in script.states; detect by a simple text scan fallback
@@ -549,13 +581,15 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	function pushScope(s: Scope, kind?: Scope['kind']): Scope { return { parent: s, vars: new Map(), kind }; }
 
 	function visitFunction(fn: AstFunction) {
-		valueEnvStack.push(currentValueEnv().child());
+		valueEnvStack.push(currentValueEnv().clone().child());
 		const scope = pushScope(globalScope, 'func');
 		const ts = pushTypeScope(globalTypeScope);
 		const returnType = (fn.returnType ?? 'void') as string;
 		// Collect all labels in this function body so jump targets can be validated without unknown-identifier noise
 		const savedLabels = currentLabels;
+		const savedJumpTargets = currentJumpTargets;
 		currentLabels = collectLabels(fn.body);
+		currentJumpTargets = collectJumpTargets(fn.body);
 		// Set up usage tracking for this function body
 		const ctx: UsageContext = { usedParamNames: new Set(), usedLocalNames: new Set(), paramDecls: [], localDecls: [] };
 		usageStack.push(ctx);
@@ -661,6 +695,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		valueEnvStack.pop();
 		usageStack.pop();
 		currentLabels = savedLabels;
+		currentJumpTargets = savedJumpTargets;
 	}
 
 	type TypeScopeView = { view: Map<string, SimpleType> | ReadonlyMap<string, SimpleType> };
@@ -680,7 +715,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		// Duplicate event names within the same state
 		const evNames = new Set<string>();
 		for (const ev of st.events) {
-			valueEnvStack.push(currentValueEnv().child());
+			valueEnvStack.push(currentValueEnv().clone().child());
 			if (evNames.has(ev.name)) {
 				diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Duplicate declaration of event ${ev.name}`, range: spanToRange(doc, ev.span), severity: DiagnosticSeverity.Error });
 			} else evNames.add(ev.name);
@@ -747,7 +782,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 			// Collect labels for this event body
 			const savedLabels = currentLabels;
+			const savedJumpTargets = currentJumpTargets;
 			currentLabels = collectLabels(ev.body);
+			currentJumpTargets = collectJumpTargets(ev.body);
 			visitStmt(ev.body, evScope, tsEvent);
 			if (ev.body.kind === 'BlockStmt' && ev.body.statements.length === 0) {
 				diagnostics.push({ code: LSL_DIAGCODES.EMPTY_EVENT_BODY, message: `Event ${ev.name} body is empty`, range: spanToRange(doc, ev.body.span), severity: DiagnosticSeverity.Warning });
@@ -785,13 +822,14 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 			usageStack.pop();
 			currentLabels = savedLabels;
+			currentJumpTargets = savedJumpTargets;
 			valueEnvStack.pop();
 		}
 	}
 
 	function validateExpr(expr: Expr | null, typeScope: TypeScope) {
 		if (!expr) return;
-		validateOperatorsFromAst(doc, [expr], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { constantNames });
+		validateOperatorsFromAst(doc, [expr], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { constantNames, constantStringValues });
 	}
 
 	function validateInitializerType(targetType: string, initializer: Expr, typeScope: TypeScope) {
@@ -834,6 +872,13 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	}
 
 	const assignmentOps = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
+	function rootIdentifier(expr: Expr): string | null {
+		if (expr.kind === 'Identifier') return expr.name;
+		if (expr.kind === 'Member') return rootIdentifier(expr.object);
+		if (expr.kind === 'Paren') return rootIdentifier(expr.expression);
+		return null;
+	}
+
 	function updateValueEnvFromExpr(expr: Expr | null, typeScope: TypeScope) {
 		if (!expr) return;
 		if (expr.kind === 'Binary' && assignmentOps.has(expr.op)) {
@@ -846,13 +891,20 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					const t = normalizeType(inferTypeOf(expr.left, typeScope));
 					currentValueEnv().setExistingOrLocal(expr.left.name, { kind: 'unknown', type: t } as Value);
 				}
+			} else {
+				const name = rootIdentifier(expr.left);
+				if (name) {
+					const t = normalizeType(typeScope.view.get(name) ?? inferTypeOf(expr.left, typeScope));
+					currentValueEnv().setExistingOrLocal(name, { kind: 'unknown', type: toConcreteType(t) ?? 'integer' } as Value);
+				}
 			}
 		}
 		if (expr.kind === 'Unary' && (expr.op === '++' || expr.op === '--')) {
 			const arg = expr.argument;
-			if (arg.kind === 'Identifier') {
-				const t = normalizeType(inferTypeOf(arg, typeScope));
-				currentValueEnv().setExistingOrLocal(arg.name, { kind: 'unknown', type: t } as Value);
+			const name = rootIdentifier(arg);
+			if (name) {
+				const t = normalizeType(typeScope.view.get(name) ?? inferTypeOf(arg, typeScope));
+				currentValueEnv().setExistingOrLocal(name, { kind: 'unknown', type: toConcreteType(t) ?? 'integer' } as Value);
 			}
 		}
 	}
@@ -878,12 +930,18 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (!expr) return acc;
 		switch (expr.kind) {
 			case 'Binary': {
-				if (assignmentOps.has(expr.op) && expr.left.kind === 'Identifier') acc.add(expr.left.name);
+				if (assignmentOps.has(expr.op)) {
+					const name = rootIdentifier(expr.left);
+					if (name) acc.add(name);
+				}
 				collectMutatedIdentifiers(expr.left, acc); collectMutatedIdentifiers(expr.right, acc);
 				break;
 			}
 			case 'Unary': {
-				if ((expr.op === '++' || expr.op === '--') && expr.argument.kind === 'Identifier') acc.add(expr.argument.name);
+				if (expr.op === '++' || expr.op === '--') {
+					const name = rootIdentifier(expr.argument);
+					if (name) acc.add(name);
+				}
 				collectMutatedIdentifiers(expr.argument, acc);
 				break;
 			}
@@ -932,6 +990,20 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		}
 	}
 
+	function collectMutatedGlobalNames(globalNames: ReadonlySet<string>): Set<string> {
+		const mutated = new Set<string>();
+		const addGlobalsFromStmt = (stmt: Stmt) => {
+			for (const name of collectMutatedIdentifiersInStmt(stmt)) {
+				if (globalNames.has(name)) mutated.add(name);
+			}
+		};
+		for (const [, fn] of script.functions) addGlobalsFromStmt(fn.body);
+		for (const [, st] of script.states) {
+			for (const ev of st.events) addGlobalsFromStmt(ev.body);
+		}
+		return mutated;
+	}
+
 	function evaluateIfCondition(expr: Expr): { truth: boolean | null; envAfter?: Env } {
 		const hasAssignment = collectMutatedIdentifiers(expr).size > 0;
 		if (!hasAssignment) return { truth: evalCondition(expr) };
@@ -966,6 +1038,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 						if (!s || s.kind !== 'ReturnStmt') continue;
 						const next = stmt.statements[i + 1];
 						if (!next) continue;
+						if (next.kind === 'LabelStmt' && currentJumpTargets?.has(next.name)) continue;
 						const sEnd = spanToRange(doc, s.span).end;
 						const nStart = spanToRange(doc, next.span).start;
 						diagnostics.push({ code: LSL_DIAGCODES.DEAD_CODE, message: 'Dead code found beyond return statement', range: { start: sEnd, end: nStart }, severity: DiagnosticSeverity.Warning });
@@ -1025,7 +1098,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			case 'IfStmt': {
 				walkExpr(stmt.condition, scope, typeScope);
 				// Validate condition with suspicious-assignment flag; other expressions validated normally
-				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
+				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames, constantStringValues });
 				const condition = evaluateIfCondition(stmt.condition);
 				const truth = condition.truth;
 				if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
@@ -1049,29 +1122,44 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 			case 'WhileStmt': {
 				walkExpr(stmt.condition, scope, typeScope);
-				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
+				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames, constantStringValues });
 				let truth: boolean | null = null;
-				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
+				const condIds = collectIdentifiers(stmt.condition);
+				const bodyMutations = collectMutatedIdentifiersInStmt(stmt.body);
+				const mutatedCondition = collectMutatedIdentifiers(stmt.condition);
+				const mutatesLoop = [...condIds].some(n => bodyMutations.has(n) || mutatedCondition.has(n));
+				if (!mutatesLoop) {
 					truth = evalCondition(stmt.condition);
 					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Loop condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
 					else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Loop condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
 				}
-				visitWithRestoredValueEnv(() => visitStmt(stmt.body, scope, typeScope));
-				const bodyMutations = collectMutatedIdentifiersInStmt(stmt.body);
-				if (truth !== false && bodyMutations.size) markMutatedValuesUnknown(bodyMutations, typeScope);
+				const loopMutations = new Set<string>(bodyMutations);
+				collectMutatedIdentifiers(stmt.condition, loopMutations);
+				visitWithRestoredValueEnv(() => {
+					if (truth !== false && loopMutations.size) markMutatedValuesUnknown(loopMutations, typeScope);
+					visitStmt(stmt.body, scope, typeScope);
+				});
+				if (truth !== false && loopMutations.size) markMutatedValuesUnknown(loopMutations, typeScope);
 				break;
 			}
 			case 'DoWhileStmt': {
-				visitWithRestoredValueEnv(() => visitStmt(stmt.body, scope, typeScope));
 				const bodyMutations = collectMutatedIdentifiersInStmt(stmt.body);
+				visitWithRestoredValueEnv(() => {
+					if (bodyMutations.size) markMutatedValuesUnknown(bodyMutations, typeScope);
+					visitStmt(stmt.body, scope, typeScope);
+				});
 				if (bodyMutations.size) markMutatedValuesUnknown(bodyMutations, typeScope);
 				walkExpr(stmt.condition, scope, typeScope);
-				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
-				if (collectMutatedIdentifiers(stmt.condition).size === 0) {
+				validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames, constantStringValues });
+				const condIds = collectIdentifiers(stmt.condition);
+				const mutatedCondition = collectMutatedIdentifiers(stmt.condition);
+				const mutatesLoop = [...condIds].some(n => bodyMutations.has(n) || mutatedCondition.has(n));
+				if (!mutatesLoop) {
 					const truth = evalCondition(stmt.condition);
 					if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Loop condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
 					else if (truth === false) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_FALSE_CONDITION, message: 'Loop condition is always false', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });
 				}
+				if (mutatedCondition.size) markMutatedValuesUnknown(mutatedCondition, typeScope);
 				break;
 			}
 			case 'ForStmt': {
@@ -1079,7 +1167,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				let truth: boolean | null = stmt.condition ? null : true;
 				if (stmt.condition) {
 					walkExpr(stmt.condition, scope, typeScope);
-					validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames });
+					validateOperatorsFromAst(doc, [stmt.condition], diagnostics, typeScope.view, functionReturnTypes, callSignatures, { flagSuspiciousAssignment: true, constantNames, constantStringValues });
 					const condIds = collectIdentifiers(stmt.condition);
 					const mutatedInit = collectMutatedIdentifiers(stmt.init ?? null);
 					const mutatedUpdate = collectMutatedIdentifiers(stmt.update ?? null);
@@ -1096,9 +1184,13 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					validateExpr(stmt.update, typeScope);
 					visitWithRestoredValueEnv(() => updateValueEnvFromExpr(stmt.update ?? null, typeScope));
 				}
-				visitWithRestoredValueEnv(() => visitStmt(stmt.body, scope, typeScope));
 				const loopMutations = collectMutatedIdentifiersInStmt(stmt.body);
+				collectMutatedIdentifiers(stmt.condition ?? null, loopMutations);
 				collectMutatedIdentifiers(stmt.update ?? null, loopMutations);
+				visitWithRestoredValueEnv(() => {
+					if (truth !== false && loopMutations.size) markMutatedValuesUnknown(loopMutations, typeScope);
+					visitStmt(stmt.body, scope, typeScope);
+				});
 				if (truth !== false && loopMutations.size) markMutatedValuesUnknown(loopMutations, typeScope);
 				break;
 			}
@@ -1180,10 +1272,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	for (const [, g] of script.globals) {
 		// Create a declaration entry for each user global (was previously missing)
 		const name = g.name;
+		const currentGlobal = isCurrentNode(g);
 		// TEMP DEBUG: log global name for reserved identifier investigation
 		try { if (process.env.LSL_DEBUG_RESERVED) console.log('[analyze-debug] global', name); } catch { /* ignore */ }
 		// Reserved identifier check for global variable names
-		if (isReserved(defs, name)) {
+		if (currentGlobal && isReserved(defs, name)) {
 			diagnostics.push({
 				code: LSL_DIAGCODES.RESERVED_IDENTIFIER,
 				message: `"${name}" is reserved and cannot be used as an identifier`,
@@ -1196,17 +1289,19 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		decls.push(d);
 		globalDecls.push(d);
 		if (g.initializer) {
-			walkExpr(g.initializer, globalScope, globalTypeScope);
-			if (!isValidGlobalInitializer(g.initializer, globalScope)) {
-				diagnostics.push({
-					code: LSL_DIAGCODES.SYNTAX,
-					message: 'Global initializer must be a literal, builtin constant, or previously declared global',
-					range: spanToRange(doc, g.initializer.span),
-					severity: DiagnosticSeverity.Error,
-				});
+			if (currentGlobal) {
+				walkExpr(g.initializer, globalScope, globalTypeScope);
+				if (!isValidGlobalInitializer(g.initializer, globalScope)) {
+					diagnostics.push({
+						code: LSL_DIAGCODES.SYNTAX,
+						message: 'Global initializer must be a literal, builtin constant, or previously declared global',
+						range: spanToRange(doc, g.initializer.span),
+						severity: DiagnosticSeverity.Error,
+					});
+				}
+				validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures, { constantNames, constantStringValues });
+				validateInitializerType(g.varType, g.initializer, globalTypeScope);
 			}
-			validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures, { constantNames });
-			validateInitializerType(g.varType, g.initializer, globalTypeScope);
 			currentValueEnv().setVar(name, coerceValueForDeclaredType(evalExpr(g.initializer, currentValueEnv()), g.varType));
 		} else {
 			const dv = zeroValueForType(g.varType);
@@ -1216,11 +1311,16 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		addType(globalTypeScope, name, g.varType);
 	}
 
+	const globalNames = new Set(script.globals.keys());
+	const mutatedGlobals = collectMutatedGlobalNames(globalNames);
+	markMutatedValuesUnknown(mutatedGlobals, globalTypeScope);
+
 	// Collect function/state/event declarations up-front so later analysis (refs, state-change validity) can resolve them.
 	// Functions
 	for (const [, f] of script.functions) {
 		const name = f.name;
-		if (isReserved(defs, name)) {
+		const currentFunction = isCurrentNode(f);
+		if (currentFunction && isReserved(defs, name)) {
 			diagnostics.push({
 				code: LSL_DIAGCODES.RESERVED_IDENTIFIER,
 				message: `"${name}" is reserved and cannot be used as an identifier`,
@@ -1294,8 +1394,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (targets) for (const t of targets) { const r = { start: doc.positionAt(t.start), end: doc.positionAt(t.end) }; if (t.resolved) includeRangeByFile.set(t.resolved, r); includeRangeByFile.set(t.file, r); }
 	} catch { /* ignore */ }
 
-	for (const [, f] of script.functions) visitFunction(f);
-	for (const [, s] of script.states) visitState(s);
+	for (const [, f] of script.functions) if (isCurrentNode(f)) visitFunction(f);
+	for (const [, s] of script.states) if (isCurrentNode(s)) visitState(s);
 
 	// After building declarations from the expanded AST, perform cross-include duplicate state detection.
 	try {

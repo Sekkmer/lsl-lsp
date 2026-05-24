@@ -1,7 +1,7 @@
 import type { TextDocument } from '../protocol';
 import type { Range } from '../protocol';
 
-export type Span = { start: number; end: number };
+export type Span = { start: number; end: number; file?: string };
 
 export const TYPES = ['key', 'list', 'integer', 'float', 'rotation', 'string', 'vector'] as const;
 export type Type = typeof TYPES[number];
@@ -64,12 +64,12 @@ export type Stmt =
 	| { span: Span; kind: 'StateChangeStmt'; state: string; }
 	| { span: Span; kind: 'ErrorStmt' };
 
-export type Event = { span: Span; kind: 'Event'; name: string; parameters: Map<string, Type>; body: Stmt; }
-export type State = { span: Span; kind: 'State'; name: string; events: Event[]; }
+export type Event = { span: Span; kind: 'Event'; name: string; parameters: Map<string, Type>; body: Stmt; originFile?: string; }
+export type State = { span: Span; kind: 'State'; name: string; events: Event[]; originFile?: string; }
 // returnType is either one of LSL types or implicit 'void' when not specified in source
-export type Function = { span: Span; kind: 'Function'; name: string; parameters: Map<string, Type>; body: Stmt; comment?: string; returnType?: Type | 'void' }
-export type GlobalVar = { span: Span; kind: 'GlobalVar'; varType: Type; name: string; initializer?: Expr; comment?: string; }
-export type Diagnostic = { span: Span; message: string; severity?: 'error' | 'warning' | 'info'; code?: string };
+export type Function = { span: Span; kind: 'Function'; name: string; parameters: Map<string, Type>; body: Stmt; comment?: string; returnType?: Type | 'void'; originFile?: string; }
+export type GlobalVar = { span: Span; kind: 'GlobalVar'; varType: Type; name: string; initializer?: Expr; comment?: string; originFile?: string; }
+export type Diagnostic = { span: Span; message: string; severity?: 'error' | 'warning' | 'info'; code?: string; file?: string };
 export type Script = { span: Span; kind: 'Script'; functions: Map<string, Function>; states: Map<string, State>; globals: Map<string, GlobalVar>; diagnostics?: Diagnostic[] }
 
 export function spanFrom(start: number, end: number): Span {

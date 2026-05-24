@@ -17,7 +17,7 @@ function tmpFile(rel: string, contents: string) {
 }
 
 describe('includes: duplicate built-in function declarations', () => {
-	it('emits a reserved identifier diagnostic when an include defines a builtin function name', async () => {
+	it('does not map include-owned reserved identifier diagnostics onto the root document', async () => {
 		const defsPath = path.join(__dirname, 'fixtures', 'lsl-defs.yaml');
 		const defs = await loadDefs(defsPath);
 		const header = tmpFile('dup_builtin.lslh', 'integer llSay(key id, string msg) { return 0; }\n');
@@ -26,7 +26,7 @@ describe('includes: duplicate built-in function declarations', () => {
 		const doc = docFrom(code, 'file:///proj/dup_builtin.lsl');
 		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [includeDir] });
 		const errs = analysis.diagnostics.filter(d => d.severity === 1);
-		expect(errs.some(d => /"llSay" is reserved/.test(d.message))).toBe(true);
+		expect(errs.some(d => /"llSay" is reserved/.test(d.message))).toBe(false);
 		expect(pre.includeTargets?.length).toBe(1);
 	});
 });

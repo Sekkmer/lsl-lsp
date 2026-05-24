@@ -64,6 +64,15 @@ import {
 const connection: Connection = createConnection(ProposedFeatures.all);
 const documents = new TextDocuments(TextDocument);
 
+function sameDiagnosticFile(doc: TextDocument, file?: string): boolean {
+	if (!file || file === '<unknown>') return true;
+	try {
+		return URI.parse(doc.uri).fsPath === file;
+	} catch {
+		return true;
+	}
+}
+
 let defs: Defs | null = null;
 // Persist workspace root paths (filesystem paths) detected at initialize time
 let workspaceRootPaths: string[] = [];
@@ -431,6 +440,7 @@ async function validateTextDocument(doc: TextDocument) {
 
 	// Preprocessor diagnostics (malformed/stray/unmatched directives and unresolved includes)
 	for (const pd of pre.preprocDiagnostics || []) {
+		if (!sameDiagnosticFile(doc, pd.file)) continue;
 		diags.push({
 			range: { start: doc.positionAt(pd.start), end: doc.positionAt(pd.end) },
 			severity: DiagnosticSeverity.Warning,

@@ -36,4 +36,20 @@ describe('dead code diagnostics', () => {
 		const dead = analysis.diagnostics.find(d => d.code === LSL_DIAGCODES.DEAD_CODE);
 		expect(dead).toBeTruthy();
 	});
+
+	it('does not flag a jump target label after return as dead code', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('integer f(integer n){ if (n) jump cont; return 1; @cont; return 0; }');
+		const { analysis } = runPipeline(doc, defs);
+		const dead = analysis.diagnostics.find(d => d.code === LSL_DIAGCODES.DEAD_CODE);
+		expect(dead).toBeFalsy();
+	});
+
+	it('still flags an untargeted label after return as dead code', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('integer f(){ return 1; @cont; return 0; }');
+		const { analysis } = runPipeline(doc, defs);
+		const dead = analysis.diagnostics.find(d => d.code === LSL_DIAGCODES.DEAD_CODE);
+		expect(dead).toBeTruthy();
+	});
 });

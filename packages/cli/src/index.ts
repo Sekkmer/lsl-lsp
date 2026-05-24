@@ -285,7 +285,9 @@ function toPreprocResult(full: ReturnType<typeof preprocessForAst>): PreprocResu
 
 function collectDiagnostics(doc: TextDocument, pre: PreprocResult, diagnostics: Diag[], opts: CliOptions): CliDiagnostic[] {
 	const out: CliDiagnostic[] = [];
+	const docPath = fileUriToPath(doc.uri);
 	for (const pd of pre.preprocDiagnostics || []) {
+		if (pd.file && pd.file !== '<unknown>' && docPath && pd.file !== docPath) continue;
 		out.push({
 			range: { start: doc.positionAt(pd.start), end: doc.positionAt(pd.end) },
 			message: pd.message,
