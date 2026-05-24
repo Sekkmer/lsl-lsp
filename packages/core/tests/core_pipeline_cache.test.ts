@@ -1,21 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { preprocessTokens, buildIncludeResolver, clearIncludeResolverCache } from '../src/core/pipeline';
-import type { Stats, BigIntStats, PathLike, PathOrFileDescriptor } from 'node:fs';
+import type { PathOrFileDescriptor } from 'node:fs';
 
 describe('core pipeline cache', () => {
 	beforeEach(() => clearIncludeResolverCache());
 
-	it('reuses tokenized include on unchanged mtime and refreshes after change', () => {
-		// Fake fs with a single include file we can mutate and control mtime
-		let mtimeMs = 1000;
+	it('reuses tokenized include for unchanged content and refreshes when content changes', () => {
+		// Fake fs with a single include file we can mutate without changing metadata
 		let content = '#define F 1\n';
-		// Provide a statSync function that is compatible with Node's overloads
-		function statSyncCompat(_p: PathLike): Stats;
-		function statSyncCompat(_p: PathLike, _opts: { bigint: true }): BigIntStats;
-		function statSyncCompat(_p: PathLike, _opts?: { bigint?: boolean }): Stats | BigIntStats {
-			// Our pipeline only calls statSync(path) so returning Stats is sufficient
-			return ({ mtimeMs } as unknown) as Stats;
-		}
 		type RFS = typeof import('node:fs').readFileSync;
 		const readFileSyncCompat: RFS = ((path: PathOrFileDescriptor, _options?: Parameters<RFS>[1]): ReturnType<RFS> => {
 			const sp = typeof path === 'string' ? path : String(path);
@@ -23,21 +15,18 @@ describe('core pipeline cache', () => {
 			return content as unknown as ReturnType<RFS>;
 		}) as RFS;
 		const fakeFs: import('../src/core/pipeline').IncludeResolverOptions['fs'] = {
-			existsSync: (p: import('node:fs').PathLike) => String(p).endsWith('/inc.lsl'),
 			readFileSync: readFileSyncCompat,
-			statSync: statSyncCompat,
 		};
 		const resolver = buildIncludeResolver({ includePaths: ['/abs'], fs: fakeFs });
 		// First call builds cache
 		const r1 = resolver('inc.lsl', '/abs/main.lsl');
 		if (!r1) throw new Error('resolver failed');
-		// Second call with same mtime must return same token array instance
+		// Second call with same content must return same token array instance
 		const r2 = resolver('inc.lsl', '/abs/main.lsl');
 		expect(r2).not.toBeNull();
 		expect(r2!.tokens).toBe(r1.tokens);
-		// Modify file and bump mtime -> cache refresh returns a different token array
+		// Modify file without bumping mtime -> cache refresh returns a different token array
 		content = '#define F 2\n';
-		mtimeMs += 1;
 		const r3 = resolver('inc.lsl', '/abs/main.lsl');
 		expect(r3).not.toBeNull();
 		expect(r3!.tokens).not.toBe(r1.tokens);

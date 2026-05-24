@@ -72,4 +72,35 @@ describe('hover: include docs for functions/globals', async () => {
 		const md = hoverToString(hv!);
 		expect(md).toMatch(/macro adds stuff/);
 	});
+
+	it('refreshes include docs after content changes without an mtime change', async () => {
+		const base = path.join(__dirname, 'tmp_includes');
+		await fs.mkdir(base, { recursive: true });
+		const header = path.join(base, 'with_fresh_doc.lslh');
+		await fs.writeFile(header, [
+			'// old doc',
+			'integer FRESH_DOC;',
+		].join('\n'), 'utf8');
+
+		const code = `#include "${path.basename(header)}"\ninteger y = FRESH_DOC;\n`;
+		const doc = docFrom(code, 'file:///proj/hover_fresh_doc.lsl');
+		const first = runPipeline(doc, defs, { includePaths: [base] });
+		let hoverPos = doc.positionAt(code.indexOf('FRESH_DOC') + 2);
+		let hv = lslHover(doc, { position: hoverPos }, defs, first.analysis, first.pre);
+		expect(hoverToString(hv!)).toMatch(/old doc/);
+
+		const before = await fs.stat(header);
+		await fs.writeFile(header, [
+			'// new doc',
+			'integer FRESH_DOC;',
+		].join('\n'), 'utf8');
+		await fs.utimes(header, before.atime, before.mtime);
+
+		const second = runPipeline(doc, defs, { includePaths: [base] });
+		hoverPos = doc.positionAt(code.indexOf('FRESH_DOC') + 2);
+		hv = lslHover(doc, { position: hoverPos }, defs, second.analysis, second.pre);
+		const md = hoverToString(hv!);
+		expect(md).toMatch(/new doc/);
+		expect(md).not.toMatch(/old doc/);
+	});
 });

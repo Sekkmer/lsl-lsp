@@ -12,15 +12,15 @@ const _prevMacroSnapshot: { macros: Record<string, unknown> } = { macros: {} };
 export type IncludeResolverOptions = {
 	includePaths: string[];
 	fromPath?: string; // absolute path of the current file for relative includes
-	fs?: typeof import('node:fs');
+	fs?: Pick<typeof import('node:fs'), 'readFileSync'>;
 };
 
 // Simple include resolver with minimal caching; legacy tests expect ability to clear cache.
-type CachedEntry = { id: string; tokens: Token[]; mtimeMs: number };
+type CachedEntry = { id: string; tokens: Token[]; text: string };
 const includeCache = new Map<string, CachedEntry>();
 export function clearIncludeResolverCache() { includeCache.clear(); }
 
-export function buildIncludeResolver(opts: IncludeResolverOptions & { fs?: typeof import('node:fs') }): IncludeResolver {
+export function buildIncludeResolver(opts: IncludeResolverOptions): IncludeResolver {
 	return (target, fromId) => {
 		const fs = opts.fs || require('node:fs');
 		// resolve relative to including file first, then search includePaths
@@ -32,14 +32,13 @@ export function buildIncludeResolver(opts: IncludeResolverOptions & { fs?: typeo
 		for (const p of opts.includePaths) candidates.push(path.join(p, target));
 		for (const filePath of candidates) {
 			try {
-				const stat = fs.statSync(filePath);
-				const prev = includeCache.get(filePath);
-				if (prev && prev.mtimeMs === stat.mtimeMs) return { id: prev.id, tokens: prev.tokens };
 				const src = fs.readFileSync(filePath, 'utf8');
+				const prev = includeCache.get(filePath);
+				if (prev && prev.text === src) return { id: prev.id, tokens: prev.tokens };
 				const tz = new Tokenizer(src);
 				const toks: Token[] = [];
 				for (;;) { const t = tz.next(); if (!t.file || t.file === '<unknown>') (t as Token).file = filePath; toks.push(t); if (t.kind === 'eof') break; }
-				includeCache.set(filePath, { id: filePath, tokens: toks, mtimeMs: stat.mtimeMs });
+				includeCache.set(filePath, { id: filePath, tokens: toks, text: src });
 				return { id: filePath, tokens: toks };
 			} catch { /* try next */ }
 		}

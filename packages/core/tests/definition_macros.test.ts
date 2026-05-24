@@ -106,4 +106,32 @@ describe('goto definition for macros', () => {
 		expect(loc).toBeNull();
 		expect(analysis.diagnostics.some(d => d.message.includes('expected \'{\' for function body'))).toBe(true);
 	});
+
+	it('refreshes include definitions when file content changes without an mtime change', async () => {
+		const fs = await import('node:fs/promises');
+		const base = path.join(__dirname, 'tmp_includes', 'definition_stale_cache');
+		await fs.mkdir(base, { recursive: true });
+		const header = path.join(base, 'api.lslh');
+		await fs.writeFile(header, 'integer Foo(integer x) { return x; }\n', 'utf8');
+
+		const code1 = '#include "api.lslh"\ndefault { state_entry() { Foo(1); } }\n';
+		const doc1 = docFrom(code1, 'file:///definition-cache-1.lsl');
+		const defs = await loadTestDefs();
+		const first = runPipeline(doc1, defs, { includePaths: [base] });
+		const line1 = code1.split(/\r?\n/)[1]!;
+		const loc1 = gotoDefinition(doc1, { line: 1, character: line1.indexOf('Foo') + 1 }, first.analysis, first.pre, defs);
+		expect(loc1?.uri.endsWith('api.lslh')).toBe(true);
+
+		const before = await fs.stat(header);
+		await fs.writeFile(header, 'integer Bar(integer x) { return x; }\n', 'utf8');
+		await fs.utimes(header, before.atime, before.mtime);
+
+		const code2 = '#include "api.lslh"\ndefault { state_entry() { Bar(1); } }\n';
+		const doc2 = docFrom(code2, 'file:///definition-cache-2.lsl');
+		const second = runPipeline(doc2, defs, { includePaths: [base] });
+		const line2 = code2.split(/\r?\n/)[1]!;
+		const loc2 = gotoDefinition(doc2, { line: 1, character: line2.indexOf('Bar') + 1 }, second.analysis, second.pre, defs);
+		expect(loc2?.uri.endsWith('api.lslh')).toBe(true);
+		expect(second.analysis.diagnostics.some(d => d.message.includes('Undefined function: Bar'))).toBe(false);
+	});
 });

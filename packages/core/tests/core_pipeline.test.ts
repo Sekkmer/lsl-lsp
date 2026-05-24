@@ -35,9 +35,7 @@ describe('core pipeline', () => {
 		files.set('/v/main.lsl', '#include "inc.lsl"\ninteger x;');
 		files.set('/v/inc.lsl', 'integer y;');
 		const fakeFs = {
-			existsSync: (p: string) => files.has(p),
 			readFileSync: (p: string, _enc: string) => files.get(p) as string,
-			statSync: (_p: string) => ({ mtimeMs: 1 }),
 		};
 		const { tokens, includes } = preprocessTokens(files.get('/v/main.lsl')!, { includePaths: ['/v'], fromPath: '/v/main.lsl', fs: fakeFs });
 		// Should have included the file and produced tokens from both

@@ -17,18 +17,16 @@ export interface ResolverOptions {
 	filePathToUri?: (filePath: string) => string;
 }
 
-// Simple one-run cache of include file contents -> lines for definition scanning
-const includeFileCache: Map<string, { mtimeMs: number; lines: string[]; text: string }> = new Map();
+// Simple cache of include file contents -> lines for definition scanning.
+const includeFileCache: Map<string, { lines: string[]; text: string }> = new Map();
 
 function readIncludeFileLines(file: string): string[] {
 	try {
-		const stat = fs.statSync(file);
-		const mtimeMs = Number(stat.mtimeMs) || 0;
-		const cached = includeFileCache.get(file);
-		if (cached && cached.mtimeMs === mtimeMs) return cached.lines;
 		const text = fs.readFileSync(file, 'utf8');
+		const cached = includeFileCache.get(file);
+		if (cached && cached.text === text) return cached.lines;
 		const lines = text.split(/\r?\n/);
-		includeFileCache.set(file, { mtimeMs, lines, text });
+		includeFileCache.set(file, { lines, text });
 		return lines;
 	} catch { return []; }
 }

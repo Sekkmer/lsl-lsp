@@ -8,16 +8,9 @@ import type { PreprocResult } from './core/preproc';
 import { isKeyword } from './ast/lexer';
 import { isType } from './ast/types';
 
-// Simple in-memory cache for include file contents to avoid repeated sync reads during hover bursts
-const includeFileCache = new Map<string, string>();
 function readIncludeFile(file: string): string | null {
 	try {
-		let txt = includeFileCache.get(file);
-		if (txt == null) {
-			txt = fs.readFileSync(file, 'utf8');
-			includeFileCache.set(file, txt);
-		}
-		return txt;
+		return fs.readFileSync(file, 'utf8');
 	} catch { return null; }
 }
 
