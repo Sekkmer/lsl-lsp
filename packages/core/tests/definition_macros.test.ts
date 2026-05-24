@@ -177,4 +177,51 @@ describe('goto definition for macros', () => {
 		expect(parened?.kind).toBe('macro-obj');
 		expect(call?.kind).toBe('macro-func');
 	});
+
+	it('prefers local variables over included globals with the same name', async () => {
+		const fs = await import('node:fs/promises');
+		const base = path.join(__dirname, 'tmp_includes', 'definition_local_shadow');
+		await fs.mkdir(base, { recursive: true });
+		await fs.writeFile(path.join(base, 'api.lslh'), 'integer SHADOWED_VALUE;\n', 'utf8');
+		const code = [
+			'#include "api.lslh"',
+			'default {',
+			'  state_entry() {',
+			'    integer SHADOWED_VALUE = 1;',
+			'    integer y = SHADOWED_VALUE;',
+			'  }',
+			'}',
+		].join('\n');
+		const doc = docFrom(code, 'file:///definition-local-shadow.lsl');
+		const defs = await loadTestDefs();
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [base] });
+		const useLine = code.split(/\r?\n/)[4]!;
+		const target = resolveSymbolAt(doc, { line: 4, character: useLine.indexOf('SHADOWED_VALUE') + 1 }, analysis, pre, defs);
+
+		expect(target?.from).toBe('local');
+		expect(target?.kind).toBe('var');
+		expect(target && 'range' in target ? target.range.start.line : undefined).toBe(3);
+	});
+
+	it('does not jump to inactive local macros when an include macro is active', async () => {
+		const fs = await import('node:fs/promises');
+		const base = path.join(__dirname, 'tmp_includes', 'definition_inactive_local_macro');
+		await fs.mkdir(base, { recursive: true });
+		await fs.writeFile(path.join(base, 'api.lslh'), '#define ACTIVE_MACRO 1\n', 'utf8');
+		const code = [
+			'#include "api.lslh"',
+			'#if 0',
+			'#define ACTIVE_MACRO 2',
+			'#endif',
+			'integer y = ACTIVE_MACRO;',
+		].join('\n');
+		const doc = docFrom(code, 'file:///definition-inactive-local-macro.lsl');
+		const defs = await loadTestDefs();
+		const { analysis, pre } = runPipeline(doc, defs, { includePaths: [base] });
+		const useLine = code.split(/\r?\n/)[4]!;
+		const target = resolveSymbolAt(doc, { line: 4, character: useLine.indexOf('ACTIVE_MACRO') + 1 }, analysis, pre, defs);
+
+		expect(target?.from).toBe('include');
+		expect(target && 'uri' in target ? target.uri.endsWith('api.lslh') : false).toBe(true);
+	});
 });

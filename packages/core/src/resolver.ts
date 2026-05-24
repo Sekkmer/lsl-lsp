@@ -1,4 +1,4 @@
-import { filePathToUri, type Position, type Range } from './protocol';
+import { filePathToUri, fileUriToPath, type Position, type Range } from './protocol';
 import type { TextDocument } from './protocol';
 import type { Analysis } from './analysisTypes';
 import type { Defs } from './defs';
@@ -236,6 +236,36 @@ function wordAt(doc: TextDocument, pos: Position): [number, number, string] | nu
 	return null;
 }
 
+function isDeclInDocument(doc: TextDocument, decl: Analysis['decls'][number]): boolean {
+	try {
+		const start = doc.offsetAt(decl.range.start);
+		const end = doc.offsetAt(decl.range.end);
+		const text = doc.getText();
+		if (start < 0 || end <= start || text.slice(start, end) !== decl.name) return false;
+		let lineStart = start;
+		while (lineStart > 0 && text[lineStart - 1] !== '\n') lineStart--;
+		let lineEnd = end;
+		while (lineEnd < text.length && text[lineEnd] !== '\n') lineEnd++;
+		const before = text.slice(lineStart, start);
+		const after = text.slice(end, lineEnd);
+		const typedPrefix = /\b(?:integer|float|string|key|vector|rotation|quaternion|list|void)\s+$/.test(before);
+		switch (decl.kind) {
+			case 'func':
+				return typedPrefix && /^\s*\(/.test(after);
+			case 'var':
+				return typedPrefix && /^\s*(?:[=;,]|$)/.test(after);
+			case 'param':
+				return typedPrefix && /^\s*(?:,|\))/.test(after);
+			case 'state':
+				return /\bstate\s+$/.test(before);
+			case 'event':
+				return /^\s*\(/.test(after);
+		}
+	} catch {
+		return false;
+	}
+}
+
 /** Resolve the best definition target at the given position, unifying hover/gotoDefinition logic. */
 export function resolveSymbolAt(
 	doc: TextDocument,
@@ -258,24 +288,9 @@ export function resolveSymbolAt(
 		}
 	}
 
-	// Attempt to derive word early for cross-include scan (helps cases where symbol not in refs yet, e.g., macro usage)
-	let earlyWord: string | null = null;
-	{
-		const w = wordAt(doc, pos);
-		if (w) earlyWord = w[2];
-	}
-	if (earlyWord && pre && pre.includeTargets && pre.includeTargets.length) {
-		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] very-early include scan', earlyWord); } catch { /* ignore */ }
-		const veryEarly = scanIncludesForSymbol(earlyWord, pre);
-		if (veryEarly) {
-			const uri = veryEarly.file.startsWith('file://') ? veryEarly.file : toUri(path.resolve(veryEarly.file));
-			return { kind: veryEarly.kind as ResolvedTarget['kind'], name: earlyWord, uri, range: { start: { line: veryEarly.line, character: veryEarly.startChar }, end: { line: veryEarly.line, character: veryEarly.endChar } }, from: 'include' };
-		}
-	}
-
 	// If cursor is on a declaration name, jump to it (noop navigation)
 	const atDecl = analysis.symbolAt(offset);
-	if (atDecl) {
+	if (atDecl && isDeclInDocument(doc, atDecl)) {
 		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] atDecl', atDecl.name, atDecl.kind, 'declStart', atDecl.range.start, 'pos', pos); } catch { /* ignore */ }
 		// Only accept if the cursor sits on the identifier token itself (start char .. start char + name.length)
 		if (atDecl.range.start.line === pos.line) {
@@ -310,29 +325,13 @@ export function resolveSymbolAt(
 	try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] refName', refName); } catch { /* ignore */ }
 	if (!refName) return null;
 
-	// Cross-include lookup early for macros/functions/globals before treating as builtin to avoid shadowing by builtins
-	if (pre && pre.includeTargets && pre.includeTargets.length) {
-		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] early cross-include scan', refName); } catch { /* ignore */ }
-		const earlyHit = scanIncludesForSymbol(refName, pre);
-		if (earlyHit) {
-			const uri = earlyHit.file.startsWith('file://') ? earlyHit.file : toUri(path.resolve(earlyHit.file));
-			return { kind: earlyHit.kind as ResolvedTarget['kind'], name: refName, uri, range: { start: { line: earlyHit.line, character: earlyHit.startChar }, end: { line: earlyHit.line, character: earlyHit.endChar } }, from: 'include' };
-		}
-	}
-	// Built-ins: treat as non-navigable targets after include definitions have had a chance to shadow them.
-	if (defs && (defs.funcs.has(refName) || defs.consts.has(refName))) {
-		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] builtin hit', refName); } catch { /* ignore */ }
-		if (defs.funcs.has(refName)) return { kind: 'builtin-func', name: refName };
-		if (defs.consts.has(refName)) return { kind: 'builtin-const', name: refName };
-	}
-
 	// Local states/functions/vars/params: choose nearest declaration before this offset
 	{
 		let best: Analysis['decls'][number] | null = null;
 		let bestStart = -1;
 		for (const d of analysis.decls) {
 			const isSupported = d.kind === 'var' || d.kind === 'param' || d.kind === 'func' || d.kind === 'state' || d.kind === 'event';
-			if (isSupported && d.name === refName) {
+			if (isSupported && d.name === refName && isDeclInDocument(doc, d)) {
 				const s = doc.offsetAt(d.range.start);
 				if (s <= offset && s > bestStart) { best = d; bestStart = s; }
 			}
@@ -343,35 +342,34 @@ export function resolveSymbolAt(
 		}
 	}
 
-	// Local macros: scan this document
+	// Local macros: trust active macro metadata rather than raw text, so inactive #defines
+	// cannot steal navigation from an active include macro with the same name.
 	if (pre && (pre.macros?.[refName] !== undefined || pre.funcMacros?.[refName] !== undefined)) {
-		const text = doc.getText();
-		if (text.includes('#define')) {
-			const lines = text.split(/\r?\n/);
-			let running = 0;
-			for (const L of lines) {
-				const m = /^\s*#\s*define\s+([A-Za-z_]\w*)/.exec(L);
-				if (m && m[1] === refName) {
-					const nameIdxInLine = L.indexOf(refName);
-					const s = running + (nameIdxInLine >= 0 ? nameIdxInLine : 0);
-					const e = s + refName.length;
-					const range = { start: doc.positionAt(s), end: doc.positionAt(e) };
-					const kind: 'macro-obj' | 'macro-func' = pre.funcMacros?.[refName] !== undefined ? 'macro-func' : 'macro-obj';
-					return { kind, name: refName, uri: doc.uri, range, from: 'local' };
-				}
-				running += L.length + 1;
-			}
+		const localPath = doc.uri.startsWith('file://') ? fileUriToPath(doc.uri) : undefined;
+		const def = pre.macroDefs?.[refName];
+		if (def && localPath && def.file === localPath) {
+			const range = { start: doc.positionAt(def.start), end: doc.positionAt(def.end) };
+			const kind: 'macro-obj' | 'macro-func' = pre.funcMacros?.[refName] !== undefined ? 'macro-func' : 'macro-obj';
+			return { kind, name: refName, uri: doc.uri, range, from: 'local' };
 		}
 	}
 
-	// Late cross-include scan (should rarely hit now) in case macros table indicated local but search missed
+	// Cross-include lookup for macros/functions/globals after locals, but before builtins,
+	// so user/includes can shadow built-in definitions without stealing local references.
 	if (pre && pre.includeTargets && pre.includeTargets.length) {
-		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] cross-include scan (late)', refName); } catch { /* ignore */ }
+		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] cross-include scan', refName); } catch { /* ignore */ }
 		const hit = scanIncludesForSymbol(refName, pre);
 		if (hit) {
 			const uri = hit.file.startsWith('file://') ? hit.file : toUri(path.resolve(hit.file));
 			return { kind: hit.kind as ResolvedTarget['kind'], name: refName, uri, range: { start: { line: hit.line, character: hit.startChar }, end: { line: hit.line, character: hit.endChar } }, from: 'include' };
 		}
+	}
+
+	// Built-ins: treat as non-navigable targets after include definitions have had a chance to shadow them.
+	if (defs && (defs.funcs.has(refName) || defs.consts.has(refName))) {
+		try { if (process.env.LSL_LSP_DEBUG_XINCS) console.log('[resolveSymbolAt] builtin hit', refName); } catch { /* ignore */ }
+		if (defs.funcs.has(refName)) return { kind: 'builtin-func', name: refName };
+		if (defs.consts.has(refName)) return { kind: 'builtin-const', name: refName };
 	}
 
 	return null;
