@@ -1,7 +1,7 @@
 import type { Expr, Stmt, Type } from './types';
 import { AssertNever } from '../utils';
 import * as runtime from './runtime';
-import { keyValueFromString } from './key';
+import { keyValueFromString, NULL_KEY_VALUE } from './key';
 import { parseHexFloat, parseNumberLiteral } from './numberLiteral';
 
 // Value model for evaluation
@@ -92,6 +92,7 @@ const isKeyValue = (v: Value): v is Extract<Value, { kind: 'value', type: 'key',
 	v.kind === 'value' && v.type === 'key';
 
 const num = (v: Value): number | null => (isNumberValue(v) ? v.value : null);
+const integerValue = (v: Value): number | null => (v.kind === 'value' && v.type === 'integer' ? v.value : null);
 const isNumericType = (t: runtime.LSLType) => t === 'integer' || t === 'float';
 const isStringLikeValue = (v: Value): v is Extract<Value, { kind: 'value', type: 'string' | 'key', value: string }> =>
 	v.kind === 'value' && (v.type === 'string' || v.type === 'key');
@@ -268,9 +269,11 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 				const n = num(v);
 				switch (expr.op) {
 					case '!':
-						return n === null ? runtime.unknown('integer') : { kind: 'value', type: 'integer', value: n ? 0 : 1 };
-					case '~':
-						return n === null ? runtime.unknown('integer') : { kind: 'value', type: 'integer', value: ~int(n) };
+						return v.kind === 'value' && v.type === 'integer' ? { kind: 'value', type: 'integer', value: v.value ? 0 : 1 } : runtime.unknown('integer');
+					case '~': {
+						const i = integerValue(v);
+						return i === null ? runtime.unknown('integer') : { kind: 'value', type: 'integer', value: ~int(i) };
+					}
 					case '+':
 						return n === null ? runtime.unknown('integer') : { kind: 'value', type: v.type, value: n } as Value;
 					case '-':
@@ -279,7 +282,7 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 						return runtime.unknown('integer');
 					case '++':
 					case '--':
-					// No side-effects here (pure fold); value unknown.
+						// No side-effects here (pure fold); value unknown.
 						return runtime.unknown('integer');
 					default:
 						return runtime.unknown('integer');
@@ -360,18 +363,24 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 					}
 
 					case '&&': {
-						if (ln === null || rn === null) return runtime.unknown('integer');
-						return { kind: 'value', type: 'integer', value: (ln !== 0 && rn !== 0) ? 1 : 0 };
+						const li = integerValue(l);
+						const ri = integerValue(r);
+						if (li === null || ri === null) return runtime.unknown('integer');
+						return { kind: 'value', type: 'integer', value: (li !== 0 && ri !== 0) ? 1 : 0 };
 					}
 					case '||': {
-						if (ln === null || rn === null) return runtime.unknown('integer');
-						return { kind: 'value', type: 'integer', value: (ln !== 0 || rn !== 0) ? 1 : 0 };
+						const li = integerValue(l);
+						const ri = integerValue(r);
+						if (li === null || ri === null) return runtime.unknown('integer');
+						return { kind: 'value', type: 'integer', value: (li !== 0 || ri !== 0) ? 1 : 0 };
 					}
 
 					case '&': case '|': case '^': case '<<': case '>>': {
-						if (ln === null || rn === null) return runtime.unknown('integer');
-						const li = int(ln) | 0;
-						const ri = int(rn) | 0;
+						const leftInt = integerValue(l);
+						const rightInt = integerValue(r);
+						if (leftInt === null || rightInt === null) return runtime.unknown('integer');
+						const li = int(leftInt) | 0;
+						const ri = int(rightInt) | 0;
 						switch (expr.op) {
 							case '&': return { kind: 'value', type: 'integer', value: (li & ri) | 0 };
 							case '|': return { kind: 'value', type: 'integer', value: (li | ri) | 0 };
@@ -500,16 +509,14 @@ class StateChangeSignal extends Error {
 	constructor(public readonly state: string) { super(`state ${state}`); }
 }
 
-const toInt = (v: Value): number | null => {
-	if (v.kind !== 'value') return null;
-	if (v.type === 'integer') return (v.value | 0);
-	if (v.type === 'float') return Math.trunc(v.value);
-	return null;
-};
-
 const isTruthy = (v: Value): boolean | null => {
-	const n = toInt(v);
-	return n === null ? null : (n !== 0);
+	if (v.kind !== 'value') return null;
+	if (v.type === 'integer' || v.type === 'float') return Math.trunc(v.value) !== 0;
+	if (v.type === 'string') return v.value.length !== 0;
+	if (v.type === 'key') return v.value !== '' && v.value !== NULL_KEY_VALUE;
+	if (v.type === 'list') return v.value.length !== 0;
+	if (v.type === 'vector' || v.type === 'rotation') return v.value.some(component => component !== 0);
+	return null;
 };
 
 function resolveLabelFromExprInner(target: Expr, env: Env, ctx: EvalContext): string | null {

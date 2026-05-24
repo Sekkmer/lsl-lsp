@@ -39,6 +39,9 @@ describe('evaluator LSL semantic fixtures', () => {
 		expect(evalSource('string', '1 + "a"').kind).toBe('unknown');
 		expect(evalSource('integer', '"1" == 1').kind).toBe('unknown');
 		expect(evalSource('integer', '"1" != 2').kind).toBe('unknown');
+		expect(evalSource('integer', '!0.0')).toEqual({ kind: 'unknown', type: 'integer' });
+		expect(evalSource('integer', '1.0 && 0.0')).toEqual({ kind: 'unknown', type: 'integer' });
+		expect(evalSource('integer', '1.0 | 0')).toEqual({ kind: 'unknown', type: 'integer' });
 	});
 
 	it('keeps valid non-scalar operation result shapes when values are not materialized', () => {
@@ -83,6 +86,9 @@ default {
 	state_entry() {
 		if ("1" == 1) {
 			llOwnerSay("bad");
+		}
+		if (1.0 && 0.0) {
+			llOwnerSay("bad logic");
 		}
 	}
 }

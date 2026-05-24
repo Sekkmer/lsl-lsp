@@ -278,7 +278,7 @@ export function validateOperatorsFromAst(
 								code: LSL_DIAGCODES.WRONG_TYPE,
 								message: `Unary operator ${op} expects an integer value`,
 								range: mk(doc, e.span.start, e.span.end),
-								severity: DiagnosticSeverity.Information,
+								severity: DiagnosticSeverity.Error,
 							});
 						}
 						break;
