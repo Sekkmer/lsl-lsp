@@ -180,7 +180,6 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	const diagDirectives: import('./preproc').DiagDirectives = { disableLine, disableNextLine, blocks };
 	const lineSuppression = (map: Map<number, Set<string> | null>, line: number) => {
 		if (map.has(line)) return map.get(line);
-		if (map.has(line + 1)) return map.get(line + 1); // tolerate previous storage style
 		return undefined;
 	};
 	const suppressesCode = (codes: Set<string> | null | undefined, code?: string) =>

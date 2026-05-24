@@ -1229,7 +1229,6 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	if (dd && (dd.disableLine.size > 0 || dd.disableNextLine.size > 0 || dd.blocks.length > 0)) {
 		const lineSuppression = (map: Map<number, Set<string> | null>, line: number) => {
 			if (map.has(line)) return map.get(line);
-			if (map.has(line + 1)) return map.get(line + 1); // tolerate previous storage style
 			return undefined;
 		};
 		finalDiagnostics = diagnostics.filter(d => {

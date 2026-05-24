@@ -26,6 +26,15 @@ describe('diagnostic suppression directives', () => {
 		expect(analysis.diagnostics.find(d => d.code === 'LSL001')).toBeFalsy();
 	});
 
+	it('does not let following disable-line comments suppress previous lines', async () => {
+		const code = `integer f(){
+		return x;
+		// lsl-disable-line
+	}`;
+		const { analysis } = await analyze(code);
+		expect(analysis.diagnostics.find(d => d.code === 'LSL001')).toBeTruthy();
+	});
+
 	it('disables on the next line with lsl-disable-next-line', async () => {
 		const code = `integer f(){
 		// lsl-disable-next-line LSL001
@@ -103,18 +112,17 @@ describe('diagnostic suppression directives', () => {
 		expect(pre.preprocDiagnostics?.some(d => d.code === 'LSL-include-missing')).toBe(false);
 	});
 
-	it('still honors numeric codes for low-level errors and ignores named alias when disallowed', async () => {
-		const code = `default {
-		state_entry(){
-			// lsl-disable-line wrong-arity
-			llOwnerSay(); // missing argument triggers LSL010
-			// lsl-disable-line LSL010
-			llOwnerSay(); // should be suppressed by numeric code
-		}
+	it('still honors numeric codes for low-level errors and ignores named aliases when disallowed', async () => {
+		const code = `integer f(){
+		// lsl-disable-next-line unknown-identifier
+		integer a = x;
+		// lsl-disable-next-line LSL001
+		integer b = y;
+		return 0;
 	}`;
 		const { analysis } = await analyze(code);
-		// First occurrence not suppressed by alias -> still present
-		const arityDiags = analysis.diagnostics.filter(d => d.code === 'LSL010');
+		// First occurrence not suppressed by alias; second occurrence suppressed by numeric code.
+		const arityDiags = analysis.diagnostics.filter(d => d.code === 'LSL001');
 		expect(arityDiags.length).toBe(1);
 		// Ensure the remaining diagnostic corresponds to one of the lines
 		expect(arityDiags[0]).toBeTruthy();
