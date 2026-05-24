@@ -588,10 +588,6 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				default: return false;
 			}
 		}
-		// Empty function body check (LSL025)
-		if (fn.body && fn.body.kind === 'BlockStmt' && fn.body.statements.length === 0) {
-			diagnostics.push({ code: LSL_DIAGCODES.EMPTY_FUNCTION_BODY, message: 'Empty function body is not allowed', range: spanToRange(doc, fn.span), severity: DiagnosticSeverity.Error });
-		}
 		visitStmt(fn.body, scope, ts);
 		scanReturns(fn.body);
 		if (returnType === 'void') {
@@ -733,10 +729,6 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				decls.push(d);
 				addType(tsEvent, pname, ptype);
 				ctx.paramDecls.push(d);
-			}
-			// Empty event body check (LSL024)
-			if (ev.body && ev.body.kind === 'BlockStmt' && ev.body.statements.length === 0) {
-				diagnostics.push({ code: LSL_DIAGCODES.EMPTY_EVENT_BODY, message: 'Empty event body is not allowed', range: spanToRange(doc, ev.span), severity: DiagnosticSeverity.Error });
 			}
 			// Collect labels for this event body
 			const savedLabels = currentLabels;
@@ -1012,11 +1004,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (stmt.kind === 'IfStmt') {
 			const thenIsEmptyStmt = stmt.then && stmt.then.kind === 'EmptyStmt';
 			const thenEmptyBlock = stmt.then && stmt.then.kind === 'BlockStmt' && stmt.then.statements.length === 0;
-			if (thenIsEmptyStmt || thenEmptyBlock) diagnostics.push({ code: LSL_DIAGCODES.EMPTY_IF_BODY, message: 'Empty if-body is not allowed', range: spanToRange(doc, stmt.then.span), severity: DiagnosticSeverity.Error });
+			if (thenIsEmptyStmt || thenEmptyBlock) diagnostics.push({ code: LSL_DIAGCODES.EMPTY_IF_BODY, message: 'Empty if-body has no effect', range: spanToRange(doc, stmt.then.span), severity: DiagnosticSeverity.Warning });
 			if (stmt.else) {
 				const elseIsEmptyStmt = stmt.else && stmt.else.kind === 'EmptyStmt';
 				const elseEmptyBlock = stmt.else && stmt.else.kind === 'BlockStmt' && stmt.else.statements.length === 0;
-				if (elseIsEmptyStmt || elseEmptyBlock) diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body is not allowed', range: spanToRange(doc, stmt.else.span), severity: DiagnosticSeverity.Error });
+				if (elseIsEmptyStmt || elseEmptyBlock) diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body has no effect', range: spanToRange(doc, stmt.else.span), severity: DiagnosticSeverity.Warning });
 			}
 		}
 		// Dead code detection: if next statement starts on same line after a terminating stmt (return/state-change/jump)
