@@ -764,6 +764,32 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		}
 	}
 
+	function isValidGlobalInitializer(expr: Expr, scope: Scope): boolean {
+		switch (expr.kind) {
+			case 'NumberLiteral':
+			case 'StringLiteral':
+				return true;
+			case 'Identifier':
+				return defs.consts.has(expr.name) || !!resolveInScope(expr.name, scope) || !!pre.macros?.[expr.name];
+			case 'Unary':
+				return (expr.op === '+' || expr.op === '-') && expr.argument.kind === 'NumberLiteral';
+			case 'ListLiteral':
+				return expr.elements.every((element) => isValidGlobalInitializer(element, scope));
+			case 'VectorLiteral':
+				return expr.elements.every((element) => isValidGlobalInitializer(element, scope));
+			case 'Binary':
+			case 'Call':
+			case 'Cast':
+			case 'ErrorExpr':
+			case 'Member':
+			case 'Paren':
+				return false;
+			default:
+				AssertNever(expr, 'Unhandled Expr kind in isValidGlobalInitializer');
+				return false;
+		}
+	}
+
 	const assignmentOps = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
 	function updateValueEnvFromExpr(expr: Expr | null, typeScope: TypeScope) {
 		if (!expr) return;
@@ -1053,10 +1079,16 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		const d: Decl = { name, range, kind: 'var', type: g.varType };
 		decls.push(d);
 		globalDecls.push(d);
-		globalScope.vars.set(name, d);
-		addType(globalTypeScope, name, g.varType);
 		if (g.initializer) {
 			walkExpr(g.initializer, globalScope, globalTypeScope);
+			if (!isValidGlobalInitializer(g.initializer, globalScope)) {
+				diagnostics.push({
+					code: LSL_DIAGCODES.SYNTAX,
+					message: 'Global initializer must be a literal, builtin constant, or previously declared global',
+					range: spanToRange(doc, g.initializer.span),
+					severity: DiagnosticSeverity.Error,
+				});
+			}
 			validateOperatorsFromAst(doc, [g.initializer], diagnostics, globalTypeScope.view, functionReturnTypes, callSignatures, { constantNames });
 			validateInitializerType(g.varType, g.initializer, globalTypeScope);
 			currentValueEnv().setVar(name, evalExpr(g.initializer, currentValueEnv()));
@@ -1064,6 +1096,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			const dv = zeroValueForType(g.varType);
 			if (dv) currentValueEnv().setVar(name, dv);
 		}
+		globalScope.vars.set(name, d);
+		addType(globalTypeScope, name, g.varType);
 	}
 
 	// Collect function/state/event declarations up-front so later analysis (refs, state-change validity) can resolve them.

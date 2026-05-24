@@ -5,10 +5,14 @@ import path from 'node:path';
 
 const defsPath = path.join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
+function inEvent(code: string) {
+	return `default { state_entry() { ${code} } }`;
+}
+
 describe('casts validation', () => {
 	it('redundant cast warns', async () => {
 		const defs = await loadDefs(defsPath);
-		const code = 'integer a; integer b = (integer)a;';
+		const code = inEvent('integer a; integer b = (integer)a;');
 		const doc = docFrom(code, 'file:///casts1.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		const codes = analysis.diagnostics.map(d => d.code);
@@ -16,7 +20,7 @@ describe('casts validation', () => {
 	});
 	it('int <-> float allowed', async () => {
 		const defs = await loadDefs(defsPath);
-		const code = 'integer a = (integer)1.2; float f = (float)1;';
+		const code = inEvent('integer a = (integer)1.2; float f = (float)1;');
 		const doc = docFrom(code, 'file:///casts2.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		const errWarn = analysis.diagnostics.filter(d => d.severity === 1 || d.severity === 2);
@@ -24,7 +28,7 @@ describe('casts validation', () => {
 	});
 	it('everything to string and list allowed', async () => {
 		const defs = await loadDefs(defsPath);
-		const code = 'string s = (string)<1,2,3>; list l = (list)1;';
+		const code = inEvent('string s = (string)<1,2,3>; list l = (list)1;');
 		const doc = docFrom(code, 'file:///casts3.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		const errWarn = analysis.diagnostics.filter(d => d.severity === 1 || d.severity === 2);
@@ -32,7 +36,7 @@ describe('casts validation', () => {
 	});
 	it('forbidden casts flagged', async () => {
 		const defs = await loadDefs(defsPath);
-		const code = 'vector v = (vector)1; rotation r = (rotation)1; key k = (key)1;';
+		const code = inEvent('vector v = (vector)1; rotation r = (rotation)1; key k = (key)1;');
 		const doc = docFrom(code, 'file:///casts4.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		const msgs = analysis.diagnostics.map(d => d.message);
@@ -40,13 +44,13 @@ describe('casts validation', () => {
 	});
 	it('string literal extra validation hints', async () => {
 		const defs = await loadDefs(defsPath);
-		const code = `
+		const code = inEvent(`
 		integer i = (integer)"abc"; // hint
 		float f = (float)"abc"; // hint
 		vector v = (vector)"<1, 2>"; // hint
 		rotation r = (rotation)"<1, 2, 3>"; // hint
 		key k = (key)"not-a-uuid"; // hint
-		`;
+		`);
 		const doc = docFrom(code, 'file:///casts5.lsl');
 		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
 		const infos = analysis.diagnostics.filter(d => d.severity === 3 || d.severity === 2); // Information or Warning
