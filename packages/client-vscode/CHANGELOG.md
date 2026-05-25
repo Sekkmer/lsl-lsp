@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.14
+- Fixed optimized output so nested casts are emitted with parentheses and remain valid LSL.
+- Fixed formatting of optimized `for` headers so `!=` is not split into invalid `! =` syntax.
+- Added diagnostics for direct chained C-style casts that Second Life rejects.
+
 ## 0.1.13
 - Added a bundled `lsl-lsp optimize` CLI command and exposed generated preprocessed/optimized script output from VS Code.
 - Added typed dynamic macro support for preserving runtime-provided macro values during preprocessing and optimization.
