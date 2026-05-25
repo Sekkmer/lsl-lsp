@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { optimizeScript, parseScriptFromText, shrinkNameOptionsFromDefs } from '../src';
+import { formatLslText, optimizeScript, parseScriptFromText, shrinkNameOptionsFromDefs } from '../src';
 
 function optimize(code: string) {
 	return optimizeScript(parseScriptFromText(code));
@@ -182,6 +182,84 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toContain('if(a>0&b<3|!(a==b))llOwnerSay("bool");');
 		expect(result.code).toContain('if(a&&b)llOwnerSay("raw");');
 		expect(result.code).toContain('if(items!=[]&&a>0)llOwnerSay("list");');
+	});
+
+	it('emits nested cast operands with parentheses after boolean operator rewrites', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer A(string M0) {',
+			'  return ((key)M0 != NULL_KEY) && ((string)((key)M0) == M0);',
+			'}',
+			'default { state_entry() { llOwnerSay((string)A(llGetScriptName())); } }',
+		].join('\n')), {
+			bitwiseBooleanOps: true,
+			builtinConstants: new Map([['NULL_KEY', { kind: 'value', type: 'key', value: '00000000-0000-0000-0000-000000000000' }]]),
+			builtinFunctionReturnTypes: new Map([['llGetScriptName', 'string']]),
+		});
+		expect(result.code).toContain('(string)((key)M0)==M0');
+		expect(result.code).not.toContain('(string)(key)M0');
+		expect(parseScriptFromText(result.code).diagnostics.some(d => d.message.includes('Chained casts'))).toBe(false);
+	});
+
+	it('does not emit invalid chained casts when propagating locals', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer isValidUUID(string s) {',
+			'  key k = (key)s;',
+			'  return (k != NULL_KEY) && ((string)k == s);',
+			'}',
+			'default { state_entry() { llOwnerSay((string)isValidUUID(llGetScriptName())); } }',
+		].join('\n')), {
+			bitwiseBooleanOps: true,
+			builtinConstants: new Map([['NULL_KEY', { kind: 'value', type: 'key', value: '00000000-0000-0000-0000-000000000000' }]]),
+			builtinFunctionReturnTypes: new Map([['llGetScriptName', 'string']]),
+			dropDefaultInitializers: true,
+			dropNoOpCasts: true,
+			foldStringConcats: true,
+			inlineConstantGlobals: true,
+			inlineFunctions: true,
+			integerPeepholes: true,
+			listAdd: true,
+			removeUnusedFunctions: true,
+			shrinkNames: true,
+		});
+		expect(result.code).toContain('(string)((key)');
+		expect(result.code).not.toContain('(string)(key)');
+		expect(parseScriptFromText(result.code).diagnostics.some(d => d.message.includes('Chained casts'))).toBe(false);
+		const formatted = formatLslText(result.code);
+		expect(formatted).toContain('(string)((key)');
+		expect(formatted).not.toContain('(string)(key)');
+		expect(parseScriptFromText(formatted).diagnostics).toHaveLength(0);
+	});
+
+	it('keeps optimized list-length loop headers valid after formatting', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'string link(key id) { return (string)id; }',
+			'default { state_entry() {',
+			'  list close = [];',
+			'  string txt = "Choose an avatar to add as owner, or enter an UUID:\\n";',
+			'  integer count = llGetListLength(close);',
+			'  list buttons = ["Back", " ", "UUID"];',
+			'  integer i;',
+			'  for (i = 0; i < count; i++) {',
+			'    key agent = llList2Key(close, i);',
+			'    txt += "\\n" + (string)i + " " + link(agent);',
+			'    buttons += [(string)i];',
+			'  }',
+			'  for (i = count; i < 6; i++) buttons += [" "];',
+			'} }',
+		].join('\n')), {
+			builtinFunctionReturnTypes: new Map([['llGetListLength', 'integer'], ['llList2Key', 'key']]),
+			dropDefaultInitializers: true,
+			foldStringConcats: true,
+			inlineFunctions: true,
+			integerPeepholes: true,
+			listAdd: true,
+			removeUnusedFunctions: true,
+			shrinkNames: true,
+		});
+		const formatted = formatLslText(result.code);
+		expect(formatted).toContain(' != []');
+		expect(formatted).not.toContain('! = []');
+		expect(parseScriptFromText(formatted).diagnostics).toHaveLength(0);
 	});
 
 	it('can apply integer-only peepholes for optimized output', () => {

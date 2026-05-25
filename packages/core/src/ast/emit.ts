@@ -153,7 +153,7 @@ function emitExprPrec(expr: Expr, parentPrec: number): string {
 }
 
 function castArgumentNeedsParens(expr: Expr): boolean {
-	return expr.kind === 'Unary' || expr.kind === 'VectorLiteral' || expr.kind === 'ListLiteral';
+	return expr.kind === 'Unary' || expr.kind === 'Cast' || expr.kind === 'VectorLiteral' || expr.kind === 'ListLiteral';
 }
 
 function exprPrecedence(expr: Expr): number {

@@ -228,9 +228,13 @@ function formatCore(text: string, disabledRanges: { start: number; end: number }
 			continue;
 		}
 		if (forHeaderDepth !== null && parenDepth === forHeaderDepth) {
-			if (ch === '=' || ch === '<' || ch === '>' ) {
+			if (ch === '=' || ch === '<' || ch === '>' || (ch === '!' && text[i+1] === '=')) {
 				let op = '';
-				if (ch === '<' || ch === '>') {
+				if (ch === '!' && text[i+1] === '=') {
+					op = '!=';
+					i += 2;
+					while (i < text.length && (text[i] === ' ' || text[i] === '\t')) i++;
+				} else if (ch === '<' || ch === '>') {
 					// support <, <=, <<, <<= and similarly for '>'
 					const c = ch;
 					if (text[i+1] === c && text[i+2] === '=') { op = c + c + '='; i += 3; }

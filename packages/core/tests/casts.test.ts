@@ -70,4 +70,15 @@ describe('casts validation', () => {
 		expect(msgs.filter(m => m.includes('Casting string to vector requires')).length).toBe(1);
 		expect(msgs.filter(m => m.includes('Casting string to rotation requires')).length).toBe(1);
 	});
+	it('flags direct chained casts but allows parenthesized inner casts', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = inEvent(`
+		string invalid = (string)(key)"00000000-0000-0000-0000-000000000001";
+		string valid = (string)((key)"00000000-0000-0000-0000-000000000001");
+		`);
+		const doc = docFrom(code, 'file:///casts_chained.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.filter(m => m.includes('Chained casts require parentheses around the inner cast')).length).toBe(1);
+	});
 });

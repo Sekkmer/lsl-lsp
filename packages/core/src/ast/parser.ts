@@ -1205,6 +1205,11 @@ class Parser {
 					// Consume the type and closing ')', then parse the cast argument as a unary expression
 					const tType = this.next();
 					this.eat('punct', ')');
+					const next = this.peek();
+					const chainedCast = next.kind === 'punct' && next.value === '(' ? this.peekStartsCStyleCast() : null;
+					if (chainedCast) {
+						this.report(chainedCast, 'Chained casts require parentheses around the inner cast', 'LSL000');
+					}
 					const arg = this.parseUnary();
 					return this.parsePostfix({ span: spanFrom(t.span.start, arg.span.end), kind: 'Cast', type: canonicalType(tType.value as TypeName), argument: arg } as Expr);
 				}
@@ -1269,6 +1274,21 @@ class Parser {
 			return this.parsePostfix(expr);
 		}
 		throw this.err(t, `unexpected token ${t.kind} '${t.value}'`);
+	}
+
+	private peekStartsCStyleCast(): Token | null {
+		const toks = this.lookAheadNonTrivia(3);
+		const open = toks[0];
+		const type = toks[1];
+		const close = toks[2];
+		if (
+			open?.kind === 'punct' && open.value === '(' &&
+			type?.kind === 'keyword' && isTypeName(type.value) &&
+			close?.kind === 'punct' && close.value === ')'
+		) {
+			return open;
+		}
+		return null;
 	}
 
 	// Apply postfix operations (call, member access, postfix ++/--, and index error) to any base expression

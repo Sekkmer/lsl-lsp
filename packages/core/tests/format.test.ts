@@ -45,6 +45,13 @@ describe('formatter basics', () => {
 		expect(out).toContain('for (i = 0; i < 10; i++)');
 	});
 
+	it('keeps not-equals intact inside for header initializers', () => {
+		const src = 'for(T0=Q0!=[];T0<6;++T0)S0=S0+" ";\n';
+		const out = fmt(src);
+		expect(out).toContain('for (T0 = Q0 != []; T0 < 6; ++T0)');
+		expect(out).not.toContain('Q0! = []');
+	});
+
 	it('respects next-line brace style', () => {
 		const src = 'if (true){\nreturn;\n}\n';
 		const out = fmt(src, { braceStyle: 'next-line' });
