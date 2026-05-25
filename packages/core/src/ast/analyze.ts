@@ -160,6 +160,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	const globalTypeScope: TypeScope = pushTypeScope();
 	const constantNames = new Set(defs.consts.keys());
 	const constantStringValues = new Map<string, string>();
+	for (const [name, type] of Object.entries(pre.dynamicMacros ?? {})) {
+		addType(globalTypeScope, name, type);
+	}
 	// Seed type information for built-in constants so member validation sees their shapes.
 	for (const c of defs.consts.values()) {
 		if (c?.type) addType(globalTypeScope, c.name, c.type);
@@ -252,6 +255,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			const legacyConst = c as typeof c & { val?: unknown };
 			const v = toValue(c.type, legacyConst.value ?? legacyConst.val ?? undefined);
 			if (v) env.setVar(c.name, v);
+		}
+		for (const [name, type] of Object.entries(pre.dynamicMacros ?? {})) {
+			env.setVar(name, { kind: 'unknown', type });
 		}
 		return env;
 	})();
@@ -494,6 +500,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 						|| isKeyword(e.name)
 						|| defs.funcs.has(e.name)
 						|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, e.name))
+						|| (pre.dynamicMacros && Object.prototype.hasOwnProperty.call(pre.dynamicMacros, e.name))
 						|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, e.name))
 						// Accept lowercase booleans as known identifiers (treated as constants) to reduce noise
 						|| e.name === 'true' || e.name === 'false'
@@ -531,6 +538,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 							|| defs.funcs.has(calleeName)
 							|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, calleeName))
 							|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, calleeName))
+							|| (pre.dynamicMacros && Object.prototype.hasOwnProperty.call(pre.dynamicMacros, calleeName))
 							|| defs.consts.has(calleeName) // tolerate accidental const call as known id for better downstream type error
 							|| isKeyword(calleeName);
 					if (!known) {
@@ -851,7 +859,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			case 'StringLiteral':
 				return true;
 			case 'Identifier':
-				return defs.consts.has(expr.name) || !!resolveInScope(expr.name, scope) || !!pre.macros?.[expr.name];
+				return defs.consts.has(expr.name) || !!resolveInScope(expr.name, scope) || !!pre.macros?.[expr.name] || !!pre.dynamicMacros?.[expr.name];
 			case 'Unary':
 				return (expr.op === '+' || expr.op === '-') && expr.argument.kind === 'NumberLiteral';
 			case 'ListLiteral':

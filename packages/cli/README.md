@@ -17,6 +17,7 @@ Examples:
 ```sh
 lsl-lsp check script.lsl
 lsl-lsp check -I includes -D DEBUG=1 --json script.lsl
+lsl-lsp check --dynamic-macro __AGENTID__:string script.lsl
 lsl-lsp check --no-default-include -I includes script.lsl
 lsl-lsp preprocess -I includes script.lsl
 lsl-lsp preprocess --json -I includes script.lsl
@@ -27,6 +28,7 @@ lsl-lsp dump-defs llOwnerSay PI state_entry
 lsl-lsp format --check script.lsl
 lsl-lsp format --write script.lsl
 lsl-lsp optimize script.lsl
+lsl-lsp optimize --dynamic-macro __UNIXTIME__:integer script.lsl
 lsl-lsp optimize --write script.lsl
 ```
 

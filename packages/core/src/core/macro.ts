@@ -1,6 +1,6 @@
 import { type Token } from './tokens';
 import { tokenize } from './tokenizer';
-import type { DisabledRange } from './preproc';
+import type { DisabledRange, DynamicMacros } from './preproc';
 
 export type MacroDefines = Record<string, string | number | boolean>;
 
@@ -119,6 +119,7 @@ export interface PreprocessResultNew {
 
 interface ProcessCtx {
 	includeResolver?: IncludeResolver;
+	dynamicMacros?: DynamicMacros;
 	seen: Set<string>; // unique include ids encountered for reporting
 	collecting: string[]; // active include stack for cycle detection
 	includeOrder: string[];
@@ -127,7 +128,11 @@ interface ProcessCtx {
 
 // Evaluate a conditional directive chain starting at index; returns next index after chain and whether block active
 interface ConditionalChainDebugInfo { branches: Array<{ kind: string; expr?: string; taken: boolean; span: { start: number; end: number } }>; activeSpans: Array<{ start: number; end: number }>; inactiveSpans: Array<{ start: number; end: number }>; }
-function evalConditionalChain(segs: Seg[], startIndex: number, macros: MacroDefines): { next: number; activeSpans: Array<{ start: number; end: number }>; inactiveSpans: Array<{ start: number; end: number }>; debug?: ConditionalChainDebugInfo } {
+function hasMacro(macros: MacroDefines, dynamicMacros: DynamicMacros | undefined, name: string): boolean {
+	return Object.prototype.hasOwnProperty.call(macros, name) || Object.prototype.hasOwnProperty.call(dynamicMacros ?? {}, name);
+}
+
+function evalConditionalChain(segs: Seg[], startIndex: number, macros: MacroDefines, dynamicMacros?: DynamicMacros): { next: number; activeSpans: Array<{ start: number; end: number }>; inactiveSpans: Array<{ start: number; end: number }>; debug?: ConditionalChainDebugInfo } {
 	// We convert the chain (#if/#ifdef/#ifndef ... #elif ... #else ... #endif) to a set of active spans.
 	// For now we do a minimal implementation: walk forward collecting directives until matching endif.
 	const activeSpans: Array<{ start: number; end: number }> = [];
@@ -156,9 +161,9 @@ function evalConditionalChain(segs: Seg[], startIndex: number, macros: MacroDefi
 				depth++;
 				if (depth === 1) {
 					let enabled = false;
-					if (k === 'if') enabled = evalExprQuick(s.dir.expr, macros);
-					else if (k === 'ifdef') enabled = Object.prototype.hasOwnProperty.call(macros, s.dir.name);
-					else if (k === 'ifndef') enabled = !Object.prototype.hasOwnProperty.call(macros, s.dir.name);
+					if (k === 'if') enabled = evalExprQuick(s.dir.expr, macros, dynamicMacros);
+					else if (k === 'ifdef') enabled = hasMacro(macros, dynamicMacros, s.dir.name);
+					else if (k === 'ifndef') enabled = !hasMacro(macros, dynamicMacros, s.dir.name);
 					collecting = enabled && !took;
 					if (collecting) took = true;
 					branchStart = s.dir.span.end;
@@ -169,7 +174,7 @@ function evalConditionalChain(segs: Seg[], startIndex: number, macros: MacroDefi
 			if (k === 'elif' && depth === 1) {
 				finishBranch(s.dir.span.start);
 				if (!took) {
-					if (evalExprQuick(s.dir.expr, macros)) { collecting = true; took = true; branchStart = s.dir.span.end; }
+					if (evalExprQuick(s.dir.expr, macros, dynamicMacros)) { collecting = true; took = true; branchStart = s.dir.span.end; }
 					else { collecting = false; branchStart = s.dir.span.end; }
 				}
 				else { collecting = false; branchStart = s.dir.span.end; }
@@ -226,7 +231,7 @@ function evalConditionalChain(segs: Seg[], startIndex: number, macros: MacroDefi
 			for (let k = startIndex + 1; k < i; k++) {
 				const sg = segs[k]!; if (sg.type !== 'directive') continue;
 				if (sg.dir.kind === 'if' && sg.dir.span.start > span.start && sg.dir.span.end < span.end) {
-					const inner = evalConditionalChain(segs, k, macros);
+					const inner = evalConditionalChain(segs, k, macros, dynamicMacros);
 					// Remove original wide active span and add refined active spans (mapped inside original)
 					activeSpans.length = 0; for (const a of inner.activeSpans) activeSpans.push(a);
 					for (const ina of inner.inactiveSpans) inactiveSpans.push(ina);
@@ -264,7 +269,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 		for (let i=0;i<ids.length;i++) {
 			const id = ids[i]!;
 			if (id === 'defined') { i++; continue; }
-			if (!Object.prototype.hasOwnProperty.call(macros, id)) {
+			if (!hasMacro(macros, ctx.dynamicMacros, id)) {
 				ctx.diagnostics.push({ message: `Identifier '${id}' not defined in preprocessor expression`, code: 'LSL-preproc-undef', start: span.start, end: span.end, file: fileId });
 			}
 		}
@@ -275,7 +280,7 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 		const d = head.dir;
 		if (!(d.kind === 'if' || d.kind === 'ifdef' || d.kind === 'ifndef')) return startIndex;
 		if (d.kind === 'if') collectIfUndef(d.expr, d.span);
-		const { next, activeSpans, inactiveSpans: chainInactive, debug: chainDebug } = evalConditionalChain(segs, startIndex, macros);
+		const { next, activeSpans, inactiveSpans: chainInactive, debug: chainDebug } = evalConditionalChain(segs, startIndex, macros, ctx.dynamicMacros);
 		let chainDepth = 1;
 		for (let j=startIndex+1;j<next;j++) {
 			const sj = segs[j]!;
@@ -350,10 +355,10 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 	return { tokens: out, macros, diagnostics: ctx.diagnostics, includes: includesLocal, macroDefs, includeTargets, missingIncludes, inactiveSpans };
 }
 
-export function preprocessAndExpandNew(fileId: string, version: number, tokens: Token[], initialMacros: MacroDefines, includeResolver?: IncludeResolver): { tokens: Token[]; macros: MacroDefines; diagnostics: { message: string; code?: string; start: number; end: number; file?: string }[]; includes: string[]; macroDefs?: Record<string,{start:number; end:number; file:string}>; includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; missingIncludes?: { start: number; end: number; file: string }[]; inactiveSpans?: DisabledRange[] } {
-	const ctx: ProcessCtx = { includeResolver, seen: new Set<string>([fileId]), collecting: [fileId], includeOrder: [], diagnostics: [] };
+export function preprocessAndExpandNew(fileId: string, version: number, tokens: Token[], initialMacros: MacroDefines, includeResolver?: IncludeResolver, dynamicMacros?: DynamicMacros): { tokens: Token[]; macros: MacroDefines; diagnostics: { message: string; code?: string; start: number; end: number; file?: string }[]; includes: string[]; macroDefs?: Record<string,{start:number; end:number; file:string}>; includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; missingIncludes?: { start: number; end: number; file: string }[]; inactiveSpans?: DisabledRange[] } {
+	const ctx: ProcessCtx = { includeResolver, dynamicMacros, seen: new Set<string>([fileId]), collecting: [fileId], includeOrder: [], diagnostics: [] };
 	const pre = preprocessFileNew(fileId, version, tokens, initialMacros, ctx);
-	const expanded = expandActiveTokens(pre.tokens, pre.macros);
+	const expanded = expandActiveTokens(pre.tokens, pre.macros, dynamicMacros);
 	return { tokens: expanded, macros: pre.macros, diagnostics: pre.diagnostics, includes: ctx.includeOrder, macroDefs: pre.macroDefs, includeTargets: pre.includeTargets, missingIncludes: pre.missingIncludes, inactiveSpans: pre.inactiveSpans };
 }
 
@@ -665,7 +670,7 @@ export class MacroConditionalProcessor {
 // Evaluate #if expressions with simple arithmetic and logical operators.
 // Supported: defined(NAME), identifiers, integer literals, unary ! + -,
 // binary * / %, + -, < <= > >=, == !=, && ||, and parentheses.
-function evalExprQuick(expr: string, defs: MacroDefines): boolean {
+function evalExprQuick(expr: string, defs: MacroDefines, dynamicMacros?: DynamicMacros): boolean {
 	type Tok = { kind: 'num'; value: number } | { kind: 'ident'; value: string } | { kind: 'op'; value: string } | { kind: 'lparen' } | { kind: 'rparen' };
 	const s = expr.trim();
 	if (!s) return false;
@@ -711,7 +716,7 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 	const valOfIdent = (name: string): number => {
 		// defined(NAME) handled in parsePrimary/parseUnary
 		const v = defs[name];
-		if (v === undefined) return 0;
+		if (v === undefined) return Object.prototype.hasOwnProperty.call(dynamicMacros ?? {}, name) ? 1 : 0;
 		if (typeof v === 'number') return v;
 		if (typeof v === 'boolean') return v ? 1 : 0;
 		if (typeof v === 'string') {
@@ -743,7 +748,7 @@ function evalExprQuick(expr: string, defs: MacroDefines): boolean {
 					const id = take();
 					if (id && id.kind === 'ident') name = id.value; else name = '';
 				}
-				return Object.prototype.hasOwnProperty.call(defs, name) ? 1 : 0;
+				return hasMacro(defs, dynamicMacros, name) ? 1 : 0;
 			}
 			take();
 			return valOfIdent(t.value);
@@ -984,7 +989,7 @@ function splitMacroTables(macros: MacroDefines): { obj: Record<string, string | 
 }
 
 // Public expansion entry: takes already preprocessed (conditionals/includes applied) tokens with directives removed.
-export function expandActiveTokens(tokens: Token[], macroTable: MacroDefines): Token[] {
+export function expandActiveTokens(tokens: Token[], macroTable: MacroDefines, dynamicMacros?: DynamicMacros): Token[] {
 	const { obj, fn } = splitMacroTables(macroTable);
 	// We perform multiple passes until no further expansion occurs or max iterations exceeded.
 	let work = tokens.slice();
@@ -1003,6 +1008,7 @@ export function expandActiveTokens(tokens: Token[], macroTable: MacroDefines): T
 			// NOTE: __FILE__ is handled later during AST parsing (applyBuiltinExpansions) so that
 			// basename logic is centralized and consistent. We intentionally do not expand here.
 			if (name === '__FILE__') { out.push(t); continue; }
+			if (Object.prototype.hasOwnProperty.call(dynamicMacros ?? {}, name)) { out.push(t); continue; }
 			// Object-like macro expansion
 			if (Object.prototype.hasOwnProperty.call(obj, name)) {
 				const body = objectMacroToTokens(obj[name], t.file);

@@ -87,6 +87,12 @@
 					"default": {},
 					"description": "Project-wide predefined macros for #ifdef."
 				},
+				"lsl.dynamicMacros": {
+					"type": "array",
+					"items": { "type": "string" },
+					"default": [],
+					"description": "Macros to preserve as typed dynamic values, using name:type entries such as __AGENTID__:string."
+				},
 				"lsl.enableSemanticTokens": {
 					"type": "boolean",
 					"default": true

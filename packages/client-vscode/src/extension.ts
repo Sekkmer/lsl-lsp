@@ -227,6 +227,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			definitionsPath: resolveDefinitionsPath(currentCfg.get('definitionsPath')),
 			includePaths: resolveIncludePaths(currentCfg.get('includePaths')),
 			macros: currentCfg.get('macros'),
+			dynamicMacros: currentCfg.get('dynamicMacros'),
 			logFile,
 			diagnostics: { disable: currentCfg.get('diagnostics.disable') },
 			debug: !!currentCfg.get<boolean>('debugLogging')

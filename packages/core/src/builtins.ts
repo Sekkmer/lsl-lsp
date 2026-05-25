@@ -1,5 +1,47 @@
 /* Centralized helpers for built-in macros and URI filename handling */
 
+import { canonicalType, isTypeName, type Type } from './ast/types';
+
+export type DynamicMacroMap = Record<string, Type>;
+
+export const FIRESTORM_DYNAMIC_MACROS: DynamicMacroMap = {
+	__AGENTID__: 'string',
+	__AGENTKEY__: 'string',
+	__AGENTIDRAW__: 'key',
+	__AGENTNAME__: 'string',
+	__ASSETID__: 'string',
+	__UNIXTIME__: 'integer',
+};
+
+export function parseDynamicMacroList(input: unknown): DynamicMacroMap {
+	const out: DynamicMacroMap = {};
+	const add = (raw: string): void => {
+		const trimmed = raw.trim();
+		if (!trimmed) return;
+		const sep = trimmed.indexOf(':');
+		if (sep <= 0 || sep === trimmed.length - 1) throw new Error(`Invalid dynamic macro entry: ${raw}`);
+		const name = trimmed.slice(0, sep).trim();
+		const rawType = trimmed.slice(sep + 1).trim();
+		if (!/^[A-Za-z_]\w*$/.test(name)) throw new Error(`Invalid dynamic macro name: ${name}`);
+		if (!isTypeName(rawType)) throw new Error(`Invalid dynamic macro type for ${name}: ${rawType}`);
+		out[name] = canonicalType(rawType);
+	};
+	if (Array.isArray(input)) {
+		for (const item of input) {
+			if (typeof item !== 'string') throw new Error('Dynamic macro entries must be strings.');
+			add(item);
+		}
+	} else if (typeof input === 'string') {
+		for (const item of input.split(',')) add(item);
+	} else if (input && typeof input === 'object') {
+		for (const [name, rawType] of Object.entries(input)) {
+			if (typeof rawType !== 'string') throw new Error(`Invalid dynamic macro type for ${name}`);
+			add(`${name}:${rawType}`);
+		}
+	}
+	return out;
+}
+
 // Compute a display filename (basename) from a VSCode-style URI or raw path
 export function basenameFromUri(uri: string): string {
 	try {

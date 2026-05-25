@@ -1,7 +1,9 @@
 import type { MacroDefines } from './macro';
 import type { Token } from './tokens';
+import type { Type } from '../ast/types';
 
 export type DisabledRange = { start: number; end: number; file?: string };
+export type DynamicMacros = Record<string, Type>;
 
 export type DiagDirectives = {
 	disableLine: Map<number, Set<string> | null>;
@@ -18,6 +20,7 @@ export interface PreprocResult {
 	disabledRanges: DisabledRange[];
 	inactiveRanges?: DisabledRange[];
 	macros: MacroDefines;
+	dynamicMacros?: DynamicMacros;
 	funcMacros: Record<string, string>;
 	macroDefs?: Record<string, { start: number; end: number; file: string }>;
 	includes: string[];

@@ -30,6 +30,7 @@ The runtime definition source is `third_party/lsl-definitions/lsl_definitions.ya
 - Run CLI diagnostics after build: `node packages/cli/out/lsl-lsp.cjs check path/to/script.lsl`
 - Inspect preprocessing after build: `node packages/cli/out/lsl-lsp.cjs preprocess --json path/to/script.lsl`
 - Optimize a script after build: `node packages/cli/out/lsl-lsp.cjs optimize path/to/script.lsl`
+- Preserve typed dynamic macros in analysis/optimization: `node packages/cli/out/lsl-lsp.cjs optimize --dynamic-macro __AGENTID__:string path/to/script.lsl`
 - Inspect a symbol after build: `node packages/cli/out/lsl-lsp.cjs hover path/to/script.lsl 10 5`
 - Dump bundled definitions after build: `node packages/cli/out/lsl-lsp.cjs dump-defs llOwnerSay`
 - Build VS Code package: `pnpm -C packages/client-vscode package`

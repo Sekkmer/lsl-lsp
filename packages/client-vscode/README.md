@@ -30,6 +30,7 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 	- Built‑ins: `__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`
 	- Varargs: `__VA_ARGS__` and `__VA_OPT__`
 	- Operators: `#` (stringify) and `##` (token pasting)
+	- Configurable typed dynamic macros, such as Firestorm runtime values that should be preserved instead of expanded
 	- Diagnostics for common preprocessor issues and disabled code ranges
 	- Works across included files; external symbols are indexed for hover/defs
 - Formatting
@@ -62,6 +63,7 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 	- The workspace folder(s) are always searched by default. In multi-root workspaces, all roots are included.
 	- Resolution order: the current file’s directory, then workspace roots, then any paths listed in `lsl.includePaths`.
 - `lsl.macros`: Project-wide predefined macros for conditionals
+- `lsl.dynamicMacros`: Macros to preserve as unknown typed values instead of expanding, written as `name:type` entries such as `__AGENTID__:string` or `__UNIXTIME__:integer`
 - `lsl.enableSemanticTokens`: Toggle semantic tokens
 - `lsl.diagnostics.disable`: Diagnostic codes or friendly names to disable globally
 - `lsl.trace`: LSP protocol trace level (`off`, `messages`, `verbose`)

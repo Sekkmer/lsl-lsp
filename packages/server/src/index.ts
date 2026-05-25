@@ -54,11 +54,13 @@ import {
 	lslHover,
 	lslSignatureHelp,
 	parseDisabledDiagList,
+	parseDynamicMacroList,
 	parseScriptFromText,
 	prepareRename as navPrepareRename,
 	preprocessForAst,
 	resolveCompletion,
 	semanticTokensLegend,
+	type DynamicMacroMap,
 } from '@lsl-lsp/core';
 
 const connection: Connection = createConnection(ProposedFeatures.all);
@@ -82,6 +84,7 @@ const settings = {
 	definitionsPath: '',
 	includePaths: [] as string[],
 	macros: {} as Record<string, string | number | boolean>,
+	dynamicMacros: {} as DynamicMacroMap,
 	enableSemanticTokens: true,
 	logFile: '' as string,
 	debug: false,
@@ -111,6 +114,15 @@ function updateDisabledDiagnostics(raw: unknown): boolean {
 	if (setsEqual(disabledDiagCodes, next)) return false;
 	disabledDiagCodes = next;
 	return true;
+}
+
+function parseConfiguredDynamicMacros(raw: unknown): DynamicMacroMap {
+	try {
+		return parseDynamicMacroList(raw);
+	} catch (e) {
+		connection.console.error('[lsl-lsp] invalid dynamic macro configuration: ' + String(e));
+		return {};
+	}
 }
 
 // -------------------------------------------------
@@ -187,12 +199,12 @@ function djb2Hash(str: string): number {
 	for (let i = 0; i < str.length; i++) h = (((h << 5) + h) ^ str.charCodeAt(i)) >>> 0;
 	return h >>> 0;
 }
-function computeConfigHash(macros: Record<string, string | number | boolean>, includePaths: string[], docUri?: string): number {
+function computeConfigHash(macros: Record<string, string | number | boolean>, includePaths: string[], dynamicMacros: DynamicMacroMap, docUri?: string): number {
 	// Include docUri so that per-file guard patterns (e.g. #ifndef FOO / #define FOO at top)
 	// never reuse another file's cached macro tables/disabled ranges. Without this a file opened
 	// after another sharing the same guards could see its body disabled if the previous file
 	// defined the guard macro. (User report: "seeing macros defined at the first line".)
-	const s = stableStringify({ macros, includePaths, doc: docUri || '' });
+	const s = stableStringify({ macros, includePaths, dynamicMacros, doc: docUri || '' });
 	return djb2Hash(s);
 }
 
@@ -204,17 +216,18 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 	const text = doc.getText();
 	let h = 2166136261 >>> 0; for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } const currentTextHash = h >>> 0;
 	const hit = pipelineCache.get(key);
-	const currentHash = computeConfigHash(settings.macros, settings.includePaths, doc.uri);
+	const currentHash = computeConfigHash(settings.macros, settings.includePaths, settings.dynamicMacros, doc.uri);
 	if (hit && hit.version === currentVersion && hit.configHash === currentHash && hit.textHash === currentTextHash) return hit;
 
 	// Single unified preprocessing run (new pipeline)
-	const full = preprocessForAst(text, { includePaths: settings.includePaths, fromPath: URI.parse(doc.uri).fsPath, defines: { ...baselineMacros } });
+	const full = preprocessForAst(text, { includePaths: settings.includePaths, fromPath: URI.parse(doc.uri).fsPath, defines: { ...baselineMacros }, dynamicMacros: settings.dynamicMacros });
 	const macrosOnlyIncludes: string[] = full.includes || [];
 	if (!arraysShallowEqual(hit?.macrosOnlyIncludes, macrosOnlyIncludes)) indexIncludesList(key, macrosOnlyIncludes);
 	const pre: PreprocResult = {
 		disabledRanges: full.disabledRanges,
 		inactiveRanges: full.inactiveRanges,
 		macros: full.macros,
+		dynamicMacros: full.dynamicMacros,
 		funcMacros: full.funcMacros,
 		macroDefs: full.macroDefs,
 		includes: full.includes,
@@ -225,7 +238,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 		conditionalGroups: full.conditionalGroups,
 	};
 	const tokens = lex(doc, pre.inactiveRanges ?? pre.disabledRanges);
-	const ast: Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, includePaths: settings.includePaths, pre: full });
+	const ast: Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, dynamicMacros: settings.dynamicMacros, includePaths: settings.includePaths, pre: full });
 	const analysis: Analysis = analyzeAst(doc, ast, defs, pre);
 	const entry: PipelineCache = { version: currentVersion, textHash: currentTextHash, pre, tokens, analysis, ast, macrosOnlyIncludes, configHash: currentHash };
 	pipelineCache.set(key, entry);
@@ -256,6 +269,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 	settings.definitionsPath = initOpts.definitionsPath || '';
 	settings.includePaths = initOpts.includePaths || [];
 	settings.macros = initOpts.macros || {};
+	settings.dynamicMacros = parseConfiguredDynamicMacros(initOpts.dynamicMacros);
 	baselineMacros = { ...settings.macros }; // capture baseline after init options
 	settings.logFile = initOpts.logFile || '';
 	settings.debug = !!initOpts.debug;
@@ -397,6 +411,9 @@ connection.onDidChangeConfiguration(async change => {
 		settings.includePaths = merged.filter(p => (p && !seen.has(p) && (seen.add(p), true)));
 	}
 	settings.macros = newSettings.macros ?? settings.macros;
+	if (Object.prototype.hasOwnProperty.call(newSettings, 'dynamicMacros')) {
+		settings.dynamicMacros = parseConfiguredDynamicMacros(newSettings.dynamicMacros);
+	}
 	baselineMacros = { ...settings.macros }; // refresh baseline on config change
 	settings.enableSemanticTokens = newSettings.enableSemanticTokens ?? settings.enableSemanticTokens;
 	if (newSettings.format) {

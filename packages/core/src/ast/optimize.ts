@@ -7,11 +7,13 @@ import { parseScriptFromText } from './parser';
 import * as runtime from './runtime';
 import { shrinkScriptNames, type ShrinkNamesOptions } from './shrinkNames';
 import type { Event, Expr, Function as FnNode, GlobalVar, Script, State, Stmt, Type } from './types';
+import type { DynamicMacros } from '../core/preproc';
 import { AssertNever } from '../utils';
 
 export interface OptimizeOptions {
 	builtinConstants?: ReadonlyMap<string, Value>;
 	builtinFunctionReturnTypes?: ReadonlyMap<string, SimpleType>;
+	dynamicMacros?: DynamicMacros;
 	constantFold?: boolean;
 	dropDefaultInitializers?: boolean;
 	dropNoOpCasts?: boolean;
@@ -34,9 +36,9 @@ export interface OptimizeResult {
 	stable: boolean;
 }
 
-type ResolvedOptimizeOptions = Required<Omit<OptimizeOptions, 'builtinConstants' | 'builtinFunctionReturnTypes' | 'shrinkNameOptions'>> & Pick<OptimizeOptions, 'builtinConstants' | 'builtinFunctionReturnTypes' | 'shrinkNameOptions'>;
+type ResolvedOptimizeOptions = Required<Omit<OptimizeOptions, 'builtinConstants' | 'builtinFunctionReturnTypes' | 'dynamicMacros' | 'shrinkNameOptions'>> & Pick<OptimizeOptions, 'builtinConstants' | 'builtinFunctionReturnTypes' | 'dynamicMacros' | 'shrinkNameOptions'>;
 
-const DEFAULT_OPTIONS: Required<Omit<OptimizeOptions, 'builtinConstants' | 'builtinFunctionReturnTypes' | 'shrinkNameOptions'>> = {
+const DEFAULT_OPTIONS: Required<Omit<OptimizeOptions, 'builtinConstants' | 'builtinFunctionReturnTypes' | 'dynamicMacros' | 'shrinkNameOptions'>> = {
 	constantFold: true,
 	dropDefaultInitializers: false,
 	dropNoOpCasts: true,
@@ -67,7 +69,7 @@ export function optimizeScript(script: Script, options: OptimizeOptions = {}): O
 			break;
 		}
 		currentCode = nextCode;
-		currentScript = parseScriptFromText(currentCode, 'file:///optimized.lsl');
+		currentScript = parseScriptFromText(currentCode, 'file:///optimized.lsl', { dynamicMacros: opts.dynamicMacros });
 	}
 
 	return {
@@ -80,9 +82,12 @@ export function optimizeScript(script: Script, options: OptimizeOptions = {}): O
 
 function optimizeScriptOnce(script: Script, opts: ResolvedOptimizeOptions): Script {
 	const globalTypes = globalSymbolTypes(script);
+	for (const [name, type] of Object.entries(opts.dynamicMacros ?? {})) globalTypes.set(name, type);
 	const functionReturnTypes = functionTypes(script, opts.builtinFunctionReturnTypes);
 	const pureFunctions = collectPureFunctions(script);
-	const constantEnv = new Env(new Map(opts.builtinConstants), evalFunctionTypes(functionReturnTypes), script.functions, pureFunctions);
+	const constantValues = new Map(opts.builtinConstants);
+	for (const [name, type] of Object.entries(opts.dynamicMacros ?? {})) constantValues.set(name, runtime.unknown(type));
+	const constantEnv = new Env(constantValues, evalFunctionTypes(functionReturnTypes), script.functions, pureFunctions);
 	const optimized = {
 		...script,
 		globals: mapValues(script.globals, global => optimizeGlobal(global, opts, globalTypes, functionReturnTypes, constantEnv)),
@@ -2481,7 +2486,7 @@ function floatLiteral(value: number): string {
 	return String(value);
 }
 
-function globalSymbolTypes(script: Script): ReadonlyMap<string, SimpleType> {
+function globalSymbolTypes(script: Script): Map<string, SimpleType> {
 	const out = new Map<string, SimpleType>();
 	for (const [name, global] of script.globals) out.set(name, global.varType);
 	return out;

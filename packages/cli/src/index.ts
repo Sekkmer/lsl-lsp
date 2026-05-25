@@ -31,6 +31,7 @@ import {
 	loadDefsFromSource,
 	lslHover,
 	parseDisabledDiagList,
+	parseDynamicMacroList,
 	parseScriptFromText,
 	preprocessForAst,
 	optimizeScript,
@@ -38,6 +39,7 @@ import {
 	type OptimizeOptions,
 	type SimpleType,
 	type Value,
+	type DynamicMacroMap,
 } from '@lsl-lsp/core';
 
 declare const CLI_VERSION: string;
@@ -51,6 +53,7 @@ interface CliOptions {
 	defaultIncludePath: boolean;
 	definitionsPath: string;
 	defines: Record<string, string | number | boolean>;
+	dynamicMacros: DynamicMacroMap;
 	disabledDiagnostics: Set<Diag['code']>;
 	json: boolean;
 	write: boolean;
@@ -86,6 +89,8 @@ Options:
   -I, --include-path <path>      Add an include search path. Can be repeated.
       --no-default-include       Do not add the current working directory to include search paths.
   -D, --define <name[=value]>    Add a predefined macro. Can be repeated.
+      --dynamic-macro <name:type>
+                                  Preserve a dynamic macro as an unknown typed value.
       --definitions <path>       Use a custom definitions JSON/YAML file.
       --disable <code[,code]>    Suppress diagnostics by code or friendly name.
       --json                     Print supported command output as JSON.
@@ -138,7 +143,7 @@ function filterFunctionForDump(item: DefFunction, names: Set<string>, hasFilter:
 
 async function runOptimize(opts: CliOptions, defs: Defs): Promise<number> {
 	const results = await Promise.all(opts.files.map(file => analyzeFile(file, opts, defs)));
-	const optimizeOptions = cliOptimizeOptions(defs);
+	const optimizeOptions = cliOptimizeOptions(defs, opts);
 	const optimized = results.map(result => {
 		const out = optimizeScript(result.ast, optimizeOptions);
 		return { result, out };
@@ -178,10 +183,11 @@ async function runOptimize(opts: CliOptions, defs: Defs): Promise<number> {
 	return optimized[0]!.out.stable ? 0 : 1;
 }
 
-function cliOptimizeOptions(defs: Defs): OptimizeOptions {
+function cliOptimizeOptions(defs: Defs, opts: CliOptions): OptimizeOptions {
 	return {
 		builtinConstants: builtinConstantValues(defs),
 		builtinFunctionReturnTypes: builtinReturnTypes(defs),
+		dynamicMacros: opts.dynamicMacros,
 		bitwiseBooleanOps: true,
 		dropDefaultInitializers: true,
 		inlineConstantGlobals: true,
@@ -352,6 +358,7 @@ async function analyzeFile(file: string, opts: CliOptions, defs: Defs): Promise<
 	const pre = toPreprocResult(full);
 	const ast: Script = parseScriptFromText(text, doc.uri, {
 		macros: { ...full.macros, ...opts.defines },
+		dynamicMacros: opts.dynamicMacros,
 		includePaths: opts.includePaths,
 		pre: full,
 	});
@@ -386,6 +393,7 @@ async function readAndPreprocessFile(file: string, opts: CliOptions) {
 		includePaths: [...opts.includePaths],
 		fromPath: filePath,
 		defines: { ...opts.defines },
+		dynamicMacros: opts.dynamicMacros,
 	});
 	return { filePath, text, doc, full };
 }
@@ -395,6 +403,7 @@ function toPreprocResult(full: ReturnType<typeof preprocessForAst>): PreprocResu
 		disabledRanges: full.disabledRanges,
 		inactiveRanges: full.inactiveRanges,
 		macros: full.macros,
+		dynamicMacros: full.dynamicMacros,
 		funcMacros: full.funcMacros,
 		macroDefs: full.macroDefs,
 		includes: full.includes,
@@ -459,6 +468,7 @@ function preprocessToJson(result: PreprocessFileResult): object {
 		file: result.filePath,
 		expandedText: result.expandedText,
 		macros: pre.macros,
+		dynamicMacros: pre.dynamicMacros ?? {},
 		functionMacros: pre.funcMacros,
 		includes: pre.includes,
 		includeTargets: pre.includeTargets ?? [],
@@ -615,6 +625,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 		defaultIncludePath: true,
 		definitionsPath: '',
 		defines: {},
+		dynamicMacros: {},
 		disabledDiagnostics: new Set(),
 		json: false,
 		write: false,
@@ -662,6 +673,10 @@ function parseArgs(argv: string[]): CliOptions | null {
 		}
 		if (arg.startsWith('-D') && arg.length > 2) {
 			addDefine(opts.defines, arg.slice(2));
+			continue;
+		}
+		if (arg === '--dynamic-macro') {
+			Object.assign(opts.dynamicMacros, parseDynamicMacroList(expectValue(args, ++i, arg)));
 			continue;
 		}
 		if (arg === '--definitions') {
