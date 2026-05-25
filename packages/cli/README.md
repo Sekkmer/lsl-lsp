@@ -9,6 +9,7 @@ The release bundle is `out/lsl-lsp.cjs`. It embeds the default LSL definitions; 
 ```sh
 lsl-lsp check [options] <file...>
 lsl-lsp format [options] [--write|--check] <file...>
+lsl-lsp measure [options] [--json] [--compare-optimized] <file...>
 lsl-lsp optimize [options] [--write|--check|--json] <file...>
 ```
 
@@ -21,6 +22,8 @@ lsl-lsp check --dynamic-macro __AGENTID__:string script.lsl
 lsl-lsp check --no-default-include -I includes script.lsl
 lsl-lsp preprocess -I includes script.lsl
 lsl-lsp preprocess --json -I includes script.lsl
+lsl-lsp measure --compare-optimized script.lsl
+lsl-lsp measure --json --compare-optimized script.lsl
 lsl-lsp symbols script.lsl
 lsl-lsp definition script.lsl 12 18
 lsl-lsp hover script.lsl 13 9
@@ -33,5 +36,7 @@ lsl-lsp optimize --write script.lsl
 ```
 
 Line and column arguments are 1-based.
+
+`measure` reports a static AST estimate calibrated from SL Mono probes. Use SL-side probe results for release-critical memory margins, and use the CLI estimate for local comparison and optimizer direction.
 
 Run `lsl-lsp --help` for all options.

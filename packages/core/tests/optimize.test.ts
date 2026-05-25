@@ -502,7 +502,7 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toBe('default{state_entry(){llOwnerSay("4");}}');
 	});
 
-	it('can inline single-use impure expression functions without requiring purity', () => {
+	it('can inline single-use impure expression functions when the measured Mono cost drops', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'integer unixTime() { return llGetUnixTime(); }',
 			'default { state_entry() { integer a = unixTime(); } }',
@@ -513,7 +513,7 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toBe('default{state_entry(){integer a=llGetUnixTime();}}');
 	});
 
-	it('can inline single-use statement functions while preserving argument evaluation and bare returns', () => {
+	it('can inline statement functions while preserving side-effect argument evaluation', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'tell(string value, integer noisy) {',
 			'  if (value == "") return;',
@@ -526,9 +526,50 @@ describe('optimizer plumbing', () => {
 			builtinConstants: new Map([['NULL_KEY', { kind: 'value', type: 'key', value: '00000000-0000-0000-0000-000000000000' }]]),
 			builtinFunctionReturnTypes: new Map([['llListen', 'integer']]),
 		});
-		expect(result.code).not.toContain('tell(');
+		expect(result.code).not.toContain('tell(string value,integer noisy)');
 		expect(result.code).toContain('integer noisy=llListen');
 		expect(result.code).toContain('llOwnerSay("ok");');
+	});
+
+	it('inlines single-use expression functions when the measured Mono cost drops', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer addOne(integer value) { return value + 1; }',
+			'default { state_entry() { } touch_start(integer count) { llOwnerSay((string)addOne(count)); } }',
+		].join('\n')), {
+			inlineFunctions: true,
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).toBe('default{touch_start(integer count){llOwnerSay((string)(count+1));}}');
+	});
+
+	it('inlines multi-use expression functions when the measured Mono cost drops', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer addOne(integer value) { return value + 1; }',
+			'default { state_entry() {',
+			'  integer count = llGetUnixTime();',
+			'  integer total = addOne(count) + addOne(count + 1) + addOne(count + 2);',
+			'  llOwnerSay((string)total);',
+			'} }',
+		].join('\n')), {
+			inlineFunctions: true,
+			integerPeepholes: true,
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).not.toContain('addOne');
+		expect(result.code).toContain('3*count+6');
+	});
+
+	it('does not collapse repeated calls into arithmetic terms', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer total = llGetUnixTime() + llGetUnixTime() + 6;',
+			'  llOwnerSay((string)total);',
+			'} }',
+		].join('\n')), {
+			integerPeepholes: true,
+		});
+		expect(result.code).toContain('llGetUnixTime()+llGetUnixTime()+6');
+		expect(result.code).not.toContain('2*llGetUnixTime()+6');
 	});
 
 	it('does not inline when parameter substitution would duplicate an argument', () => {
@@ -733,7 +774,7 @@ describe('optimizer plumbing', () => {
 	it('keeps adjacent unary minus operators from emitting as decrement', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'integer channel(string value) { return -llAbs((integer)("0x" + llGetSubString(value, 30, -1))); }',
-			'default { state_entry() {',
+			'default { state_entry() { } touch_start(integer count) {',
 			'  string id = llGetScriptName();',
 			'  integer next = -channel(id);',
 			'  llOwnerSay((string)next);',

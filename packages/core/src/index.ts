@@ -22,6 +22,7 @@ export * from './ast/emit';
 export * from './ast/infer';
 export * from './ast/key';
 export * from './ast/lexer';
+export * from './ast/measure';
 export * from './ast/optimize';
 export * from './ast/parser';
 export * from './ast/shrinkNames';

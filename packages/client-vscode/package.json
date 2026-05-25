@@ -128,6 +128,11 @@
 						"shrinkNames": { "type": "boolean", "default": true }
 					}
 				},
+				"lsl.measure.inlayHints": {
+					"type": "boolean",
+					"default": true,
+					"description": "Show an inlay hint at the script state with estimated Mono free memory, optimized free memory, and the calibrated error band."
+				},
 				"lsl.enableSemanticTokens": {
 					"type": "boolean",
 					"default": true

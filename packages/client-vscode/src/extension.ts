@@ -261,6 +261,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			macros: currentCfg.get('macros'),
 			dynamicMacros: currentCfg.get('dynamicMacros'),
 			optimize: currentCfg.get('optimize'),
+			measure: { inlayHints: currentCfg.get('measure.inlayHints') },
 			logFile,
 			diagnostics: { disable: currentCfg.get('diagnostics.disable') },
 			debug: !!currentCfg.get<boolean>('debugLogging')

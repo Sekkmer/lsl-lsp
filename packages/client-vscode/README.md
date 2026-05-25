@@ -42,6 +42,8 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 	- `LSL: Open Preprocessed Script` opens the include/macro-expanded output in a read-only editor tab
 	- `LSL: Open Optimized Script` opens a readable optimized copy beside the source file without modifying the source
 	- Both commands are available from the command palette and from the editor context menu in LSL files
+- Memory estimate
+	- Inlay hints show estimated Mono free memory at the script state, the optimized free-memory estimate, and the calibrated error band
 - Diagnostics (server‑side analysis)
 	- AST‑based checks for common LSL issues: arity/return mismatches, unused/duplicate declarations, dead code, and precise operator/type rules
 	- Constant conditions are evaluated with bounded folding for literals, local constants, LSL truthiness, assignment-valued `if` conditions, and known vector/rotation equality
@@ -70,6 +72,7 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 - `lsl.macros`: Project-wide predefined macros for conditionals
 - `lsl.dynamicMacros`: Macros to preserve as unknown typed values instead of expanding, written as `name:type` entries such as `__AGENTID__:string` or `__UNIXTIME__:integer`
 - `lsl.optimize`: Optimizer feature switches used by `LSL: Open Optimized Script`. All optimizer features are enabled by default; set individual flags to `false` to disable them.
+- `lsl.measure.inlayHints`: Show or hide Mono memory estimate inlay hints.
 - `lsl.enableSemanticTokens`: Toggle semantic tokens
 - `lsl.diagnostics.disable`: Diagnostic codes or friendly names to disable globally
 - `lsl.trace`: LSP protocol trace level (`off`, `messages`, `verbose`)

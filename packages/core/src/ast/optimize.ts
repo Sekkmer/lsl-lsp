@@ -1,7 +1,8 @@
 import { inlineConstantGlobals } from './constantGlobals';
-import { emitScript, emitStmt } from './emit';
+import { emitExpr, emitScript, emitStmt } from './emit';
 import { Env, evalExpr, type Value } from './eval';
 import { inferExprTypeFromAst, type SimpleType } from './infer';
+import { measureAst } from './measure';
 import { NULL_KEY_VALUE } from './key';
 import { parseScriptFromText } from './parser';
 import * as runtime from './runtime';
@@ -96,8 +97,8 @@ function optimizeScriptOnce(script: Script, opts: ResolvedOptimizeOptions): Scri
 	};
 	const compacted = opts.inlineConstantGlobals ? inlineConstantGlobals(optimized) : optimized;
 	const beforeInline = opts.removeUnusedFunctions ? removeUnusedFunctions(compacted) : compacted;
-	const afterExprInline = opts.inlineFunctions ? inlineSingleUseFunctionsBySize(beforeInline) : beforeInline;
-	const afterInline = opts.inlineFunctions ? inlineSingleUseStatementFunctionsBySize(afterExprInline) : afterExprInline;
+	const afterExprInline = opts.inlineFunctions ? inlineExpressionFunctionsByMeasure(beforeInline) : beforeInline;
+	const afterInline = opts.inlineFunctions ? inlineSingleUseStatementFunctionsByMeasure(afterExprInline) : afterExprInline;
 	const afterDce = opts.removeUnusedFunctions ? removeUnusedFunctions(afterInline) : afterInline;
 	const withoutDefaultInitializers = opts.dropDefaultInitializers ? dropDefaultInitializers(afterDce) : afterDce;
 	return opts.shrinkNames ? shrinkScriptNames(withoutDefaultInitializers, opts.shrinkNameOptions) : withoutDefaultInitializers;
@@ -343,10 +344,131 @@ function optimizeIntegerExprPeephole(expr: Expr, scope: TypeScope, functionRetur
 	if (expr.kind !== 'Binary' || (expr.op !== '+' && expr.op !== '-')) return expr;
 	const leftInteger = inferExprTypeFromAst(expr.left, scope.view(), new Map(functionReturnTypes)) === 'integer';
 	const rightInteger = inferExprTypeFromAst(expr.right, scope.view(), new Map(functionReturnTypes)) === 'integer';
+	if (leftInteger && rightInteger) {
+		const linear = optimizeLinearIntegerExpr(expr, scope, functionReturnTypes);
+		if (linear) return linear;
+	}
 	if (expr.op === '+' && leftInteger && rightInteger && isIntegerLiteralValue(expr.right, 1)) return plusOne(expr.left);
 	if (expr.op === '+' && leftInteger && rightInteger && isIntegerLiteralValue(expr.left, 1)) return plusOne(expr.right);
 	if (expr.op === '-' && leftInteger && rightInteger && isIntegerLiteralValue(expr.right, 1)) return minusOne(expr.left);
 	return expr;
+}
+
+interface LinearIntegerTerm {
+	coefficient: number;
+	identifier: Extract<Expr, { kind: 'Identifier' }>;
+}
+
+interface LinearIntegerExpr {
+	constant: number;
+	term?: LinearIntegerTerm;
+}
+
+function optimizeLinearIntegerExpr(expr: Expr, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>): Expr | null {
+	const linear = collectLinearIntegerExpr(expr, scope, functionReturnTypes, 1);
+	if (!linear?.term) return null;
+	if (linear.term.coefficient === 1 && linear.constant === 1) return null;
+	if (linear.term.coefficient === 1 && linear.constant === -1) return null;
+	const next = renderLinearIntegerExpr(expr, linear);
+	return emitExpr(next).length < emitExpr(expr).length ? next : null;
+}
+
+function collectLinearIntegerExpr(expr: Expr, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>, sign: number): LinearIntegerExpr | null {
+	if (expr.kind === 'Paren') return collectLinearIntegerExpr(expr.expression, scope, functionReturnTypes, sign);
+	if (expr.kind === 'NumberLiteral') {
+		const value = integerLiteralNumber(expr);
+		return value === null ? null : { constant: sign * value };
+	}
+	const incremented = incrementTargetExpr(expr);
+	if (incremented) {
+		const inner = collectLinearIntegerExpr(incremented, scope, functionReturnTypes, sign);
+		return inner ? mergeLinearIntegerExpr(inner, { constant: sign }) : null;
+	}
+	const decremented = decrementTargetExpr(expr);
+	if (decremented) {
+		const inner = collectLinearIntegerExpr(decremented, scope, functionReturnTypes, sign);
+		return inner ? mergeLinearIntegerExpr(inner, { constant: -sign }) : null;
+	}
+	if (expr.kind === 'Unary' && expr.op === '-') return collectLinearIntegerExpr(expr.argument, scope, functionReturnTypes, -sign);
+	if (expr.kind === 'Identifier') {
+		if (!isIntegerExpr(expr, scope, functionReturnTypes)) return null;
+		return { constant: 0, term: { coefficient: sign, identifier: expr } };
+	}
+	if (expr.kind === 'Binary' && expr.op === '*') {
+		return collectLinearIntegerProduct(expr, scope, functionReturnTypes, sign);
+	}
+	if (expr.kind !== 'Binary' || (expr.op !== '+' && expr.op !== '-')) return null;
+	const left = collectLinearIntegerExpr(expr.left, scope, functionReturnTypes, sign);
+	const right = collectLinearIntegerExpr(expr.right, scope, functionReturnTypes, expr.op === '+' ? sign : -sign);
+	if (!left || !right) return null;
+	return mergeLinearIntegerExpr(left, right);
+}
+
+function collectLinearIntegerProduct(expr: Extract<Expr, { kind: 'Binary' }>, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>, sign: number): LinearIntegerExpr | null {
+	const leftLiteral = integerLiteralNumber(expr.left);
+	const rightLiteral = integerLiteralNumber(expr.right);
+	if (leftLiteral !== null && rightLiteral === null) return scaleLinearIntegerTerm(expr.right, scope, functionReturnTypes, sign * leftLiteral);
+	if (rightLiteral !== null && leftLiteral === null) return scaleLinearIntegerTerm(expr.left, scope, functionReturnTypes, sign * rightLiteral);
+	return null;
+}
+
+function scaleLinearIntegerTerm(expr: Expr, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>, coefficient: number): LinearIntegerExpr | null {
+	const term = collectLinearIntegerExpr(expr, scope, functionReturnTypes, 1);
+	if (!term || term.constant !== 0 || !term.term) return null;
+	return {
+		constant: 0,
+		term: { ...term.term, coefficient: term.term.coefficient * coefficient },
+	};
+}
+
+function mergeLinearIntegerExpr(left: LinearIntegerExpr, right: LinearIntegerExpr): LinearIntegerExpr | null {
+	if (left.term && right.term && left.term.identifier.name !== right.term.identifier.name) return null;
+	const term = left.term ?? right.term;
+	const coefficient = (left.term?.coefficient ?? 0) + (right.term?.coefficient ?? 0);
+	return {
+		constant: left.constant + right.constant,
+		term: term && coefficient !== 0 ? { ...term, coefficient } : undefined,
+	};
+}
+
+function renderLinearIntegerExpr(source: Expr, linear: LinearIntegerExpr): Expr {
+	const parts: Array<{ sign: 1 | -1; expr: Expr }> = [];
+	if (linear.term && linear.term.coefficient !== 0) {
+		parts.push({ sign: linear.term.coefficient < 0 ? -1 : 1, expr: renderLinearTerm(source, linear.term) });
+	}
+	if (linear.constant !== 0) {
+		parts.push({ sign: linear.constant < 0 ? -1 : 1, expr: numberLiteral(source, Math.abs(linear.constant)) });
+	}
+	if (parts.length === 0) return numberLiteral(source, 0);
+	const first = parts[0]!;
+	let out = first.sign < 0 ? { ...source, kind: 'Unary', op: '-', argument: first.expr } as Expr : first.expr;
+	for (const part of parts.slice(1)) {
+		out = { ...source, kind: 'Binary', op: part.sign < 0 ? '-' : '+', left: out, right: part.expr };
+	}
+	return out;
+}
+
+function renderLinearTerm(source: Expr, term: LinearIntegerTerm): Expr {
+	const coefficient = Math.abs(term.coefficient);
+	if (coefficient === 1) return term.identifier;
+	return {
+		...source,
+		kind: 'Binary',
+		op: '*',
+		left: numberLiteral(source, coefficient),
+		right: term.identifier,
+	};
+}
+
+function integerLiteralNumber(expr: Expr): number | null {
+	if (expr.kind === 'Paren') return integerLiteralNumber(expr.expression);
+	if (expr.kind !== 'NumberLiteral') return null;
+	const value = Number(expr.raw);
+	return Number.isInteger(value) ? value : null;
+}
+
+function numberLiteral(source: Expr, value: number): Expr {
+	return { ...source, kind: 'NumberLiteral', raw: String(value) };
 }
 
 function optimizeIntegerConditionPeephole(expr: Expr, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>): Expr {
@@ -377,17 +499,27 @@ function optimizeIntegerStatementPeephole(expr: Expr, scope: TypeScope, function
 }
 
 function incrementTargetName(expr: Expr): string | null {
-	if (expr.kind === 'Paren') return incrementTargetName(expr.expression);
+	const target = incrementTargetExpr(expr);
+	return target ? identifierName(target) : null;
+}
+
+function incrementTargetExpr(expr: Expr): Expr | null {
+	if (expr.kind === 'Paren') return incrementTargetExpr(expr.expression);
 	if (expr.kind === 'Unary' && expr.op === '-' && expr.argument.kind === 'Unary' && expr.argument.op === '~') {
-		return identifierName(expr.argument.argument);
+		return expr.argument.argument;
 	}
 	return null;
 }
 
 function decrementTargetName(expr: Expr): string | null {
-	if (expr.kind === 'Paren') return decrementTargetName(expr.expression);
+	const target = decrementTargetExpr(expr);
+	return target ? identifierName(target) : null;
+}
+
+function decrementTargetExpr(expr: Expr): Expr | null {
+	if (expr.kind === 'Paren') return decrementTargetExpr(expr.expression);
 	if (expr.kind === 'Unary' && expr.op === '~' && expr.argument.kind === 'Unary' && expr.argument.op === '-') {
-		return identifierName(expr.argument.argument);
+		return expr.argument.argument;
 	}
 	return null;
 }
@@ -667,16 +799,16 @@ type InlineCandidate = {
 	expression: Expr;
 };
 
-function inlineSingleUseFunctionsBySize(script: Script): Script {
+function inlineExpressionFunctionsByMeasure(script: Script): Script {
 	let current = script;
 	let changed = true;
 	while (changed) {
 		changed = false;
 		for (const candidate of collectInlineCandidates(current)) {
-			const beforeBytes = Buffer.byteLength(emitScript(current), 'utf8');
+			const beforeUsed = estimateMonoUsed(current);
 			const inlined = removeUnusedFunctions(inlineSingleFunction(current, candidate));
-			const afterBytes = Buffer.byteLength(emitScript(inlined), 'utf8');
-			if (afterBytes < beforeBytes) {
+			const afterUsed = estimateMonoUsed(inlined);
+			if (afterUsed < beforeUsed) {
 				current = inlined;
 				changed = true;
 				break;
@@ -686,16 +818,16 @@ function inlineSingleUseFunctionsBySize(script: Script): Script {
 	return current;
 }
 
-function inlineSingleUseStatementFunctionsBySize(script: Script): Script {
+function inlineSingleUseStatementFunctionsByMeasure(script: Script): Script {
 	let current = script;
 	let changed = true;
 	while (changed) {
 		changed = false;
 		for (const candidate of collectStatementInlineCandidates(current)) {
-			const beforeBytes = Buffer.byteLength(emitScript(current), 'utf8');
+			const beforeUsed = estimateMonoUsed(current);
 			const inlined = removeUnusedFunctions(inlineSingleStatementFunction(current, candidate));
-			const afterBytes = Buffer.byteLength(emitScript(inlined), 'utf8');
-			if (afterBytes < beforeBytes) {
+			const afterUsed = estimateMonoUsed(inlined);
+			if (afterUsed < beforeUsed) {
 				current = inlined;
 				changed = true;
 				break;
@@ -703,13 +835,17 @@ function inlineSingleUseStatementFunctionsBySize(script: Script): Script {
 		}
 	}
 	return current;
+}
+
+function estimateMonoUsed(script: Script): number {
+	return measureAst(script).estimatedMonoUsedMemory;
 }
 
 function collectInlineCandidates(script: Script): InlineCandidate[] {
 	const callCounts = collectFunctionCallCounts(script);
 	const candidates: InlineCandidate[] = [];
 	for (const [name, fn] of script.functions) {
-		if (callCounts.get(name) !== 1) continue;
+		if ((callCounts.get(name) ?? 0) < 1) continue;
 		const expression = singleReturnExpression(fn);
 		if (!expression || exprCallsFunction(expression, name)) continue;
 		const params = [...fn.parameters.keys()];

@@ -33,6 +33,7 @@ import {
 	parseDynamicMacroList,
 	parseScriptFromText,
 	preprocessForAst,
+	measureAst,
 	optimizeScript,
 	formatLslText,
 	renderExpandedTokens,
@@ -45,7 +46,7 @@ import {
 
 declare const CLI_VERSION: string;
 
-type CommandName = 'check' | 'format' | 'optimize' | 'preprocess' | 'symbols' | 'definition' | 'hover' | 'dump-defs';
+type CommandName = 'check' | 'format' | 'measure' | 'optimize' | 'preprocess' | 'symbols' | 'definition' | 'hover' | 'dump-defs';
 
 interface CliOptions {
 	command: CommandName;
@@ -59,6 +60,7 @@ interface CliOptions {
 	json: boolean;
 	write: boolean;
 	checkFormat: boolean;
+	compareOptimized: boolean;
 	braceStyle: FormatSettings['braceStyle'];
 }
 
@@ -77,6 +79,7 @@ type CliDiagnostic = Omit<Diag, 'code'> & { code: Diag['code'] | 'LSL-preproc' }
 const USAGE = `Usage:
   lsl-lsp check [options] <file...>
   lsl-lsp format [options] [--write|--check] <file...>
+  lsl-lsp measure [options] [--json] [--compare-optimized] <file...>
   lsl-lsp optimize [options] [--write|--check|--json] <file...>
   lsl-lsp preprocess [options] [--json] <file...>
   lsl-lsp symbols [options] <file...>
@@ -95,6 +98,7 @@ Options:
       --definitions <path>       Use a custom definitions JSON/YAML file.
       --disable <code[,code]>    Suppress diagnostics by code or friendly name.
       --json                     Print supported command output as JSON.
+      --compare-optimized        Include optimized-output measure deltas with the measure command.
       --brace-style <style>      Formatting brace style: same-line or next-line.
       --write                    Write formatted files in-place.
       --check                    Exit non-zero if formatting would change files.
@@ -111,6 +115,7 @@ async function main(argv: string[]): Promise<number> {
 	const defs = await loadCliDefs(opts.definitionsPath);
 	if (opts.command === 'dump-defs') return runDumpDefs(opts, defs);
 	if (opts.command === 'format') return runFormat(opts, defs);
+	if (opts.command === 'measure') return runMeasure(opts, defs);
 	if (opts.command === 'optimize') return runOptimize(opts, defs);
 	if (opts.command === 'symbols') return runSymbols(opts, defs);
 	if (opts.command === 'definition') return runDefinition(opts, defs);
@@ -256,6 +261,108 @@ function toSimpleType(type: string): SimpleType | null {
 	if (type === 'integer' || type === 'float' || type === 'string' || type === 'key' || type === 'vector' || type === 'rotation' || type === 'list' || type === 'void') return type;
 	if (type === 'quaternion') return 'rotation';
 	return null;
+}
+
+async function runMeasure(opts: CliOptions, defs: Defs): Promise<number> {
+	const results = await Promise.all(opts.files.map(file => analyzeFile(file, opts, defs)));
+	const optimizeOptions = opts.compareOptimized ? cliOptimizeOptions(defs, opts) : null;
+	const payload = results.map(result => {
+		const base = measureAst(result.ast, { sourceText: result.text });
+		if (!optimizeOptions) return { result, base, optimized: null };
+		const optimizedOut = optimizeScript(result.ast, optimizeOptions);
+		const optimizedText = formatLslText(optimizedOut.code, { enabled: true, braceStyle: opts.braceStyle });
+		const optimizedAst = parseScriptFromText(optimizedText, result.doc.uri, {
+			macros: result.pre.macros,
+			dynamicMacros: opts.dynamicMacros,
+			includePaths: opts.includePaths,
+		});
+		const optimizedMeasure = measureAst(optimizedAst, { sourceText: optimizedText });
+		return {
+			result,
+			base,
+			optimized: {
+				stable: optimizedOut.stable,
+				passes: optimizedOut.passes,
+				changed: optimizedText !== result.text,
+				measure: optimizedMeasure,
+				delta: measureDelta(base, optimizedMeasure),
+			},
+		};
+	});
+
+	if (opts.json) {
+		process.stdout.write(`${JSON.stringify(payload.map(item => measureToJson(item)), null, 2)}\n`);
+		return 0;
+	}
+
+	for (const item of payload) printMeasure(item);
+	return 0;
+}
+
+function measureDelta(
+	base: ReturnType<typeof measureAst>,
+	optimized: ReturnType<typeof measureAst>,
+): object {
+	return {
+		estimatedMonoUsedMemory: optimized.estimatedMonoUsedMemory - base.estimatedMonoUsedMemory,
+		estimatedMonoFreeMemory: optimized.estimatedMonoFreeMemory - base.estimatedMonoFreeMemory,
+		compactCharacters: optimized.compactCharacters - base.compactCharacters,
+	};
+}
+
+function measureToJson(item: {
+	result: PipelineResult;
+	base: ReturnType<typeof measureAst>;
+	optimized: {
+		stable: boolean;
+		passes: number;
+		changed: boolean;
+		measure: ReturnType<typeof measureAst>;
+		delta: object;
+	} | null;
+}): object {
+	return {
+		uri: item.result.doc.uri,
+		file: item.result.filePath,
+		measure: item.base,
+		optimized: item.optimized,
+	};
+}
+
+function printMeasure(item: {
+	result: PipelineResult;
+	base: ReturnType<typeof measureAst>;
+	optimized: {
+		stable: boolean;
+		passes: number;
+		changed: boolean;
+		measure: ReturnType<typeof measureAst>;
+		delta: object;
+	} | null;
+}): void {
+	process.stdout.write(`${item.result.filePath}\n`);
+	printMeasureBlock('  source', item.base);
+	if (item.optimized) {
+		const delta = item.optimized.delta as { estimatedMonoUsedMemory: number; estimatedMonoFreeMemory: number; compactCharacters: number };
+		printMeasureBlock('  optimized', item.optimized.measure);
+		process.stdout.write(
+			`  delta: used ${signed(delta.estimatedMonoUsedMemory)}, free ${signed(delta.estimatedMonoFreeMemory)}, compact chars ${signed(delta.compactCharacters)}\n`,
+		);
+	}
+	for (const note of item.base.notes) process.stdout.write(`  note: ${note}\n`);
+}
+
+function printMeasureBlock(label: string, measure: ReturnType<typeof measureAst>): void {
+	process.stdout.write(
+		`${label}: estimated used ${measure.estimatedMonoUsedMemory}, free ${measure.estimatedMonoFreeMemory}, compact chars ${measure.compactCharacters}\n`,
+	);
+	process.stdout.write(
+		`${label} counts: globals=${measure.counts.globals} functions=${measure.counts.functions} states=${measure.counts.states} events=${measure.counts.events} statements=${measure.counts.statements} expressions=${measure.counts.expressions} calls=${measure.counts.calls} lists=${measure.counts.listLiterals} listCasts=${measure.counts.listCasts}\n`,
+	);
+}
+
+function signed(value: number): string {
+	return value >= 0 ? `+${value}` : String(value);
 }
 
 async function loadCliDefs(definitionsPath: string): Promise<Defs> {
@@ -585,6 +692,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 		json: false,
 		write: false,
 		checkFormat: false,
+		compareOptimized: false,
 		braceStyle: 'same-line',
 	};
 
@@ -600,6 +708,10 @@ function parseArgs(argv: string[]): CliOptions | null {
 		}
 		if (arg === '--json') {
 			opts.json = true;
+			continue;
+		}
+		if (arg === '--compare-optimized') {
+			opts.compareOptimized = true;
 			continue;
 		}
 		if (arg === '--write') {
@@ -654,13 +766,14 @@ function parseArgs(argv: string[]): CliOptions | null {
 
 	if (opts.write && opts.checkFormat) throw new CliError('--write and --check cannot be used together.');
 	if (opts.json && opts.command === 'format') throw new CliError('--json is not supported by format.');
+	if (opts.compareOptimized && opts.command !== 'measure') throw new CliError('--compare-optimized is only supported by measure.');
 	if ((opts.write || opts.checkFormat) && opts.command !== 'format' && opts.command !== 'optimize') throw new CliError('--write and --check are only supported by format and optimize.');
 	if (opts.defaultIncludePath) opts.includePaths.unshift(process.cwd());
 	return opts;
 }
 
 function isCommandName(value: string | undefined): value is CommandName {
-	return value === 'check' || value === 'format' || value === 'optimize' || value === 'preprocess' || value === 'symbols' || value === 'definition' || value === 'hover' || value === 'dump-defs';
+	return value === 'check' || value === 'format' || value === 'measure' || value === 'optimize' || value === 'preprocess' || value === 'symbols' || value === 'definition' || value === 'hover' || value === 'dump-defs';
 }
 
 function addDefine(defines: Record<string, string | number | boolean>, raw: string): void {

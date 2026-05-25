@@ -18,6 +18,8 @@ import {
 	SemanticTokens,
 	SemanticTokensParams,
 	SignatureHelp,
+	InlayHint,
+	InlayHintParams,
 	Definition,
 	LocationLink,
 	FileChangeType,
@@ -58,6 +60,7 @@ import {
 	lslCompletions,
 	lslHover,
 	lslSignatureHelp,
+	measureAst,
 	optimizeScript,
 	parseDisabledDiagList,
 	parseDynamicMacroList,
@@ -109,6 +112,9 @@ const settings = {
 	macros: {} as Record<string, string | number | boolean>,
 	dynamicMacros: {} as DynamicMacroMap,
 	optimize: {} as OptimizeSettings,
+	measure: {
+		inlayHints: true,
+	},
 	enableSemanticTokens: true,
 	logFile: '' as string,
 	debug: false,
@@ -124,6 +130,7 @@ const settings = {
 		mustUseResult: true,
 	}
 };
+const MONO_MEASURE_ERROR_BYTES = 900;
 
 let disabledDiagCodes = new Set<DiagCode>();
 
@@ -306,6 +313,9 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 	settings.macros = initOpts.macros || {};
 	settings.dynamicMacros = parseConfiguredDynamicMacros(initOpts.dynamicMacros);
 	settings.optimize = parseOptimizeSettings(initOpts.optimize);
+	if (initOpts.measure && typeof initOpts.measure === 'object' && typeof initOpts.measure.inlayHints === 'boolean') {
+		settings.measure.inlayHints = initOpts.measure.inlayHints;
+	}
 	baselineMacros = { ...settings.macros }; // capture baseline after init options
 	settings.logFile = initOpts.logFile || '';
 	settings.debug = !!initOpts.debug;
@@ -375,6 +385,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 				range: false,
 				full: { delta: true }
 			},
+			inlayHintProvider: true,
 			documentLinkProvider: { resolveProvider: false },
 			documentFormattingProvider: true,
 			documentRangeFormattingProvider: true,
@@ -579,6 +590,7 @@ connection.onDidChangeConfiguration(async change => {
 	// Allow live reconfig
 	const newSettings = change.settings?.lsl || {};
 	const prevIncludePaths = settings.includePaths?.slice() ?? [];
+	const prevMeasureInlayHints = settings.measure.inlayHints;
 	if (newSettings.definitionsPath && newSettings.definitionsPath !== settings.definitionsPath) {
 		settings.definitionsPath = newSettings.definitionsPath;
 		defs = await loadDefs(settings.definitionsPath);
@@ -597,6 +609,10 @@ connection.onDidChangeConfiguration(async change => {
 	if (Object.prototype.hasOwnProperty.call(newSettings, 'optimize')) {
 		settings.optimize = parseOptimizeSettings(newSettings.optimize);
 	}
+	if (newSettings.measure && typeof newSettings.measure === 'object') {
+		const measure = newSettings.measure as Record<string, unknown>;
+		if (typeof measure.inlayHints === 'boolean') settings.measure.inlayHints = measure.inlayHints;
+	}
 	baselineMacros = { ...settings.macros }; // refresh baseline on config change
 	settings.enableSemanticTokens = newSettings.enableSemanticTokens ?? settings.enableSemanticTokens;
 	if (newSettings.format) {
@@ -612,6 +628,9 @@ connection.onDidChangeConfiguration(async change => {
 		for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return true;
 		return false;
 	})();
+	if (prevMeasureInlayHints !== settings.measure.inlayHints) {
+		try { await connection.languages.inlayHint.refresh(); } catch { /* client may not support refresh */ }
+	}
 	if (changed || disabledChanged) {
 		pipelineCache.clear();
 		includeToDocs.clear();
@@ -737,6 +756,82 @@ connection.languages.semanticTokens.onDelta((params, token) => {
 	entry.sem = current;
 	return { resultId, edits: [{ start: 0, deleteCount, data: current.data }] };
 });
+
+connection.languages.inlayHint.on((params: InlayHintParams, token): InlayHint[] => {
+	if (token?.isCancellationRequested || !settings.measure.inlayHints) return [];
+	const doc = documents.get(params.textDocument.uri); if (!doc || !defs) return [];
+	const entry = getPipeline(doc); if (!entry?.ast) return [];
+	const state = preferredStateForMemoryHint(entry.ast, doc);
+	if (!state) return [];
+	const offset = stateHintOffset(doc.getText(), state.name, state.span.start);
+	const position = doc.positionAt(offset);
+	if (!positionInRange(position, params.range)) return [];
+
+	const current = measureAst(entry.ast, { sourceText: doc.getText() });
+	const optimizedFree = (() => {
+		try {
+			const optimized = optimizeScript(entry.ast, optimizeOptionsFromSettings(defs!));
+			if (!optimized.changed) return current.estimatedMonoFreeMemory;
+			const optimizedAst = parseScriptFromText(optimized.code, 'file:///optimized.lsl', { dynamicMacros: settings.dynamicMacros });
+			if (optimizedAst.diagnostics?.some(d => d.severity !== 'warning' && d.severity !== 'info')) return null;
+			return measureAst(optimizedAst, { sourceText: optimized.code }).estimatedMonoFreeMemory;
+		} catch {
+			return null;
+		}
+	})();
+	const label = memoryHintLabel(current.estimatedMonoFreeMemory, optimizedFree);
+	return [{
+		position,
+		label,
+		paddingLeft: true,
+		tooltip: memoryHintTooltip(current.estimatedMonoFreeMemory, optimizedFree),
+	}];
+});
+
+function preferredStateForMemoryHint(script: Script, doc: TextDocument): { name: string; span: { start: number }; originFile?: string } | null {
+	const states = [...script.states.values()].filter(state => sameDiagnosticFile(doc, state.originFile));
+	const defaultState = states.find(state => state.name === 'default');
+	if (defaultState) return defaultState;
+	for (const state of states) return state;
+	return null;
+}
+
+function stateHintOffset(text: string, stateName: string, stateStart: number): number {
+	if (stateName === 'default') {
+		const match = /^default\b/.exec(text.slice(stateStart));
+		if (match) return stateStart + match[0].length;
+		return stateStart;
+	}
+	const match = /^state\s+([A-Za-z_][A-Za-z0-9_]*)\b/.exec(text.slice(stateStart));
+	if (match) return stateStart + match[0].length;
+	return stateStart;
+}
+
+function positionInRange(position: { line: number; character: number }, range: Range): boolean {
+	if (position.line < range.start.line || position.line > range.end.line) return false;
+	if (position.line === range.start.line && position.character < range.start.character) return false;
+	if (position.line === range.end.line && position.character > range.end.character) return false;
+	return true;
+}
+
+function memoryHintLabel(currentFree: number, optimizedFree: number | null): string {
+	const current = `Mono free est. ${formatBytes(currentFree)} (+/-${formatBytes(MONO_MEASURE_ERROR_BYTES)})`;
+	if (optimizedFree === null) return ` [${current}]`;
+	if (optimizedFree === currentFree) return ` [${current}; opt same]`;
+	return ` [${current}; opt ${formatBytes(optimizedFree)}]`;
+}
+
+function memoryHintTooltip(currentFree: number, optimizedFree: number | null): string {
+	const optimized = optimizedFree === null
+		? ''
+		: ` Optimized estimate: ${formatBytes(optimizedFree)} free.`;
+	return `Estimated Mono free memory from the static AST model: ${formatBytes(currentFree)} free.${optimized} Typical absolute error is about ${formatBytes(MONO_MEASURE_ERROR_BYTES)}; validate in SL for release-critical margins.`;
+}
+
+function formatBytes(value: number): string {
+	const rounded = Math.round(value);
+	return `${String(rounded).replace(/\B(?=(\d{3})+(?!\d))/g, ',')} B`;
+}
 
 connection.onDocumentSymbol((params: DocumentSymbolParams, token) => {
 	if (token?.isCancellationRequested) return [];
