@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import bundledDefinitionsYaml from '../../../third_party/lsl-definitions/lsl_definitions.yaml';
 import {
+	DEFAULT_DEFINITIONS_UPDATE_URL,
 	type Defs,
 	type Diag,
 	type DocumentSymbol,
@@ -26,6 +28,7 @@ import {
 	filterDiagnostics,
 	formatDocumentEdits,
 	gotoDefinition,
+	cachedDefinitionPath,
 	loadDefs,
 	loadDefsFromSource,
 	lslHover,
@@ -38,6 +41,8 @@ import {
 	formatLslText,
 	renderExpandedTokens,
 	shrinkNameOptionsFromDefs,
+	shouldCheckDefinitionUpdate,
+	updateDefinitions,
 	type OptimizeOptions,
 	type SimpleType,
 	type Value,
@@ -46,7 +51,7 @@ import {
 
 declare const CLI_VERSION: string;
 
-type CommandName = 'check' | 'format' | 'measure' | 'optimize' | 'preprocess' | 'symbols' | 'definition' | 'hover' | 'dump-defs';
+type CommandName = 'check' | 'format' | 'measure' | 'optimize' | 'preprocess' | 'symbols' | 'definition' | 'hover' | 'dump-defs' | 'update-defs';
 
 interface CliOptions {
 	command: CommandName;
@@ -54,6 +59,10 @@ interface CliOptions {
 	includePaths: string[];
 	defaultIncludePath: boolean;
 	definitionsPath: string;
+	definitionsCacheDir: string;
+	definitionsUrl: string;
+	definitionsAutoUpdate: boolean;
+	definitionsForceUpdate: boolean;
 	defines: Record<string, string | number | boolean>;
 	dynamicMacros: DynamicMacroMap;
 	disabledDiagnostics: Set<Diag['code']>;
@@ -86,6 +95,7 @@ const USAGE = `Usage:
   lsl-lsp definition [options] <file> <line> <column>
   lsl-lsp hover [options] <file> <line> <column>
   lsl-lsp dump-defs [options] [name...]
+  lsl-lsp update-defs [options]
 
 Line and column arguments are 1-based.
 
@@ -96,6 +106,10 @@ Options:
       --dynamic-macro <name:type>
                                   Preserve a dynamic macro as an unknown typed value.
       --definitions <path>       Use a custom definitions JSON/YAML file.
+      --auto-update-defs         Check for cached official definition updates before loading bundled definitions.
+      --force-definition-update  Fetch definitions even if the cached check interval has not expired.
+      --definitions-cache <dir>  Definition update cache directory.
+      --definitions-url <url>    Definition update source URL.
       --disable <code[,code]>    Suppress diagnostics by code or friendly name.
       --json                     Print supported command output as JSON.
       --compare-optimized        Include optimized-output measure deltas with the measure command.
@@ -108,11 +122,12 @@ Options:
 async function main(argv: string[]): Promise<number> {
 	const opts = parseArgs(argv);
 	if (!opts) return 0;
-	if (opts.files.length === 0 && opts.command !== 'dump-defs') throw new CliError('No input files provided.');
+	if (opts.files.length === 0 && opts.command !== 'dump-defs' && opts.command !== 'update-defs') throw new CliError('No input files provided.');
 
+	if (opts.command === 'update-defs') return runUpdateDefs(opts);
 	if (opts.command === 'preprocess') return runPreprocess(opts);
 
-	const defs = await loadCliDefs(opts.definitionsPath);
+	const defs = await loadCliDefs(opts);
 	if (opts.command === 'dump-defs') return runDumpDefs(opts, defs);
 	if (opts.command === 'format') return runFormat(opts, defs);
 	if (opts.command === 'measure') return runMeasure(opts, defs);
@@ -365,9 +380,45 @@ function signed(value: number): string {
 	return value >= 0 ? `+${value}` : String(value);
 }
 
-async function loadCliDefs(definitionsPath: string): Promise<Defs> {
-	if (definitionsPath.trim()) return loadDefs(definitionsPath);
+async function loadCliDefs(opts: CliOptions): Promise<Defs> {
+	if (opts.definitionsPath.trim()) return loadDefs(opts.definitionsPath);
+	if (opts.definitionsAutoUpdate) {
+		try {
+			if (opts.definitionsForceUpdate || await shouldCheckDefinitionUpdate(opts.definitionsCacheDir, 24 * 60 * 60 * 1000)) {
+				const result = await updateDefinitions({
+					cacheDir: opts.definitionsCacheDir,
+					sourceUrl: opts.definitionsUrl,
+				});
+				if (result.updated) {
+					process.stderr.write(`lsl-lsp: updated definitions cache to ${result.metadata.version} (${result.metadata.sha256.slice(0, 12)})\n`);
+				}
+			}
+		} catch (err) {
+			process.stderr.write(`lsl-lsp: definition auto-update failed: ${err instanceof Error ? err.message : String(err)}\n`);
+		}
+		const cached = await cachedDefinitionPath(opts.definitionsCacheDir);
+		if (cached) return loadDefs(cached);
+	}
 	return loadDefsFromSource(bundledDefinitionsYaml, '<bundled lsl_definitions.yaml>');
+}
+
+async function runUpdateDefs(opts: CliOptions): Promise<number> {
+	if (opts.definitionsPath.trim()) {
+		throw new CliError('update-defs cannot be used with --definitions; remove the custom definitions path to update the official cache.');
+	}
+	const result = await updateDefinitions({
+		cacheDir: opts.definitionsCacheDir,
+		sourceUrl: opts.definitionsUrl,
+	});
+	if (opts.json) {
+		process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+		return 0;
+	}
+	const action = result.updated ? 'updated' : result.notModified ? 'already current' : 'unchanged';
+	process.stdout.write(`Definitions ${action}: ${result.definitionsPath}\n`);
+	process.stdout.write(`Version: ${result.metadata.version}\n`);
+	process.stdout.write(`SHA-256: ${result.metadata.sha256}\n`);
+	return 0;
 }
 
 async function runCheck(opts: CliOptions, defs: Defs): Promise<number> {
@@ -686,6 +737,10 @@ function parseArgs(argv: string[]): CliOptions | null {
 		includePaths: [],
 		defaultIncludePath: true,
 		definitionsPath: '',
+		definitionsCacheDir: defaultDefinitionsCacheDir(),
+		definitionsUrl: DEFAULT_DEFINITIONS_UPDATE_URL,
+		definitionsAutoUpdate: false,
+		definitionsForceUpdate: false,
 		defines: {},
 		dynamicMacros: {},
 		disabledDiagnostics: new Set(),
@@ -750,6 +805,23 @@ function parseArgs(argv: string[]): CliOptions | null {
 			opts.definitionsPath = expectValue(args, ++i, arg);
 			continue;
 		}
+		if (arg === '--auto-update-defs') {
+			opts.definitionsAutoUpdate = true;
+			continue;
+		}
+		if (arg === '--force-definition-update') {
+			opts.definitionsForceUpdate = true;
+			opts.definitionsAutoUpdate = true;
+			continue;
+		}
+		if (arg === '--definitions-cache') {
+			opts.definitionsCacheDir = path.resolve(expectValue(args, ++i, arg));
+			continue;
+		}
+		if (arg === '--definitions-url') {
+			opts.definitionsUrl = expectValue(args, ++i, arg);
+			continue;
+		}
 		if (arg === '--disable') {
 			opts.disabledDiagnostics = parseDisabledDiagList(expectValue(args, ++i, arg));
 			continue;
@@ -768,12 +840,26 @@ function parseArgs(argv: string[]): CliOptions | null {
 	if (opts.json && opts.command === 'format') throw new CliError('--json is not supported by format.');
 	if (opts.compareOptimized && opts.command !== 'measure') throw new CliError('--compare-optimized is only supported by measure.');
 	if ((opts.write || opts.checkFormat) && opts.command !== 'format' && opts.command !== 'optimize') throw new CliError('--write and --check are only supported by format and optimize.');
+	if (opts.command === 'update-defs') opts.definitionsForceUpdate = true;
 	if (opts.defaultIncludePath) opts.includePaths.unshift(process.cwd());
 	return opts;
 }
 
 function isCommandName(value: string | undefined): value is CommandName {
-	return value === 'check' || value === 'format' || value === 'measure' || value === 'optimize' || value === 'preprocess' || value === 'symbols' || value === 'definition' || value === 'hover' || value === 'dump-defs';
+	return value === 'check' || value === 'format' || value === 'measure' || value === 'optimize' || value === 'preprocess' || value === 'symbols' || value === 'definition' || value === 'hover' || value === 'dump-defs' || value === 'update-defs';
+}
+
+function defaultDefinitionsCacheDir(): string {
+	const name = 'lsl-lsp';
+	if (process.platform === 'win32') {
+		const base = process.env.LOCALAPPDATA || process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Local');
+		return path.join(base, name, 'Cache', 'definitions');
+	}
+	if (process.platform === 'darwin') {
+		return path.join(os.homedir(), 'Library', 'Caches', name, 'definitions');
+	}
+	const base = process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
+	return path.join(base, name, 'definitions');
 }
 
 function addDefine(defines: Record<string, string | number | boolean>, raw: string): void {

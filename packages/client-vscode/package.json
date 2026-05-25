@@ -64,6 +64,9 @@
 			{ "command": "lsl.showClientLogs", "title": "Show Client Logs", "category": "LSL" },
 			{ "command": "lsl.restartServer", "title": "Restart Language Server", "category": "LSL" },
 			{ "command": "lsl.clearCaches", "title": "Clear Caches", "category": "LSL" },
+			{ "command": "lsl.updateDefinitions", "title": "Update Definitions", "category": "LSL" },
+			{ "command": "lsl.useBundledDefinitions", "title": "Use Bundled Definitions", "category": "LSL" },
+			{ "command": "lsl.showActiveDefinitions", "title": "Show Active Definitions", "category": "LSL" },
 			{ "command": "lsl.openPreprocessedScript", "title": "Open Preprocessed Script", "category": "LSL" },
 			{ "command": "lsl.openOptimizedScript", "title": "Open Optimized Script", "category": "LSL" },
 			{ "command": "lsl.buildServer", "title": "Build Server (repo task)", "category": "LSL" }
@@ -89,6 +92,22 @@
 					"type": "string",
 					"default": "",
 					"description": "Path to LSL definition file (JSON/YAML). Leave empty to use the bundled official definitions."
+				},
+				"lsl.definitions.autoUpdate": {
+					"type": "boolean",
+					"default": true,
+					"description": "Automatically download and use validated official LSL definition updates when no custom definitionsPath is configured."
+				},
+				"lsl.definitions.updateUrl": {
+					"type": "string",
+					"default": "https://raw.githubusercontent.com/secondlife/lsl-definitions/main/lsl_definitions.yaml",
+					"description": "Source URL for automatic official LSL definition updates."
+				},
+				"lsl.definitions.updateIntervalHours": {
+					"type": "number",
+					"default": 24,
+					"minimum": 0,
+					"description": "Minimum time between automatic LSL definition update checks. Set to 0 to check on every activation."
 				},
 				"lsl.includePaths": {
 					"type": "array",
@@ -161,6 +180,7 @@
 		"vscode-languageclient": "^9.0.1"
 	},
 	"devDependencies": {
+		"@lsl-lsp/core": "workspace:*",
 		"@types/node": "^24.12.4",
 		"@types/vscode": "^1.90.0",
 		"@vscode/vsce": "^3.9.1",

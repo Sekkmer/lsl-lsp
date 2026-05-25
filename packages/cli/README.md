@@ -1,8 +1,8 @@
 # LSL LSP CLI
 
-Single-file command-line diagnostics, formatting, preprocessing, optimization, symbol, definition, and hover tool backed by `@lsl-lsp/core`.
+Single-file command-line diagnostics, formatting, preprocessing, optimization, symbol, definition, hover, and definition-update tool backed by `@lsl-lsp/core`.
 
-The release bundle is `out/lsl-lsp.cjs`. It embeds the default LSL definitions; pass `--definitions <path>` to use a custom JSON/YAML definition file.
+The release bundle is `out/lsl-lsp.cjs`. It embeds the default LSL definitions; pass `--definitions <path>` to use a custom JSON/YAML definition file, or run `update-defs` / `--auto-update-defs` to use a validated official definition cache.
 
 ## Usage
 
@@ -11,6 +11,7 @@ lsl-lsp check [options] <file...>
 lsl-lsp format [options] [--write|--check] <file...>
 lsl-lsp measure [options] [--json] [--compare-optimized] <file...>
 lsl-lsp optimize [options] [--write|--check|--json] <file...>
+lsl-lsp update-defs [options]
 ```
 
 Examples:
@@ -28,6 +29,8 @@ lsl-lsp symbols script.lsl
 lsl-lsp definition script.lsl 12 18
 lsl-lsp hover script.lsl 13 9
 lsl-lsp dump-defs llOwnerSay PI state_entry
+lsl-lsp update-defs
+lsl-lsp check --auto-update-defs script.lsl
 lsl-lsp format --check script.lsl
 lsl-lsp format --write script.lsl
 lsl-lsp optimize script.lsl

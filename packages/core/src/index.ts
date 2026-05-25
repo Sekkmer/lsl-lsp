@@ -2,6 +2,7 @@ export * from './analysisTypes';
 export * from './builtins';
 export * from './completions';
 export * from './defs';
+export * from './definitionUpdate';
 export * from './diagSettings';
 export * from './format';
 export * from './hover';

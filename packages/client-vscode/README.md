@@ -66,6 +66,9 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 ## Configuration
 
 - `lsl.definitionsPath`: Custom path to definitions JSON/YAML. Leave empty to use the bundled official definitions.
+- `lsl.definitions.autoUpdate`: Download and use validated official definition updates when no custom definitions path is configured.
+- `lsl.definitions.updateUrl`: Source URL for automatic official definition updates.
+- `lsl.definitions.updateIntervalHours`: Minimum time between automatic update checks.
 - `lsl.includePaths`: Additional search paths for `#include`.
 	- The workspace folder(s) are always searched by default. In multi-root workspaces, all roots are included.
 	- Resolution order: the current file’s directory, then workspace roots, then any paths listed in `lsl.includePaths`.

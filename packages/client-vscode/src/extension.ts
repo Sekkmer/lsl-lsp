@@ -2,6 +2,14 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as vscode from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, State, Trace } from 'vscode-languageclient/node';
+import {
+	DEFAULT_DEFINITIONS_UPDATE_URL,
+	cachedDefinitionPath,
+	definitionUpdatePaths,
+	readDefinitionUpdateMetadata,
+	shouldCheckDefinitionUpdate,
+	updateDefinitions,
+} from '@lsl-lsp/core/definitionUpdate';
 
 let client: LanguageClient;
 
@@ -152,6 +160,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	const traceLevel = cfg.get<'off' | 'messages' | 'verbose'>('trace', 'off');
 	const debugChannel = vscode.window.createOutputChannel('LSL Debug');
 	const traceChannel = vscode.window.createOutputChannel('LSL Language Server Trace');
+	const definitionsCacheDir = path.join(context.globalStorageUri.fsPath, 'definitions');
 
 	const log = (...args: unknown[]) => { if (debugEnabled) debugChannel.appendLine(args.map(String).join(' ')); };
 	if (devPath) log('[LSL] candidate server path ->', devPath);
@@ -192,6 +201,8 @@ export async function activate(context: vscode.ExtensionContext) {
 		const packagesRootFromExt = path.resolve(context.extensionUri.fsPath, '..');
 		const repoRootFromExt = path.resolve(context.extensionUri.fsPath, '..', '..');
 		if (!p || !requireExists(p)) {
+			const cached = cachedDefinitionsPathSync();
+			if (cached) return cached;
 			if (firstWs) {
 				const wsPackagesServer = resolveCandidates(firstWs, 'packages', 'server', 'out');
 				if (wsPackagesServer) return wsPackagesServer;
@@ -233,6 +244,11 @@ export async function activate(context: vscode.ExtensionContext) {
 	function requireExists(file: string): boolean {
 		try { require('node:fs').accessSync(file); return true; } catch { return false; }
 	}
+
+	function cachedDefinitionsPathSync(): string | undefined {
+		const file = definitionUpdatePaths(definitionsCacheDir).definitionsPath;
+		return requireExists(file) ? file : undefined;
+	}
 	const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
 	status.text = 'LSL: starting…';
 	status.tooltip = 'LSL Language Server';
@@ -266,6 +282,47 @@ export async function activate(context: vscode.ExtensionContext) {
 			diagnostics: { disable: currentCfg.get('diagnostics.disable') },
 			debug: !!currentCfg.get<boolean>('debugLogging')
 		};
+	}
+
+	async function notifyServerConfigurationChanged(): Promise<void> {
+		if (client.state !== State.Running) return;
+		await client.sendNotification('workspace/didChangeConfiguration', {
+			settings: { lsl: getServerSettings() }
+		});
+	}
+
+	async function refreshDefinitionCache(force: boolean, showUnchanged: boolean): Promise<void> {
+		const currentCfg = vscode.workspace.getConfiguration('lsl');
+		const customDefinitionsPath = currentCfg.get<string>('definitionsPath', '').trim();
+		if (customDefinitionsPath.length > 0) {
+			if (showUnchanged) vscode.window.showInformationMessage('LSL: custom definitionsPath is configured; automatic definition updates are disabled.');
+			return;
+		}
+		const autoUpdate = currentCfg.get<boolean>('definitions.autoUpdate', true);
+		if (!force && !autoUpdate) return;
+		const intervalHours = currentCfg.get<number>('definitions.updateIntervalHours', 24);
+		const intervalMs = Math.max(0, intervalHours) * 60 * 60 * 1000;
+		if (!force && !await shouldCheckDefinitionUpdate(definitionsCacheDir, intervalMs)) return;
+		const sourceUrl = currentCfg.get<string>('definitions.updateUrl', DEFAULT_DEFINITIONS_UPDATE_URL).trim() || DEFAULT_DEFINITIONS_UPDATE_URL;
+		try {
+			const result = await updateDefinitions({
+				cacheDir: definitionsCacheDir,
+				sourceUrl,
+			});
+			await notifyServerConfigurationChanged();
+			if (result.updated) {
+				vscode.window.showInformationMessage(`LSL: updated definitions to ${result.metadata.version}.`);
+			} else if (showUnchanged) {
+				vscode.window.showInformationMessage(`LSL: definitions are current (${result.metadata.version}).`);
+			}
+		} catch (e) {
+			const message = e instanceof Error ? e.message : String(e);
+			if (force || showUnchanged) {
+				vscode.window.showWarningMessage(`LSL: definition update failed: ${message}`);
+			} else {
+				log('[LSL] definition auto-update failed:', message);
+			}
+		}
 	}
 
 	const clientOptions: LanguageClientOptions = {
@@ -340,9 +397,31 @@ export async function activate(context: vscode.ExtensionContext) {
 	const buildServerCmd = vscode.commands.registerCommand('lsl.buildServer', async () => {
 		await vscode.commands.executeCommand('workbench.action.tasks.runTask', 'build server');
 	});
+	const updateDefinitionsCmd = vscode.commands.registerCommand('lsl.updateDefinitions', async () => {
+		await refreshDefinitionCache(true, true);
+	});
+	const useBundledDefinitionsCmd = vscode.commands.registerCommand('lsl.useBundledDefinitions', async () => {
+		try {
+			await fs.promises.rm(definitionsCacheDir, { recursive: true, force: true });
+			await notifyServerConfigurationChanged();
+			vscode.window.showInformationMessage('LSL: using bundled definitions.');
+		} catch (e) {
+			vscode.window.showErrorMessage('LSL: failed to remove cached definitions: ' + (e instanceof Error ? e.message : String(e)));
+		}
+	});
+	const showDefinitionsCmd = vscode.commands.registerCommand('lsl.showActiveDefinitions', async () => {
+		const activePath = resolveDefinitionsPath(vscode.workspace.getConfiguration('lsl').get('definitionsPath'));
+		const metadata = await readDefinitionUpdateMetadata(definitionsCacheDir);
+		const cached = await cachedDefinitionPath(definitionsCacheDir);
+		if (cached && activePath === cached && metadata) {
+			vscode.window.showInformationMessage(`LSL definitions: cached ${metadata.version} (${metadata.sha256.slice(0, 12)})`);
+			return;
+		}
+		vscode.window.showInformationMessage(`LSL definitions: ${activePath || 'bundled fallback'}`);
+	});
 	const openPreprocessedCmd = vscode.commands.registerCommand('lsl.openPreprocessedScript', () => openRenderedScript('preprocess'));
 	const openOptimizedCmd = vscode.commands.registerCommand('lsl.openOptimizedScript', () => openRenderedScript('optimize'));
-	context.subscriptions.push(showLogsCmd, showClientLogsCmd, restartCmd, clearCachesCmd, buildServerCmd, openPreprocessedCmd, openOptimizedCmd, generatedProviderRegistration, generatedProvider, status, debugChannel, traceChannel);
+	context.subscriptions.push(showLogsCmd, showClientLogsCmd, restartCmd, clearCachesCmd, buildServerCmd, updateDefinitionsCmd, useBundledDefinitionsCmd, showDefinitionsCmd, openPreprocessedCmd, openOptimizedCmd, generatedProviderRegistration, generatedProvider, status, debugChannel, traceChannel);
 
 	client.onDidChangeState(({ newState }) => {
 		if (newState === State.Running) {
@@ -382,9 +461,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	}));
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async ev => {
 		if (!ev.affectsConfiguration('lsl') || client.state !== State.Running) return;
-		await client.sendNotification('workspace/didChangeConfiguration', {
-			settings: { lsl: getServerSettings() }
-		});
+		await notifyServerConfigurationChanged();
+		if (ev.affectsConfiguration('lsl.definitions.autoUpdate') || ev.affectsConfiguration('lsl.definitions.updateUrl') || ev.affectsConfiguration('lsl.definitions.updateIntervalHours')) {
+			await refreshDefinitionCache(false, false);
+		}
 	}));
 
 	await client.start();
@@ -395,6 +475,7 @@ export async function activate(context: vscode.ExtensionContext) {
 		case 'verbose': client.setTrace(Trace.Verbose); break;
 	}
 	status.text = 'LSL: running';
+	void refreshDefinitionCache(false, false);
 	context.subscriptions.push({ dispose: () => {
 		client.stop();
 		if (disabledDecoration) disabledDecoration.dispose();

@@ -49,6 +49,9 @@ importers:
         specifier: ^9.0.1
         version: 9.0.1
     devDependencies:
+      '@lsl-lsp/core':
+        specifier: workspace:*
+        version: link:../core
       '@types/node':
         specifier: ^24.12.4
         version: 24.12.4
