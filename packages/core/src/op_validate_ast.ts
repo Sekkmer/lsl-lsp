@@ -140,11 +140,7 @@ export function validateOperatorsFromAst(
 						if (rt === 'integer' && isZeroLiteral(e.right)) {
 							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: 'Modulus by zero', range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Information });
 						}
-						const bothInt = lt === 'integer' && rt === 'integer';
-						const bothVec = lt === 'vector' && rt === 'vector';
-						// Always emit when not a valid combination; prior logic suppressed when bothAny
-						// which caused test to miss mismatch (one side inferred 'any').
-						if (!bothInt && !bothVec) {
+						if (!modulusCouldBeValid(lt, rt)) {
 							diagnostics.push({ code: LSL_DIAGCODES.WRONG_TYPE, message: 'Operator % expects integer%integer or vector%vector', range: mk(doc, e.span.start, e.span.end), severity: DiagnosticSeverity.Error });
 						}
 						break;
@@ -523,6 +519,13 @@ export function validateOperatorsFromAst(
 		}
 	}
 	function num(t: SimpleType) { return t === 'integer' || t === 'float'; }
+	function modulusCouldBeValid(left: SimpleType, right: SimpleType): boolean {
+		if (left === 'integer' && right === 'integer') return true;
+		if (left === 'vector' && right === 'vector') return true;
+		if (left === 'any') return right === 'any' || right === 'integer' || right === 'vector';
+		if (right === 'any') return left === 'integer' || left === 'vector';
+		return false;
+	}
 	type ArgMatch = { ok: boolean; warn?: { message: string; code?: DiagCode } };
 	function argTypeMatches(expected: SimpleType, got: SimpleType, expr?: Expr | null): ArgMatch {
 		if (expected === 'any' || got === 'any') return { ok: true };

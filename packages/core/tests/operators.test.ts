@@ -42,6 +42,38 @@ default { state_entry() {
 		expect(msgs.some(m => m.includes('Operator % expects integer%integer or vector%vector'))).toBe(true);
 	});
 
+	it('allows modulus on uninitialized integer globals', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+integer verbosityMode;
+default {
+	listen(integer channel, string name, key id, string message) {
+		verbosityMode = verbosityMode % 3;
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///ops_mod_global.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.some(m => m.includes('Operator % expects integer%integer or vector%vector'))).toBe(false);
+	});
+
+	it('defers modulus type errors when an operand is unknown', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+integer verbosityMode;
+default {
+	state_entry() {
+		verbosityMode = unresolvedValue % 3;
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///ops_mod_unknown.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		const msgs = analysis.diagnostics.map(d => d.message);
+		expect(msgs.some(m => m.includes('Operator % expects integer%integer or vector%vector'))).toBe(false);
+	});
+
 	it('bitwise and shifts require integer', async () => {
 		const defs = await loadDefs(defsPath);
 		const code = `
