@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.15
+- Fixed optimizer output for constant globals, member access, prefix/postfix operators, unary expressions, macro-expanded booleans, and empty-state preservation so generated scripts stay valid LSL.
+- Added diagnostics for empty states without event handlers, matching Second Life compiler behavior while keeping empty event/function bodies as warnings.
+- Added optimizer regression tests for previously invalid generated output patterns.
+
 ## 0.1.14
 - Fixed optimized output so nested casts are emitted with parentheses and remain valid LSL.
 - Fixed formatting of optimized `for` headers so `!=` is not split into invalid `! =` syntax.
