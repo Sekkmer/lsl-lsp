@@ -30,6 +30,8 @@ The runtime definition source is `third_party/lsl-definitions/lsl_definitions.ya
 - Run CLI diagnostics after build: `node packages/cli/out/lsl-lsp.cjs check path/to/script.lsl`
 - Inspect preprocessing after build: `node packages/cli/out/lsl-lsp.cjs preprocess --json path/to/script.lsl`
 - Optimize a script after build: `node packages/cli/out/lsl-lsp.cjs optimize path/to/script.lsl`
+- Check whether optimizer output would change a script: `node packages/cli/out/lsl-lsp.cjs optimize --check path/to/script.lsl`
+- Write optimizer output in place: `node packages/cli/out/lsl-lsp.cjs optimize --write path/to/script.lsl`
 - Preserve typed dynamic macros in analysis/optimization: `node packages/cli/out/lsl-lsp.cjs optimize --dynamic-macro __AGENTID__:string path/to/script.lsl`
 - Inspect a symbol after build: `node packages/cli/out/lsl-lsp.cjs hover path/to/script.lsl 10 5`
 - Dump bundled definitions after build: `node packages/cli/out/lsl-lsp.cjs dump-defs llOwnerSay`
@@ -39,6 +41,8 @@ VS Code exposes generated-output commands in the command palette:
 
 - `LSL: Open Preprocessed Script`
 - `LSL: Open Optimized Script`
+
+The optimizer is intended for generated review output first: VS Code opens a read-only optimized copy beside the source file, and the CLI writes only when `--write` is provided. Optimizer feature flags are enabled by default and can be disabled individually through the VS Code `lsl.optimize` setting.
 
 ## Definitions
 

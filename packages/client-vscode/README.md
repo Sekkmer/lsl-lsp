@@ -38,6 +38,10 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 	- Full document, range, and on‑type formatting
 	- Respects disabled preprocessor blocks
 	- Consistent brace/semicolon/newline handling
+- Generated script output
+	- `LSL: Open Preprocessed Script` opens the include/macro-expanded output in a read-only editor tab
+	- `LSL: Open Optimized Script` opens a readable optimized copy beside the source file without modifying the source
+	- Both commands are available from the command palette and from the editor context menu in LSL files
 - Diagnostics (server‑side analysis)
 	- AST‑based checks for common LSL issues: arity/return mismatches, unused/duplicate declarations, dead code, and precise operator/type rules
 	- Constant conditions are evaluated with bounded folding for literals, local constants, LSL truthiness, assignment-valued `if` conditions, and known vector/rotation equality

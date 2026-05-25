@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.13
+- Added a bundled `lsl-lsp optimize` CLI command and exposed generated preprocessed/optimized script output from VS Code.
+- Added typed dynamic macro support for preserving runtime-provided macro values during preprocessing and optimization.
+- Added optimizer support for constant folding, pure function folding, unused-code removal, name shrinking, readable stable output, and LSL-aware list/runtime semantics.
+- Fixed false-positive modulus operator diagnostics when one operand type is temporarily unknown.
+
 ## 0.1.12
 - Fixed the bundled CLI `--version` output so it is injected from the CLI package version during release builds.
 
