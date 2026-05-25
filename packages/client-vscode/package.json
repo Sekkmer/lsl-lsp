@@ -64,8 +64,24 @@
 			{ "command": "lsl.showClientLogs", "title": "Show Client Logs", "category": "LSL" },
 			{ "command": "lsl.restartServer", "title": "Restart Language Server", "category": "LSL" },
 			{ "command": "lsl.clearCaches", "title": "Clear Caches", "category": "LSL" },
+			{ "command": "lsl.openPreprocessedScript", "title": "Open Preprocessed Script", "category": "LSL" },
+			{ "command": "lsl.openOptimizedScript", "title": "Open Optimized Script", "category": "LSL" },
 			{ "command": "lsl.buildServer", "title": "Build Server (repo task)", "category": "LSL" }
 		],
+		"menus": {
+			"editor/context": [
+				{
+					"command": "lsl.openPreprocessedScript",
+					"when": "editorLangId == lsl",
+					"group": "navigation@20"
+				},
+				{
+					"command": "lsl.openOptimizedScript",
+					"when": "editorLangId == lsl",
+					"group": "navigation@21"
+				}
+			]
+		},
 		"configuration": {
 			"title": "LSL",
 			"properties": {
@@ -92,6 +108,25 @@
 					"items": { "type": "string" },
 					"default": [],
 					"description": "Macros to preserve as typed dynamic values, using name:type entries such as __AGENTID__:string."
+				},
+				"lsl.optimize": {
+					"type": "object",
+					"default": {},
+					"additionalProperties": false,
+					"description": "Optimizer feature switches. All optimizer features are enabled by default; set individual flags to false to disable them.",
+					"properties": {
+						"constantFold": { "type": "boolean", "default": true },
+						"dropDefaultInitializers": { "type": "boolean", "default": true },
+						"dropNoOpCasts": { "type": "boolean", "default": true },
+						"foldStringConcats": { "type": "boolean", "default": true },
+						"inlineConstantGlobals": { "type": "boolean", "default": true },
+						"inlineFunctions": { "type": "boolean", "default": true },
+						"integerPeepholes": { "type": "boolean", "default": true },
+						"bitwiseBooleanOps": { "type": "boolean", "default": true },
+						"listAdd": { "type": "boolean", "default": true },
+						"removeUnusedFunctions": { "type": "boolean", "default": true },
+						"shrinkNames": { "type": "boolean", "default": true }
+					}
 				},
 				"lsl.enableSemanticTokens": {
 					"type": "boolean",

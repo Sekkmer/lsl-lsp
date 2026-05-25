@@ -31,6 +31,7 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 	- Varargs: `__VA_ARGS__` and `__VA_OPT__`
 	- Operators: `#` (stringify) and `##` (token pasting)
 	- Configurable typed dynamic macros, such as Firestorm runtime values that should be preserved instead of expanded
+	- Commands to open generated preprocessed and optimized script output in read-only editor tabs
 	- Diagnostics for common preprocessor issues and disabled code ranges
 	- Works across included files; external symbols are indexed for hover/defs
 - Formatting
@@ -64,6 +65,7 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 	- Resolution order: the current file’s directory, then workspace roots, then any paths listed in `lsl.includePaths`.
 - `lsl.macros`: Project-wide predefined macros for conditionals
 - `lsl.dynamicMacros`: Macros to preserve as unknown typed values instead of expanding, written as `name:type` entries such as `__AGENTID__:string` or `__UNIXTIME__:integer`
+- `lsl.optimize`: Optimizer feature switches used by `LSL: Open Optimized Script`. All optimizer features are enabled by default; set individual flags to `false` to disable them.
 - `lsl.enableSemanticTokens`: Toggle semantic tokens
 - `lsl.diagnostics.disable`: Diagnostic codes or friendly names to disable globally
 - `lsl.trace`: LSP protocol trace level (`off`, `messages`, `verbose`)

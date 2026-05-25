@@ -29,6 +29,7 @@ export * from './ast/types';
 export * from './core/macro';
 export * from './core/pipeline';
 export * from './core/preproc';
+export * from './core/render';
 export * from './core/tokenizer';
 export { TokenStream } from './core/tokens';
 export type { Token as CoreToken, Span as CoreSpan } from './core/tokens';

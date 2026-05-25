@@ -5,6 +5,38 @@ import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, St
 
 let client: LanguageClient;
 
+type RenderMode = 'preprocess' | 'optimize';
+type RenderScriptResult = {
+	ok: boolean;
+	mode?: RenderMode;
+	title?: string;
+	content?: string;
+	changed?: boolean;
+	stable?: boolean;
+	passes?: number;
+	error?: string;
+};
+
+const generatedDocuments = new Map<string, string>();
+
+class GeneratedDocumentProvider implements vscode.TextDocumentContentProvider {
+	private readonly emitter = new vscode.EventEmitter<vscode.Uri>();
+	readonly onDidChange = this.emitter.event;
+
+	set(uri: vscode.Uri, content: string): void {
+		generatedDocuments.set(uri.toString(), content);
+		this.emitter.fire(uri);
+	}
+
+	provideTextDocumentContent(uri: vscode.Uri): string {
+		return generatedDocuments.get(uri.toString()) ?? '';
+	}
+
+	dispose(): void {
+		this.emitter.dispose();
+	}
+}
+
 // Decoration for disabled ranges (dim text)
 let disabledDecoration: vscode.TextEditorDecorationType | null = null;
 // Cache disabled ranges per document URI as LSP-like ranges
@@ -228,6 +260,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			includePaths: resolveIncludePaths(currentCfg.get('includePaths')),
 			macros: currentCfg.get('macros'),
 			dynamicMacros: currentCfg.get('dynamicMacros'),
+			optimize: currentCfg.get('optimize'),
 			logFile,
 			diagnostics: { disable: currentCfg.get('diagnostics.disable') },
 			debug: !!currentCfg.get<boolean>('debugLogging')
@@ -244,6 +277,46 @@ export async function activate(context: vscode.ExtensionContext) {
 	};
 
 	client = new LanguageClient('lslLsp', 'LSL Language Server', serverOptions, clientOptions);
+	const generatedProvider = new GeneratedDocumentProvider();
+	const generatedProviderRegistration = vscode.workspace.registerTextDocumentContentProvider('lsl-output', generatedProvider);
+
+	function outputUri(title: string): vscode.Uri {
+		const safeTitle = title.replace(/[\\/:*?"<>|#%]/g, '_');
+		return vscode.Uri.from({
+			scheme: 'lsl-output',
+			path: `/${safeTitle}`,
+			query: `v=${Date.now()}`,
+		});
+	}
+
+	async function openRenderedScript(mode: RenderMode): Promise<void> {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor || editor.document.languageId !== 'lsl') {
+			vscode.window.showWarningMessage('LSL: open an LSL document first.');
+			return;
+		}
+		if (client.state !== State.Running) {
+			vscode.window.showWarningMessage('LSL: language server is not running.');
+			return;
+		}
+		try {
+			const result = await client.sendRequest<RenderScriptResult>('lsl/renderScript', {
+				uri: editor.document.uri.toString(),
+				mode,
+			});
+			if (!result.ok || result.content === undefined || !result.title) {
+				vscode.window.showErrorMessage(`LSL: ${result.error || 'failed to render script'}`);
+				return;
+			}
+			const uri = outputUri(result.title);
+			generatedProvider.set(uri, result.content);
+			let doc = await vscode.workspace.openTextDocument(uri);
+			if (doc.languageId !== 'lsl') doc = await vscode.languages.setTextDocumentLanguage(doc, 'lsl');
+			await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+		} catch (e) {
+			vscode.window.showErrorMessage('LSL: failed to render script: ' + (e instanceof Error ? e.message : String(e)));
+		}
+	}
 
 	// Commands for quick debug
 	const showLogsCmd = vscode.commands.registerCommand('lsl.showServerLogs', () => traceChannel.show(true));
@@ -266,7 +339,9 @@ export async function activate(context: vscode.ExtensionContext) {
 	const buildServerCmd = vscode.commands.registerCommand('lsl.buildServer', async () => {
 		await vscode.commands.executeCommand('workbench.action.tasks.runTask', 'build server');
 	});
-	context.subscriptions.push(showLogsCmd, showClientLogsCmd, restartCmd, clearCachesCmd, buildServerCmd, status, debugChannel, traceChannel);
+	const openPreprocessedCmd = vscode.commands.registerCommand('lsl.openPreprocessedScript', () => openRenderedScript('preprocess'));
+	const openOptimizedCmd = vscode.commands.registerCommand('lsl.openOptimizedScript', () => openRenderedScript('optimize'));
+	context.subscriptions.push(showLogsCmd, showClientLogsCmd, restartCmd, clearCachesCmd, buildServerCmd, openPreprocessedCmd, openOptimizedCmd, generatedProviderRegistration, generatedProvider, status, debugChannel, traceChannel);
 
 	client.onDidChangeState(({ newState }) => {
 		if (newState === State.Running) {

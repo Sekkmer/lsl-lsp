@@ -16,7 +16,6 @@ import {
 	type PreprocResult,
 	type Range,
 	type Script,
-	type CoreToken,
 	type DefFunction,
 	TextDocument,
 	analyzeAst,
@@ -35,6 +34,8 @@ import {
 	parseScriptFromText,
 	preprocessForAst,
 	optimizeScript,
+	formatLslText,
+	renderExpandedTokens,
 	shrinkNameOptionsFromDefs,
 	type OptimizeOptions,
 	type SimpleType,
@@ -146,40 +147,41 @@ async function runOptimize(opts: CliOptions, defs: Defs): Promise<number> {
 	const optimizeOptions = cliOptimizeOptions(defs, opts);
 	const optimized = results.map(result => {
 		const out = optimizeScript(result.ast, optimizeOptions);
-		return { result, out };
+		const text = formatLslText(out.code, { enabled: true, braceStyle: opts.braceStyle });
+		return { result, out, text };
 	});
 
 	if (opts.json) {
-		process.stdout.write(`${JSON.stringify(optimized.map(({ result, out }) => ({
+		process.stdout.write(`${JSON.stringify(optimized.map(({ result, out, text }) => ({
 			uri: result.doc.uri,
 			file: result.filePath,
-			changed: out.code !== result.text,
+			changed: text !== result.text,
 			stable: out.stable,
 			passes: out.passes,
-			optimizedText: out.code,
+			optimizedText: text,
 		})), null, 2)}\n`);
 		return optimized.some(item => !item.out.stable) ? 1 : 0;
 	}
 
 	if (opts.checkFormat) {
 		for (const item of optimized) {
-			if (item.out.code !== item.result.text) {
+			if (item.text !== item.result.text) {
 				process.stdout.write(`${item.result.filePath} would be optimized\n`);
 			}
 		}
-		return optimized.some(item => item.out.code !== item.result.text) ? 1 : 0;
+		return optimized.some(item => item.text !== item.result.text) ? 1 : 0;
 	}
 
 	if (opts.write) {
 		await Promise.all(optimized.map(async item => {
-			if (item.out.code !== item.result.text) await fs.writeFile(item.result.filePath, item.out.code, 'utf8');
+			if (item.text !== item.result.text) await fs.writeFile(item.result.filePath, item.text, 'utf8');
 		}));
 		return optimized.some(item => !item.out.stable) ? 1 : 0;
 	}
 
 	if (optimized.length !== 1) throw new CliError('Optimizing multiple files requires --write, --check, or --json.');
-	process.stdout.write(optimized[0]!.out.code);
-	if (!optimized[0]!.out.code.endsWith('\n')) process.stdout.write('\n');
+	process.stdout.write(optimized[0]!.text);
+	if (!optimized[0]!.text.endsWith('\n')) process.stdout.write('\n');
 	return optimized[0]!.out.stable ? 0 : 1;
 }
 
@@ -524,53 +526,6 @@ function hoverContentsToJson(contents: Hover['contents']): unknown {
 function markedStringToJson(value: MarkedString | MarkupContent): unknown {
 	if (typeof value === 'string') return value;
 	return value;
-}
-
-function renderExpandedTokens(tokens: ReadonlyArray<CoreToken>): string {
-	let out = '';
-	let indent = 0;
-	let atLineStart = true;
-	let previous: CoreToken | undefined;
-	for (const token of tokens) {
-		if (token.kind === 'eof') continue;
-		if (token.value === '}') {
-			if (!atLineStart) {
-				out = out.trimEnd();
-				out += '\n';
-			}
-			indent = Math.max(0, indent - 1);
-		}
-		if (atLineStart) {
-			out += '\t'.repeat(indent);
-		} else if (previous && needsSpace(previous, token)) {
-			out += ' ';
-		}
-		out += token.value;
-		atLineStart = false;
-		if (token.value === '{') {
-			indent++;
-			out += '\n';
-			atLineStart = true;
-		} else if (token.value === ';' || token.value === '}') {
-			out += '\n';
-			atLineStart = true;
-		}
-		previous = token;
-	}
-	return out.trimEnd();
-}
-
-function needsSpace(left: CoreToken, right: CoreToken): boolean {
-	const leftWord = left.kind === 'id' || left.kind === 'keyword' || left.kind === 'number' || left.kind === 'string';
-	const rightWord = right.kind === 'id' || right.kind === 'keyword' || right.kind === 'number' || right.kind === 'string';
-	if (leftWord && rightWord) return true;
-	if (left.value === ')' && (right.kind === 'id' || right.kind === 'keyword' || right.kind === 'number' || right.kind === 'string')) return true;
-	if (right.value === '(') return left.kind === 'keyword';
-	if (right.value === '{') return true;
-	if (left.value === '{' || left.value === ';' || left.value === '}') return true;
-	if (right.value === '}' || right.value === ';' || right.value === ',' || right.value === ')' || right.value === ']') return false;
-	if (left.value === '(' || left.value === '[' || left.value === '<') return false;
-	return left.kind === 'op' || right.kind === 'op';
 }
 
 function severityLabel(severity: Diag['severity']): string {

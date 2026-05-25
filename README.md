@@ -35,6 +35,11 @@ The runtime definition source is `third_party/lsl-definitions/lsl_definitions.ya
 - Dump bundled definitions after build: `node packages/cli/out/lsl-lsp.cjs dump-defs llOwnerSay`
 - Build VS Code package: `pnpm -C packages/client-vscode package`
 
+VS Code exposes generated-output commands in the command palette:
+
+- `LSL: Open Preprocessed Script`
+- `LSL: Open Optimized Script`
+
 ## Definitions
 
 The server accepts official YAML definitions or the older JSON/YAML shape. If no custom path is configured, it resolves definitions from the built server output and then falls back to the official submodule. Definition metadata such as deprecated calls, god-mode requirements, must-use results, sleep/energy/experience flags, docs, links, and overrides is loaded into diagnostics and hovers where applicable.

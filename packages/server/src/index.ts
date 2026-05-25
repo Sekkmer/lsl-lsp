@@ -25,6 +25,7 @@ import {
 	DocumentRangeFormattingParams, DocumentOnTypeFormattingParams
 } from 'vscode-languageserver/node';
 import 'source-map-support/register.js';
+import path from 'node:path';
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { URI } from 'vscode-uri';
 import {
@@ -33,8 +34,11 @@ import {
 	type DiagCode,
 	LSL_DIAGCODES,
 	type FormatSettings,
+	type OptimizeOptions,
 	type PreprocResult,
 	type Script,
+	type SimpleType,
+	type Value,
 	analyzeAst,
 	buildSemanticTokens,
 	clearIncludeResolverCache,
@@ -45,6 +49,7 @@ import {
 	filterDiagnostics,
 	findAllReferences,
 	formatDocumentEdits,
+	formatLslText,
 	formatRangeEdits,
 	gotoDefinition,
 	isType,
@@ -53,13 +58,16 @@ import {
 	lslCompletions,
 	lslHover,
 	lslSignatureHelp,
+	optimizeScript,
 	parseDisabledDiagList,
 	parseDynamicMacroList,
 	parseScriptFromText,
 	prepareRename as navPrepareRename,
 	preprocessForAst,
+	renderExpandedTokens,
 	resolveCompletion,
 	semanticTokensLegend,
+	shrinkNameOptionsFromDefs,
 	type DynamicMacroMap,
 } from '@lsl-lsp/core';
 
@@ -80,11 +88,27 @@ let defs: Defs | null = null;
 let workspaceRootPaths: string[] = [];
 // Baseline macros captured at initialize / config change; used to seed each new document's preprocessor.
 let baselineMacros: Record<string, string | number | boolean> = {};
+const OPTIMIZE_FLAG_NAMES = [
+	'constantFold',
+	'dropDefaultInitializers',
+	'dropNoOpCasts',
+	'foldStringConcats',
+	'inlineConstantGlobals',
+	'inlineFunctions',
+	'integerPeepholes',
+	'bitwiseBooleanOps',
+	'listAdd',
+	'removeUnusedFunctions',
+	'shrinkNames',
+] as const;
+type OptimizeFlag = typeof OPTIMIZE_FLAG_NAMES[number];
+type OptimizeSettings = Partial<Record<OptimizeFlag, boolean>>;
 const settings = {
 	definitionsPath: '',
 	includePaths: [] as string[],
 	macros: {} as Record<string, string | number | boolean>,
 	dynamicMacros: {} as DynamicMacroMap,
+	optimize: {} as OptimizeSettings,
 	enableSemanticTokens: true,
 	logFile: '' as string,
 	debug: false,
@@ -123,6 +147,16 @@ function parseConfiguredDynamicMacros(raw: unknown): DynamicMacroMap {
 		connection.console.error('[lsl-lsp] invalid dynamic macro configuration: ' + String(e));
 		return {};
 	}
+}
+
+function parseOptimizeSettings(raw: unknown): OptimizeSettings {
+	if (!raw || typeof raw !== 'object') return {};
+	const input = raw as Record<string, unknown>;
+	const out: OptimizeSettings = {};
+	for (const name of OPTIMIZE_FLAG_NAMES) {
+		if (typeof input[name] === 'boolean') out[name] = input[name];
+	}
+	return out;
 }
 
 // -------------------------------------------------
@@ -229,6 +263,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 		macros: full.macros,
 		dynamicMacros: full.dynamicMacros,
 		funcMacros: full.funcMacros,
+		expandedTokens: full.expandedTokens,
 		macroDefs: full.macroDefs,
 		includes: full.includes,
 		includeTargets: full.includeTargets,
@@ -270,6 +305,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 	settings.includePaths = initOpts.includePaths || [];
 	settings.macros = initOpts.macros || {};
 	settings.dynamicMacros = parseConfiguredDynamicMacros(initOpts.dynamicMacros);
+	settings.optimize = parseOptimizeSettings(initOpts.optimize);
 	baselineMacros = { ...settings.macros }; // capture baseline after init options
 	settings.logFile = initOpts.logFile || '';
 	settings.debug = !!initOpts.debug;
@@ -395,6 +431,150 @@ connection.onRequest('lsl/clearCaches', async () => {
 	}
 });
 
+type RenderMode = 'preprocess' | 'optimize';
+type RenderScriptParams = { uri: string; mode: RenderMode };
+type RenderScriptResult = {
+	ok: boolean;
+	mode?: RenderMode;
+	title?: string;
+	content?: string;
+	changed?: boolean;
+	stable?: boolean;
+	passes?: number;
+	error?: string;
+};
+
+connection.onRequest('lsl/renderScript', (params: RenderScriptParams): RenderScriptResult => {
+	try {
+		if (!defs) return { ok: false, error: 'Definitions are not loaded.' };
+		if (!params || (params.mode !== 'preprocess' && params.mode !== 'optimize')) return { ok: false, error: 'Invalid render mode.' };
+		const doc = documents.get(params.uri);
+		if (!doc) return { ok: false, error: 'Document is not open in the language server.' };
+		const pipeline = getPipeline(doc);
+		if (!pipeline) return { ok: false, error: 'Unable to build LSL pipeline.' };
+		const title = renderedTitle(doc.uri, params.mode);
+		if (params.mode === 'preprocess') {
+			return {
+				ok: true,
+				mode: params.mode,
+				title,
+				content: ensureTrailingNewline(renderExpandedTokens(pipeline.pre.expandedTokens ?? [])),
+			};
+		}
+		if (!pipeline.ast) return { ok: false, error: 'Unable to parse script for optimization.' };
+		const optimized = optimizeScript(pipeline.ast, optimizeOptionsFromSettings(defs));
+		const content = formatLslText(optimized.code, { ...settings.format, enabled: true });
+		return {
+			ok: true,
+			mode: params.mode,
+			title,
+			content: ensureTrailingNewline(content),
+			changed: content !== doc.getText(),
+			stable: optimized.stable,
+			passes: optimized.passes,
+		};
+	} catch (e) {
+		connection.console.error('[lsl-lsp] renderScript failed: ' + String(e));
+		return { ok: false, error: String(e) };
+	}
+});
+
+function renderedTitle(uri: string, mode: RenderMode): string {
+	try {
+		const parsed = URI.parse(uri);
+		const base = parsed.scheme === 'file' ? path.basename(parsed.fsPath) : path.basename(parsed.path || 'script.lsl');
+		return `${base || 'script.lsl'}.${renderedSuffix(mode)}.lsl`;
+	} catch {
+		return `script.${renderedSuffix(mode)}.lsl`;
+	}
+}
+
+function renderedSuffix(mode: RenderMode): string {
+	if (mode === 'preprocess') return 'preprocessed';
+	return 'optimized';
+}
+
+function ensureTrailingNewline(text: string): string {
+	return text.endsWith('\n') ? text : `${text}\n`;
+}
+
+function optimizeOptionsFromSettings(defs: Defs): OptimizeOptions {
+	const flag = (name: OptimizeFlag): boolean => settings.optimize[name] ?? true;
+	return {
+		builtinConstants: builtinConstantValues(defs),
+		builtinFunctionReturnTypes: builtinReturnTypes(defs),
+		dynamicMacros: settings.dynamicMacros,
+		bitwiseBooleanOps: flag('bitwiseBooleanOps'),
+		constantFold: flag('constantFold'),
+		dropDefaultInitializers: flag('dropDefaultInitializers'),
+		dropNoOpCasts: flag('dropNoOpCasts'),
+		foldStringConcats: flag('foldStringConcats'),
+		inlineConstantGlobals: flag('inlineConstantGlobals'),
+		inlineFunctions: flag('inlineFunctions'),
+		integerPeepholes: flag('integerPeepholes'),
+		listAdd: flag('listAdd'),
+		removeUnusedFunctions: flag('removeUnusedFunctions'),
+		shrinkNames: flag('shrinkNames'),
+		shrinkNameOptions: shrinkNameOptionsFromDefs(defs),
+	};
+}
+
+function builtinConstantValues(defs: Defs): ReadonlyMap<string, Value> {
+	const out = new Map<string, Value>();
+	for (const [name, constant] of defs.consts) {
+		const value = constant.value;
+		switch (constant.type) {
+			case 'integer':
+				if (typeof value === 'number' || typeof value === 'boolean') {
+					out.set(name, { kind: 'value', type: 'integer', value: Number(value) | 0 });
+				}
+				break;
+			case 'float':
+				if (typeof value === 'number') {
+					out.set(name, { kind: 'value', type: 'float', value });
+				}
+				break;
+			case 'string':
+			case 'key':
+				if (typeof value === 'string') {
+					out.set(name, { kind: 'value', type: constant.type, value });
+				}
+				break;
+			default:
+				break;
+		}
+	}
+	return out;
+}
+
+function builtinReturnTypes(defs: Defs): ReadonlyMap<string, SimpleType> {
+	const out = new Map<string, SimpleType>();
+	for (const [name, overloads] of defs.funcs) {
+		let returnType: SimpleType | undefined;
+		let mixed = false;
+		for (const overload of overloads) {
+			const next = toSimpleType(overload.returns);
+			if (!next) {
+				mixed = true;
+				break;
+			}
+			if (returnType && returnType !== next) {
+				mixed = true;
+				break;
+			}
+			returnType = next;
+		}
+		if (!mixed && returnType) out.set(name, returnType);
+	}
+	return out;
+}
+
+function toSimpleType(type: string): SimpleType | null {
+	if (type === 'integer' || type === 'float' || type === 'string' || type === 'key' || type === 'vector' || type === 'rotation' || type === 'list' || type === 'void') return type;
+	if (type === 'quaternion') return 'rotation';
+	return null;
+}
+
 connection.onDidChangeConfiguration(async change => {
 	// Allow live reconfig
 	const newSettings = change.settings?.lsl || {};
@@ -413,6 +593,9 @@ connection.onDidChangeConfiguration(async change => {
 	settings.macros = newSettings.macros ?? settings.macros;
 	if (Object.prototype.hasOwnProperty.call(newSettings, 'dynamicMacros')) {
 		settings.dynamicMacros = parseConfiguredDynamicMacros(newSettings.dynamicMacros);
+	}
+	if (Object.prototype.hasOwnProperty.call(newSettings, 'optimize')) {
+		settings.optimize = parseOptimizeSettings(newSettings.optimize);
 	}
 	baselineMacros = { ...settings.macros }; // refresh baseline on config change
 	settings.enableSemanticTokens = newSettings.enableSemanticTokens ?? settings.enableSemanticTokens;
