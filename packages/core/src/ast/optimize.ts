@@ -107,7 +107,7 @@ function optimizeGlobal(global: GlobalVar, opts: ResolvedOptimizeOptions, global
 	const scope = new TypeScope(undefined, globalTypes);
 	return {
 		...global,
-		initializer: global.initializer ? optimizeExpr(global.initializer, opts, scope, functionReturnTypes, constantEnv) : undefined,
+		initializer: global.initializer ? optimizeExpr(global.initializer, opts, scope, functionReturnTypes, constantEnv, { preserveListLiteralShape: true }) : undefined,
 	};
 }
 
@@ -207,7 +207,7 @@ function optimizeBlockStatements(statements: Stmt[], opts: ResolvedOptimizeOptio
 	return statements.map(child => optimizeStmt(child, opts, scope, functionReturnTypes, constantEnv)).filter(child => child.kind !== 'EmptyStmt');
 }
 
-function optimizeExpr(expr: Expr, opts: ResolvedOptimizeOptions, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>, constantEnv: Env, context: { preserveStringProducer?: boolean } = {}): Expr {
+function optimizeExpr(expr: Expr, opts: ResolvedOptimizeOptions, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>, constantEnv: Env, context: { preserveStringProducer?: boolean; preserveListLiteralShape?: boolean } = {}): Expr {
 	let next: Expr;
 	switch (expr.kind) {
 		case 'ErrorExpr':
@@ -250,8 +250,8 @@ function optimizeExpr(expr: Expr, opts: ResolvedOptimizeOptions, scope: TypeScop
 			next = optimizeExpr(expr.expression, opts, scope, functionReturnTypes, constantEnv);
 			break;
 		case 'ListLiteral':
-			next = { ...expr, elements: expr.elements.map(element => optimizeExpr(element, opts, scope, functionReturnTypes, constantEnv)) };
-			if (opts.listAdd) next = listLiteralToAdd(next, scope, functionReturnTypes);
+			next = { ...expr, elements: expr.elements.map(element => optimizeExpr(element, opts, scope, functionReturnTypes, constantEnv, context)) };
+			if (opts.listAdd && !context.preserveListLiteralShape) next = listLiteralToAdd(next, scope, functionReturnTypes);
 			break;
 		case 'VectorLiteral':
 			next = { ...expr, elements: expr.elements.map(element => optimizeExpr(element, opts, scope, functionReturnTypes, constantEnv)) as Expr[] as ExprTuple<typeof expr.elements> };
@@ -932,9 +932,15 @@ function removeEmptyEvents(script: Script): Script {
 		...script,
 		states: mapValues(script.states, state => ({
 			...state,
-			events: state.events.filter(event => !isEmptyStmt(event.body)),
+			events: removeEmptyEventsFromState(state.events),
 		})),
 	};
+}
+
+function removeEmptyEventsFromState(events: Event[]): Event[] {
+	const nonEmpty = events.filter(event => !isEmptyStmt(event.body));
+	if (nonEmpty.length > 0) return nonEmpty;
+	return events.length > 0 ? [events[0]!] : events;
 }
 
 function removeUnusedGlobals(script: Script): Script {
@@ -1505,7 +1511,7 @@ function countReplaceableRefs(expr: Expr, name: string): number {
 			return (expr.callee.kind === 'Identifier' ? 0 : countReplaceableRefs(expr.callee, name))
 				+ expr.args.reduce((count, arg) => count + countReplaceableRefs(arg, name), 0);
 		case 'Member':
-			return countReplaceableRefs(expr.object, name);
+			return 0;
 		case 'Unary':
 			if (expr.op === '++' || expr.op === '--') return 0;
 			return countReplaceableRefs(expr.argument, name);
@@ -1541,7 +1547,7 @@ function replaceReplaceableRefs(expr: Expr, name: string, replacement: Expr): Ex
 				args: expr.args.map(arg => replaceReplaceableRefs(arg, name, replacement)),
 			};
 		case 'Member':
-			return { ...expr, object: replaceReplaceableRefs(expr.object, name, replacement) };
+			return expr;
 		case 'Unary':
 			if (expr.op === '++' || expr.op === '--') return expr;
 			return { ...expr, argument: replaceReplaceableRefs(expr.argument, name, replacement) };

@@ -115,14 +115,28 @@ function emitExprPrec(expr: Expr, parentPrec: number): string {
 		case 'Member':
 			out = `${emitExprPrec(expr.object, ownPrec)}.${expr.property}`;
 			break;
-		case 'Unary':
-			out = `${expr.op}${emitExprPrec(expr.argument, ownPrec)}`;
+		case 'Unary': {
+			if (expr.postfix) {
+				out = `${emitExprPrec(expr.argument, ownPrec)}${expr.op}`;
+			} else {
+				const argument = unaryArgumentNeedsParens(expr)
+					? `(${emitExprPrec(expr.argument, 0)})`
+					: emitExprPrec(expr.argument, ownPrec);
+				out = `${expr.op}${argument}`;
+			}
 			break;
+		}
 		case 'Binary': {
 			const prec = binPrecedence(expr.op);
 			const leftPrec = isRightAssociative(expr.op) ? prec + 1 : prec;
 			const rightPrec = isRightAssociative(expr.op) ? prec : prec + 1;
-			out = `${emitExprPrec(expr.left, leftPrec)}${expr.op}${emitExprPrec(expr.right, rightPrec)}`;
+			const left = binaryOperandNeedsParens(expr.left, expr.op)
+				? `(${emitExprPrec(expr.left, 0)})`
+				: emitExprPrec(expr.left, leftPrec);
+			const right = binaryOperandNeedsParens(expr.right, expr.op)
+				? `(${emitExprPrec(expr.right, 0)})`
+				: emitExprPrec(expr.right, rightPrec);
+			out = `${left}${expr.op}${right}`;
 			break;
 		}
 		case 'Cast': {
@@ -154,6 +168,17 @@ function emitExprPrec(expr: Expr, parentPrec: number): string {
 
 function castArgumentNeedsParens(expr: Expr): boolean {
 	return expr.kind === 'Unary' || expr.kind === 'Cast' || expr.kind === 'VectorLiteral' || expr.kind === 'ListLiteral';
+}
+
+function unaryArgumentNeedsParens(expr: Extract<Expr, { kind: 'Unary' }>): boolean {
+	if (expr.argument.kind !== 'Unary') return false;
+	const joined = expr.op + expr.argument.op;
+	return joined.startsWith('++') || joined.startsWith('--');
+}
+
+function binaryOperandNeedsParens(expr: Expr, parentOp: BinOp): boolean {
+	if (parentOp !== '*' && parentOp !== '/' && parentOp !== '%') return false;
+	return expr.kind === 'Unary' && expr.argument.kind === 'Unary';
 }
 
 function exprPrecedence(expr: Expr): number {

@@ -78,4 +78,24 @@ describe('preprocessor: varargs macros', () => {
 		expect(asText).not.toContain('// inline note');
 		expect(analysis.diagnostics.map(d => `${d.code}: ${d.message}`).join('\n')).not.toMatch(/LSL000/);
 	});
+
+	it('expands nested macro calls inside function macro arguments', async () => {
+		const defs = await loadTestDefs();
+		const code = [
+			'#define GET(section, key) llJsonGetValue(llLinksetDataRead(section), key)',
+			'#define REPLACE(haystack, old, value, start) llReplaceSubString(haystack, old, value, start)',
+			'default {',
+			'\tstate_entry() {',
+			'\t\tstring value = REPLACE(GET("id", ["model"]), ".", "-", 0);',
+			'\t\tllOwnerSay(value);',
+			'\t}',
+			'}',
+		].join('\n');
+		const doc = docFrom(code);
+		const { expandedTokens, analysis } = runPipeline(doc, defs);
+		const asText = expandedTokens?.map(t => t.value).join(' ') ?? '';
+		expect(asText).toContain('llJsonGetValue');
+		expect(asText).not.toContain('GET');
+		expect(analysis.diagnostics.some(d => d.code === 'LSL001' && d.message.includes('GET'))).toBe(false);
+	});
 });

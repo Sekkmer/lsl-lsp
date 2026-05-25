@@ -90,6 +90,43 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toBe('integer mutable=0;default{state_entry(){mutable=7;llOwnerSay("as-data");}}');
 	});
 
+	it('inlines constant globals transitively before removing their declarations', () => {
+		const source = [
+			'string first = "a";',
+			'string second = first;',
+			'list menu = [second, "b"];',
+			'default { state_entry() { llOwnerSay(llDumpList2String(menu, ",")); } }',
+		].join('\n');
+		const result = optimizeScript(parseScriptFromText(source), {
+			builtinFunctionReturnTypes: new Map([['llDumpList2String', 'string']]),
+			inlineConstantGlobals: true,
+			listAdd: true,
+			removeUnusedFunctions: true,
+			shrinkNames: true,
+		});
+		expect(result.code).toContain('llOwnerSay(llDumpList2String((list)"a"+"b",","));');
+		expect(result.code).not.toContain('first');
+		expect(result.code).not.toContain('second');
+		expect(result.code).not.toContain('menu');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
+	});
+
+	it('keeps globals needed for legal vector member access', () => {
+		const source = [
+			'vector position = <1.0, 2.0, 3.0>;',
+			'default { state_entry() { llOwnerSay((string)position.y); } }',
+		].join('\n');
+		const result = optimizeScript(parseScriptFromText(source), {
+			inlineConstantGlobals: true,
+			removeUnusedFunctions: true,
+			shrinkNames: true,
+		});
+		expect(result.code).toContain('vector _=<1.0,2.0,3.0>;');
+		expect(result.code).toContain('_.y');
+		expect(result.code).not.toContain('<1.0,2.0,3.0>.y');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
+	});
+
 	it('can rewrite non-nested list literals to list additions', () => {
 		const source = [
 			'list returnsList() { return []; }',
@@ -104,6 +141,43 @@ describe('optimizer plumbing', () => {
 		});
 		expect(result.code).toContain('list a=(list)"x"+1;');
 		expect(result.code).toContain('list b=[returnsList(),"x"];');
+	});
+
+	it('preserves postfix increments when list literals become additions', () => {
+		const source = [
+			'default { state_entry() {',
+			'  integer index = 0;',
+			'  list path = ["content", index++];',
+			'  llOwnerSay(llList2String(path, 1));',
+			'} }',
+		].join('\n');
+		const result = optimizeScript(parseScriptFromText(source), {
+			builtinFunctionReturnTypes: new Map([['llList2String', 'string']]),
+			listAdd: true,
+			shrinkNames: true,
+		});
+		expect(result.code).toContain('list A=(list)"content"+_++;');
+		expect(result.code).not.toContain('++"content"');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
+	});
+
+	it('does not rewrite global list literals into invalid initializer expressions', () => {
+		const source = [
+			'list INTER = [1, 4,',
+			'              3, 6,',
+			'              8, 8,',
+			'              15, 10,',
+			'              -1, -1];',
+			'default { state_entry() { list local = [1, 4, -1]; } }',
+		].join('\n');
+		const result = optimizeScript(parseScriptFromText(source), {
+			listAdd: true,
+			shrinkNames: true,
+		});
+		expect(result.code).toContain('list _=[1,4,3,6,8,8,15,10,-1,-1];');
+		expect(result.code).toContain('list A=(list)1+4+-1;');
+		expect(result.code).not.toContain('list _=(list)1+4');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
 	});
 
 	it('rewrites list compound append to list addition without changing RHS grouping', () => {
@@ -287,6 +361,42 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toContain('for(;a^7;++a)llOwnerSay("loop");');
 		expect(result.code).toContain('if(a^8)llOwnerSay("ne");else llOwnerSay("eq");');
 		expect(result.code).toContain('if((string)a!="")llOwnerSay("string");');
+	});
+
+	it('parenthesizes nested unary peepholes used as multiplicative operands', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer q = 1;',
+			'  float c = 0.5;',
+			'  float e = (q * 2 - 1) * 0.006 / c;',
+			'} }',
+		].join('\n')), {
+			integerPeepholes: true,
+		});
+		expect(result.code).toContain('float e=(~-(q*2))*0.006/c;');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
+	});
+
+	it('does not inline locals into member access receivers', () => {
+		const source = [
+			'default { state_entry() {',
+			'  list values = llGetObjectDetails(llGetOwner(), [OBJECT_POS]);',
+			'  vector position = llList2Vector(values, 0);',
+			'  float y = position.y;',
+			'  llOwnerSay((string)y);',
+			'} }',
+		].join('\n');
+		const result = optimizeScript(parseScriptFromText(source), {
+			builtinFunctionReturnTypes: new Map([['llGetObjectDetails', 'list'], ['llGetOwner', 'key'], ['llList2Vector', 'vector']]),
+			inlineFunctions: true,
+			listAdd: true,
+			removeUnusedFunctions: true,
+			shrinkNames: true,
+		});
+		expect(result.code).toContain('vector A=llList2Vector');
+		expect(result.code).toContain('A.y');
+		expect(result.code).not.toContain(').y');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
 	});
 
 	it('folds runtime calls when the evaluator produces a concrete value', () => {
@@ -595,7 +705,19 @@ describe('optimizer plumbing', () => {
 		].join('\n')), {
 			removeUnusedFunctions: true,
 		});
-		expect(result.code).toBe('default{}');
+		expect(result.code).toBe('default{state_entry(){}}');
+	});
+
+	it('keeps one empty event when removing all events would leave invalid state syntax', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() { state parking; } }',
+			'state parking { state_entry() { } }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+			shrinkNames: true,
+		});
+		expect(result.code).toBe('default{state_entry(){state _;}}state _{state_entry(){}}');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
 	});
 
 	it('preserves non-associative expression shape when emitting', () => {
@@ -606,6 +728,26 @@ describe('optimizer plumbing', () => {
 	it('keeps unary expressions parenthesized after casts when SL syntax needs it', () => {
 		const result = optimize('list f(integer value) { return (list)(!!value); } default { state_entry() {} }');
 		expect(result.code).toContain('return (list)(!!value);');
+	});
+
+	it('keeps adjacent unary minus operators from emitting as decrement', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer channel(string value) { return -llAbs((integer)("0x" + llGetSubString(value, 30, -1))); }',
+			'default { state_entry() {',
+			'  string id = llGetScriptName();',
+			'  integer next = -channel(id);',
+			'  llOwnerSay((string)next);',
+			'} }',
+		].join('\n')), {
+			builtinFunctionReturnTypes: new Map([['llAbs', 'integer'], ['llGetScriptName', 'string'], ['llGetSubString', 'string']]),
+			foldStringConcats: true,
+			inlineFunctions: true,
+			removeUnusedFunctions: true,
+			shrinkNames: true,
+		});
+		expect(result.code).toContain('-(-llAbs(');
+		expect(result.code).not.toContain('--llAbs');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
 	});
 
 	it('does not grow escaped strings over repeated optimization', () => {

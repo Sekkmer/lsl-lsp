@@ -609,6 +609,7 @@ class Parser {
 			}
 			this.reportInvalidStateBodyMember(t);
 		}
+		if (events.length === 0) this.report(nameTok, 'State must contain at least one event handler', 'LSL000');
 		return { span: spanFrom(kw.span.start, this.peek().span.end), kind: 'State', name, events };
 	}
 
@@ -659,6 +660,7 @@ class Parser {
 			}
 			this.reportInvalidStateBodyMember(t);
 		}
+		if (events.length === 0) this.report(def, 'State must contain at least one event handler', 'LSL000');
 		return { span: spanFrom(def.span.start, this.peek().span.end), kind: 'State', name: 'default', events };
 	}
 
@@ -1316,11 +1318,11 @@ class Parser {
 				continue;
 			}
 			if (this.maybe('op', '++')) {
-				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Unary', op: '++', argument: expr };
+				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Unary', op: '++', argument: expr, postfix: true };
 				continue;
 			}
 			if (this.maybe('op', '--')) {
-				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Unary', op: '--', argument: expr };
+				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Unary', op: '--', argument: expr, postfix: true };
 				continue;
 			}
 			// unsupported indexing operator expr[...]

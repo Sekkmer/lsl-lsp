@@ -78,6 +78,20 @@ key f() {
 		expect(analysis.diagnostics.some(d => d.code === LSL_DIAGCODES.UNKNOWN_IDENTIFIER)).toBe(true);
 	});
 
+	it('reports lowercase boolean-like identifiers as unknown', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('integer f() { return true; } default { state_entry() { } }');
+		const { analysis } = runPipeline(doc, defs);
+		expect(analysis.diagnostics.some(d => d.code === LSL_DIAGCODES.UNKNOWN_IDENTIFIER && d.message.includes('true'))).toBe(true);
+	});
+
+	it('reports empty states as syntax errors', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('default { } state ready { }');
+		const { analysis } = runPipeline(doc, defs);
+		expect(analysis.diagnostics.filter(d => d.code === 'LSL000' && /at least one event handler/.test(d.message))).toHaveLength(2);
+	});
+
 	it('marks unused globals', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('integer X; default{state_entry(){}}');

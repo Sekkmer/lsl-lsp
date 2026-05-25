@@ -41,7 +41,7 @@ export type Expr =
 	| { span: Span; kind: 'Identifier'; name: string; }
 	| { span: Span; kind: 'Call'; callee: Expr; args: Expr[]; }
 	| { span: Span; kind: 'Member'; object: Expr; property: string; }
-	| { span: Span; kind: 'Unary'; op: UnOp; argument: Expr; }
+	| { span: Span; kind: 'Unary'; op: UnOp; argument: Expr; postfix?: boolean; }
 	| { span: Span; kind: 'Binary'; op: BinOp; left: Expr; right: Expr; }
 	| { span: Span; kind: 'Cast'; type: Type; argument: Expr; }
 	| { span: Span; kind: 'Paren'; expression: Expr; }

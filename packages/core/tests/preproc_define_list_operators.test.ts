@@ -20,4 +20,18 @@ describe('preprocessor: macro list of operators', () => {
 		// Our parser treats quoted strings and non-numeric tokens as strings, so assert exact text
 		expect(v).toBe('["<<", ">>", "+", "-", "**", "*", "/", "%", "^", "~", "&&", "||", "&", "|", "(", ")"]');
 	});
+
+	it('preserves LSL boolean constant spelling in object-like macro expansion', async () => {
+		const defs = await loadTestDefs();
+		const code = [
+			'#define ALLOWED TRUE',
+			'integer check() { return ALLOWED; }',
+			'default { state_entry() { } }',
+		].join('\n');
+		const doc = docFrom(code, 'file:///proj/main.lsl');
+		const { expandedTokens } = runPipeline(doc, defs, {});
+		const values = expandedTokens?.map(t => t.value) ?? [];
+		expect(values).toContain('TRUE');
+		expect(values).not.toContain('true');
+	});
 });

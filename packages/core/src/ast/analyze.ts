@@ -502,8 +502,6 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 						|| (pre.macros && Object.prototype.hasOwnProperty.call(pre.macros, e.name))
 						|| (pre.dynamicMacros && Object.prototype.hasOwnProperty.call(pre.dynamicMacros, e.name))
 						|| (pre.funcMacros && Object.prototype.hasOwnProperty.call(pre.funcMacros, e.name))
-						// Accept lowercase booleans as known identifiers (treated as constants) to reduce noise
-						|| e.name === 'true' || e.name === 'false'
 						// Suppress diagnostics for identifiers that match macro parameter names
 						|| macroParamNames.has(e.name);
 				if (!known) {

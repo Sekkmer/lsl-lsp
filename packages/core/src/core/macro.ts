@@ -442,8 +442,6 @@ function stripDirectiveLineComments(text: string): string {
 function parseMacroValue(v: string): string | number | boolean {
 	const num = Number(v);
 	if (!Number.isNaN(num)) return num;
-	if (v === 'true' || v === 'TRUE') return true;
-	if (v === 'false' || v === 'FALSE') return false;
 	if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith('\'') && v.endsWith('\''))) return v;
 	return v;
 }
@@ -1062,7 +1060,7 @@ export function computeMacroAliases(macros: MacroDefines): Record<string,string>
 }
 
 function objectMacroToTokens(v: string | number | boolean, file?: string): Token[] {
-	const text = String(v);
+	const text = typeof v === 'boolean' ? (v ? 'TRUE' : 'FALSE') : String(v);
 	if (!text.length) return [];
 	let toks = tokenize(text).filter(t=> t.kind !== 'eof' && t.kind !== 'directive');
 	if (file) { for (const tk of toks) { if (!tk.file || tk.file === '<unknown>') (tk as Token).file = file; if (!tk.span.file || tk.span.file === '<unknown>') tk.span.file = file; } }
@@ -1159,6 +1157,10 @@ function expandFunctionMacro(name: string, def: FuncMacroDef, callArgs: string[]
 	const mapping = new Map<string,string>();
 	for (let i=0;i<fixedCount;i++) mapping.set(def.params[i]!, (callArgs[i] ?? '').trim());
 	const vaList = hasVar ? callArgs.slice(fixedCount).map(s=>s.trim()).filter(Boolean) : [];
+	const expandArgs = !def.body.includes('##');
+	const expandedMapping = new Map<string,string>();
+	for (const [p, val] of mapping) expandedMapping.set(p, expandArgs ? expandMacroArgText(val, obj, fn, file) : val);
+	const expandedVaList = expandArgs ? vaList.map(arg => expandMacroArgText(arg, obj, fn, file)) : vaList;
 	let body = def.body;
 	// __VA_OPT__ handling: simple pattern __VA_OPT__( ... )
 	body = body.replace(/__VA_OPT__\s*\(([^)]*)\)/g, (_,inner)=> varProvided? inner: '');
@@ -1174,12 +1176,12 @@ function expandFunctionMacro(name: string, def: FuncMacroDef, callArgs: string[]
 		return '"' + esc + '"';
 	});
 	// Replace params (word boundary)
-	for (const [p,val] of mapping) {
+	for (const [p,val] of expandedMapping) {
 		const re = new RegExp(`\\b${escapeRegExp(p)}\\b`, 'g');
 		body = body.replace(re, val);
 	}
 	if (hasVar) {
-		const joined = vaList.join(', ');
+		const joined = expandedVaList.join(', ');
 		body = body.replace(/__VA_ARGS__/g, joined);
 		if (!varProvided) body = body.replace(/,\s*\)/g, ')');
 	}
@@ -1230,6 +1232,34 @@ function expandFunctionMacro(name: string, def: FuncMacroDef, callArgs: string[]
 		if (merged.length < toks.length) toks = merged;
 	}
 	return distributeSpan(toks, callStart, callEnd, file);
+}
+
+function expandMacroArgText(text: string, obj: Record<string, string | number | boolean>, fn: Record<string, FuncMacroDef>, file?: string): string {
+	if (!text.trim()) return text;
+	const macroTable: MacroDefines = { ...obj };
+	for (const [name, def] of Object.entries(fn)) macroTable[name] = `(${def.params.join(',')}${def.hasVarArgs ? `${def.params.length ? ',' : ''}...` : ''}) ${def.body}`;
+	const toks = tokenize(text).filter(t => t.kind !== 'eof' && t.kind !== 'directive');
+	if (file) {
+		for (const tk of toks) {
+			if (!tk.file || tk.file === '<unknown>') (tk as Token).file = file;
+			if (!tk.span.file || tk.span.file === '<unknown>') tk.span.file = file;
+		}
+	}
+	return macroTokensToText(expandActiveTokens(toks, macroTable));
+}
+
+function macroTokensToText(tokens: Token[]): string {
+	let out = '';
+	let prevWasWord = false;
+	const isWord = (t: Token) => t.kind === 'id' || t.kind === 'number' || t.kind === 'keyword';
+	for (const tk of tokens) {
+		if (tk.kind === 'comment-line' || tk.kind === 'comment-block' || tk.kind === 'directive' || tk.kind === 'eof') continue;
+		const word = isWord(tk);
+		if (out && prevWasWord && word) out += ' ';
+		out += tk.value;
+		prevWasWord = word;
+	}
+	return out;
 }
 
 function applyTokenPasteSimple(s: string): string {
