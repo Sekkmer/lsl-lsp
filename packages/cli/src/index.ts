@@ -33,11 +33,16 @@ import {
 	parseDisabledDiagList,
 	parseScriptFromText,
 	preprocessForAst,
+	optimizeScript,
+	shrinkNameOptionsFromDefs,
+	type OptimizeOptions,
+	type SimpleType,
+	type Value,
 } from '@lsl-lsp/core';
 
 declare const CLI_VERSION: string;
 
-type CommandName = 'check' | 'format' | 'preprocess' | 'symbols' | 'definition' | 'hover' | 'dump-defs';
+type CommandName = 'check' | 'format' | 'optimize' | 'preprocess' | 'symbols' | 'definition' | 'hover' | 'dump-defs';
 
 interface CliOptions {
 	command: CommandName;
@@ -54,7 +59,10 @@ interface CliOptions {
 }
 
 interface PipelineResult {
+	filePath: string;
+	text: string;
 	doc: TextDocument;
+	ast: Script;
 	pre: PreprocResult;
 	analysis: ReturnType<typeof analyzeAst>;
 	diagnostics: CliDiagnostic[];
@@ -65,6 +73,7 @@ type CliDiagnostic = Omit<Diag, 'code'> & { code: Diag['code'] | 'LSL-preproc' }
 const USAGE = `Usage:
   lsl-lsp check [options] <file...>
   lsl-lsp format [options] [--write|--check] <file...>
+  lsl-lsp optimize [options] [--write|--check|--json] <file...>
   lsl-lsp preprocess [options] [--json] <file...>
   lsl-lsp symbols [options] <file...>
   lsl-lsp definition [options] <file> <line> <column>
@@ -79,7 +88,7 @@ Options:
   -D, --define <name[=value]>    Add a predefined macro. Can be repeated.
       --definitions <path>       Use a custom definitions JSON/YAML file.
       --disable <code[,code]>    Suppress diagnostics by code or friendly name.
-      --json                     Print check diagnostics or preprocess output as JSON.
+      --json                     Print supported command output as JSON.
       --brace-style <style>      Formatting brace style: same-line or next-line.
       --write                    Write formatted files in-place.
       --check                    Exit non-zero if formatting would change files.
@@ -96,6 +105,7 @@ async function main(argv: string[]): Promise<number> {
 	const defs = await loadCliDefs(opts.definitionsPath);
 	if (opts.command === 'dump-defs') return runDumpDefs(opts, defs);
 	if (opts.command === 'format') return runFormat(opts, defs);
+	if (opts.command === 'optimize') return runOptimize(opts, defs);
 	if (opts.command === 'symbols') return runSymbols(opts, defs);
 	if (opts.command === 'definition') return runDefinition(opts, defs);
 	if (opts.command === 'hover') return runHover(opts, defs);
@@ -124,6 +134,120 @@ function filterFunctionForDump(item: DefFunction, names: Set<string>, hasFilter:
 	if (!hasFilter || names.has(item.name)) return item;
 	const overloads = item.overloads?.filter(overload => names.has(overload.name)) ?? [];
 	return overloads.length > 0 ? { ...item, overloads } : null;
+}
+
+async function runOptimize(opts: CliOptions, defs: Defs): Promise<number> {
+	const results = await Promise.all(opts.files.map(file => analyzeFile(file, opts, defs)));
+	const optimizeOptions = cliOptimizeOptions(defs);
+	const optimized = results.map(result => {
+		const out = optimizeScript(result.ast, optimizeOptions);
+		return { result, out };
+	});
+
+	if (opts.json) {
+		process.stdout.write(`${JSON.stringify(optimized.map(({ result, out }) => ({
+			uri: result.doc.uri,
+			file: result.filePath,
+			changed: out.code !== result.text,
+			stable: out.stable,
+			passes: out.passes,
+			optimizedText: out.code,
+		})), null, 2)}\n`);
+		return optimized.some(item => !item.out.stable) ? 1 : 0;
+	}
+
+	if (opts.checkFormat) {
+		for (const item of optimized) {
+			if (item.out.code !== item.result.text) {
+				process.stdout.write(`${item.result.filePath} would be optimized\n`);
+			}
+		}
+		return optimized.some(item => item.out.code !== item.result.text) ? 1 : 0;
+	}
+
+	if (opts.write) {
+		await Promise.all(optimized.map(async item => {
+			if (item.out.code !== item.result.text) await fs.writeFile(item.result.filePath, item.out.code, 'utf8');
+		}));
+		return optimized.some(item => !item.out.stable) ? 1 : 0;
+	}
+
+	if (optimized.length !== 1) throw new CliError('Optimizing multiple files requires --write, --check, or --json.');
+	process.stdout.write(optimized[0]!.out.code);
+	if (!optimized[0]!.out.code.endsWith('\n')) process.stdout.write('\n');
+	return optimized[0]!.out.stable ? 0 : 1;
+}
+
+function cliOptimizeOptions(defs: Defs): OptimizeOptions {
+	return {
+		builtinConstants: builtinConstantValues(defs),
+		builtinFunctionReturnTypes: builtinReturnTypes(defs),
+		bitwiseBooleanOps: true,
+		dropDefaultInitializers: true,
+		inlineConstantGlobals: true,
+		inlineFunctions: true,
+		integerPeepholes: true,
+		listAdd: true,
+		removeUnusedFunctions: true,
+		shrinkNames: true,
+		shrinkNameOptions: shrinkNameOptionsFromDefs(defs),
+	};
+}
+
+function builtinConstantValues(defs: Defs): ReadonlyMap<string, Value> {
+	const out = new Map<string, Value>();
+	for (const [name, constant] of defs.consts) {
+		const value = constant.value;
+		switch (constant.type) {
+			case 'integer':
+				if (typeof value === 'number' || typeof value === 'boolean') {
+					out.set(name, { kind: 'value', type: 'integer', value: Number(value) | 0 });
+				}
+				break;
+			case 'float':
+				if (typeof value === 'number') {
+					out.set(name, { kind: 'value', type: 'float', value });
+				}
+				break;
+			case 'string':
+			case 'key':
+				if (typeof value === 'string') {
+					out.set(name, { kind: 'value', type: constant.type, value });
+				}
+				break;
+			default:
+				break;
+		}
+	}
+	return out;
+}
+
+function builtinReturnTypes(defs: Defs): ReadonlyMap<string, SimpleType> {
+	const out = new Map<string, SimpleType>();
+	for (const [name, overloads] of defs.funcs) {
+		let returnType: SimpleType | undefined;
+		let mixed = false;
+		for (const overload of overloads) {
+			const next = toSimpleType(overload.returns);
+			if (!next) {
+				mixed = true;
+				break;
+			}
+			if (returnType && returnType !== next) {
+				mixed = true;
+				break;
+			}
+			returnType = next;
+		}
+		if (!mixed && returnType) out.set(name, returnType);
+	}
+	return out;
+}
+
+function toSimpleType(type: string): SimpleType | null {
+	if (type === 'integer' || type === 'float' || type === 'string' || type === 'key' || type === 'vector' || type === 'rotation' || type === 'list' || type === 'void') return type;
+	if (type === 'quaternion') return 'rotation';
+	return null;
 }
 
 async function loadCliDefs(definitionsPath: string): Promise<Defs> {
@@ -233,8 +357,7 @@ async function analyzeFile(file: string, opts: CliOptions, defs: Defs): Promise<
 	});
 	const analysis = analyzeAst(doc, ast, defs, pre);
 	const diagnostics = collectDiagnostics(doc, pre, analysis.diagnostics, opts);
-	void filePath;
-	return { doc, pre, analysis, diagnostics };
+	return { filePath, text, doc, ast, pre, analysis, diagnostics };
 }
 
 interface PreprocessFileResult {
@@ -561,13 +684,13 @@ function parseArgs(argv: string[]): CliOptions | null {
 
 	if (opts.write && opts.checkFormat) throw new CliError('--write and --check cannot be used together.');
 	if (opts.json && opts.command === 'format') throw new CliError('--json is not supported by format.');
-	if ((opts.write || opts.checkFormat) && opts.command !== 'format') throw new CliError('--write and --check are only supported by format.');
+	if ((opts.write || opts.checkFormat) && opts.command !== 'format' && opts.command !== 'optimize') throw new CliError('--write and --check are only supported by format and optimize.');
 	if (opts.defaultIncludePath) opts.includePaths.unshift(process.cwd());
 	return opts;
 }
 
 function isCommandName(value: string | undefined): value is CommandName {
-	return value === 'check' || value === 'format' || value === 'preprocess' || value === 'symbols' || value === 'definition' || value === 'hover' || value === 'dump-defs';
+	return value === 'check' || value === 'format' || value === 'optimize' || value === 'preprocess' || value === 'symbols' || value === 'definition' || value === 'hover' || value === 'dump-defs';
 }
 
 function addDefine(defines: Record<string, string | number | boolean>, raw: string): void {

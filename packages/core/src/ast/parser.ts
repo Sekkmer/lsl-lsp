@@ -1344,7 +1344,27 @@ class Parser {
 			.trim() || undefined;
 	}
 
-	private unquote(str: string): string { if (str.length >= 2 && ((str[0] === '"' && str.at(-1) === '"') || (str[0] === '\'' && str.at(-1) === '\''))) return str.slice(1, -1); return str; }
+	private unquote(str: string): string {
+		if (str.length < 2) return str;
+		const quote = str[0];
+		if ((quote !== '"' && quote !== '\'') || str.at(-1) !== quote) return str;
+		if (quote === '"') {
+			try {
+				const parsed: unknown = JSON.parse(str);
+				if (typeof parsed === 'string') return parsed;
+			} catch {
+				// Fall through to the small escape decoder below so parser recovery still keeps content.
+			}
+		}
+		return str.slice(1, -1).replace(/\\(["'\\nrt])/g, (_match, escaped: string) => {
+			switch (escaped) {
+				case 'n': return '\n';
+				case 'r': return '\r';
+				case 't': return '\t';
+				default: return escaped;
+			}
+		});
+	}
 
 	// True if position is at the start of a line (only spaces/tabs since previous newline)
 	private atLineStart(pos: number): boolean {

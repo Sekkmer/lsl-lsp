@@ -4,8 +4,8 @@ LSL (Linden Scripting Language) language tooling for VS Code.
 
 ## Repository Layout
 
-- `packages/core/`: Reusable LSL preprocessing, parsing, analysis, diagnostics, hover, completions, signature help, semantic tokens, formatting, and navigation.
-- `packages/cli/`: Standalone command-line diagnostics, formatting, preprocessing, symbol, definition, hover, and definition-dump tool backed by core.
+- `packages/core/`: Reusable LSL preprocessing, parsing, analysis, diagnostics, hover, completions, signature help, semantic tokens, formatting, optimization, and navigation.
+- `packages/cli/`: Standalone command-line diagnostics, formatting, preprocessing, optimization, symbol, definition, hover, and definition-dump tool backed by core.
 - `packages/server/`: Language Server Protocol process that wires core analysis into VS Code/editor LSP requests.
 - `packages/client-vscode/`: VS Code extension that bundles and starts the server.
 - `third_party/lsl-definitions/`: Git submodule for the official [secondlife/lsl-definitions](https://github.com/secondlife/lsl-definitions) YAML used by the server, tests, and extension bundle.
@@ -29,6 +29,7 @@ The runtime definition source is `third_party/lsl-definitions/lsl_definitions.ya
 - Run core tests: `pnpm -C packages/core test`
 - Run CLI diagnostics after build: `node packages/cli/out/lsl-lsp.cjs check path/to/script.lsl`
 - Inspect preprocessing after build: `node packages/cli/out/lsl-lsp.cjs preprocess --json path/to/script.lsl`
+- Optimize a script after build: `node packages/cli/out/lsl-lsp.cjs optimize path/to/script.lsl`
 - Inspect a symbol after build: `node packages/cli/out/lsl-lsp.cjs hover path/to/script.lsl 10 5`
 - Dump bundled definitions after build: `node packages/cli/out/lsl-lsp.cjs dump-defs llOwnerSay`
 - Build VS Code package: `pnpm -C packages/client-vscode package`

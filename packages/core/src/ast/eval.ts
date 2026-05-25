@@ -667,6 +667,7 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 				const name = expr.callee.name as keyof typeof runtime;
 				const fn = runtime[name] as (...args: Value[]) => Value;
 				if (expr.callee.name.startsWith('ll') && typeof fn === 'function') {
+					if (!expr.args.every(arg => isEvalSideEffectFreeArg(arg, env))) return rt && rt !== 'void' ? asTypeUnknown(rt) : runtime.unknown('integer');
 					const args = expr.args.map(a => evalExprInner(a, env, ctx));
 					try {
 						return fn(...args);
@@ -677,6 +678,7 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 				if (env.isPureFunction(expr.callee.name)) {
 					const userFn = env.getFunction(expr.callee.name);
 					if (userFn && userFn.returnType && userFn.returnType !== 'void') {
+						if (!expr.args.every(arg => isEvalSideEffectFreeArg(arg, env))) return runtime.unknown(userFn.returnType);
 						const args = expr.args.map(a => evalExprInner(a, env, ctx));
 						const callEnv = env.child();
 						let index = 0;
@@ -701,6 +703,40 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 		return runtime.unknown('integer');
 	} finally {
 		ctx.leave();
+	}
+}
+
+function isEvalSideEffectFreeArg(expr: Expr, env: Env): boolean {
+	switch (expr.kind) {
+		case 'ErrorExpr':
+			return false;
+		case 'StringLiteral':
+		case 'NumberLiteral':
+		case 'Identifier':
+			return true;
+		case 'Member':
+			return isEvalSideEffectFreeArg(expr.object, env);
+		case 'Unary':
+			return expr.op !== '++' && expr.op !== '--' && isEvalSideEffectFreeArg(expr.argument, env);
+		case 'Binary':
+			return expr.op !== '=' && expr.op !== '+=' && expr.op !== '-=' && expr.op !== '*=' && expr.op !== '/=' && expr.op !== '%='
+				&& isEvalSideEffectFreeArg(expr.left, env)
+				&& isEvalSideEffectFreeArg(expr.right, env);
+		case 'Cast':
+			return isEvalSideEffectFreeArg(expr.argument, env);
+		case 'Paren':
+			return isEvalSideEffectFreeArg(expr.expression, env);
+		case 'ListLiteral':
+			return expr.elements.every(element => isEvalSideEffectFreeArg(element, env));
+		case 'VectorLiteral':
+			return expr.elements.every(element => isEvalSideEffectFreeArg(element, env));
+		case 'Call':
+			return expr.callee.kind === 'Identifier'
+				&& ((expr.callee.name.startsWith('ll') && typeof (runtime as Record<string, unknown>)[expr.callee.name] === 'function') || env.isPureFunction(expr.callee.name))
+				&& expr.args.every(arg => isEvalSideEffectFreeArg(arg, env));
+		default:
+			AssertNever(expr);
+			return false;
 	}
 }
 
