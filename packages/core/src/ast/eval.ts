@@ -1,4 +1,4 @@
-import type { Expr, Stmt, Type } from './types';
+import type { Expr, Function as FnNode, Stmt, Type } from './types';
 import { AssertNever } from '../utils';
 import * as runtime from './runtime';
 import { keyValueFromString, NULL_KEY_VALUE } from './key';
@@ -43,14 +43,42 @@ class EvalContext {
 }
 
 export class Env {
+	private _vars: Map<string, Value>;
+	private _functionReturnTypes: Map<string, Type | 'void'>;
+	private _functions: Map<string, FnNode>;
+	private _pureFunctions: Set<string>;
+	private _parent?: Env;
+
 	constructor(
-		private _vars: Map<string, Value> = new Map(),
-		private _functionReturnTypes: Map<string, Type | 'void'> = new Map(),
-		private _parent?: Env,
-	) { }
+		vars: Map<string, Value> = new Map(),
+		functionReturnTypes: Map<string, Type | 'void'> = new Map(),
+		parentOrFunctions: Env | Map<string, FnNode> = new Map(),
+		pureFunctions: Set<string> = new Set(),
+		parent?: Env,
+	) {
+		this._vars = vars;
+		this._functionReturnTypes = functionReturnTypes;
+		if (parentOrFunctions instanceof Env) {
+			this._functions = new Map();
+			this._pureFunctions = new Set();
+			this._parent = parentOrFunctions;
+		} else {
+			this._functions = parentOrFunctions;
+			this._pureFunctions = pureFunctions;
+			this._parent = parent;
+		}
+	}
 
 	get functionReturnTypes(): ReadonlyMap<string, Type | 'void'> {
 		return this._functionReturnTypes;
+	}
+
+	getFunction(name: string): FnNode | undefined {
+		return this._functions.get(name);
+	}
+
+	isPureFunction(name: string): boolean {
+		return this._pureFunctions.has(name);
 	}
 
 	getVar(name: string): Value | undefined {
@@ -78,11 +106,11 @@ export class Env {
 	}
 
 	clone(): Env {
-		return new Env(new Map(this._vars), this._functionReturnTypes, this._parent?.clone());
+		return new Env(new Map(this._vars), this._functionReturnTypes, this._functions, this._pureFunctions, this._parent?.clone());
 	}
 
 	child(): Env {
-		return new Env(new Map(), this._functionReturnTypes, this);
+		return new Env(new Map(), this._functionReturnTypes, this._functions, this._pureFunctions, this);
 	}
 }
 
@@ -144,6 +172,7 @@ function stringValue(v: Value): string | null {
 	if (isStringValue(v)) return v.value;
 	if (isKeyValue(v)) return v.value;
 	if (isNumberValue(v)) return numberToLSLString(v.type, v.value);
+	if (v.kind === 'value' && (v.type === 'vector' || v.type === 'rotation')) return `<${v.value.map(component => component.toFixed(5)).join(', ')}>`;
 	return null;
 }
 
@@ -248,6 +277,23 @@ function coerceAssignedValue(value: Value, current: Value | undefined): Value {
 	return runtime.unknown(current.type);
 }
 
+function coerceParameterValue(value: Value | undefined, type: Type): Value {
+	if (!value) return runtime.unknown(type);
+	if (value.kind === 'unknown') return runtime.unknown(type);
+	if (value.type === type) return value;
+	if (type === 'float' && value.type === 'integer') {
+		return { kind: 'value', type: 'float', value: value.value };
+	}
+	if (type === 'string' && value.type === 'key') {
+		return { kind: 'value', type: 'string', value: value.value };
+	}
+	if (type === 'key' && value.type === 'string') {
+		const key = keyValueFromString(value.value);
+		return key === null ? runtime.unknown('key') : { kind: 'value', type: 'key', value: key };
+	}
+	return runtime.unknown(type);
+}
+
 export function evalExpr(expr: Expr | null, env: Env = new Env(), options?: EvalOptions): Value {
 	return evalExprInner(expr, env, new EvalContext(options));
 }
@@ -340,6 +386,11 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 						return key === null ? runtime.unknown('key') : { kind: 'value', type: 'key', value: key };
 					}
 					return runtime.unknown('key');
+				}
+
+				if (expr.type === 'list') {
+					if (inner.kind === 'unknown' || inner.type === 'list') return runtime.unknown('list');
+					return { kind: 'value', type: 'list', value: [inner] };
 				}
 
 				// list, vector, rotation, etc. -> unknown shaped accordingly
@@ -615,12 +666,29 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 				}
 				const name = expr.callee.name as keyof typeof runtime;
 				const fn = runtime[name] as (...args: Value[]) => Value;
-				if (typeof fn === 'function') {
+				if (expr.callee.name.startsWith('ll') && typeof fn === 'function') {
 					const args = expr.args.map(a => evalExprInner(a, env, ctx));
 					try {
 						return fn(...args);
 					} catch {
 						return runtime.unknown('integer');
+					}
+				}
+				if (env.isPureFunction(expr.callee.name)) {
+					const userFn = env.getFunction(expr.callee.name);
+					if (userFn && userFn.returnType && userFn.returnType !== 'void') {
+						const args = expr.args.map(a => evalExprInner(a, env, ctx));
+						const callEnv = env.child();
+						let index = 0;
+						for (const [paramName, paramType] of userFn.parameters) {
+							callEnv.setVar(paramName, coerceParameterValue(args[index], paramType));
+							index++;
+						}
+						try {
+							return evalStmtInner(userFn.body, callEnv, ctx) ?? runtime.unknown(userFn.returnType);
+						} catch {
+							return runtime.unknown(userFn.returnType);
+						}
 					}
 				}
 				// Unknown function: shape unknown by declared return type if provided
@@ -644,6 +712,10 @@ class StateChangeSignal extends Error {
 	constructor(public readonly state: string) { super(`state ${state}`); }
 }
 
+class UnknownFlowSignal extends Error {
+	constructor() { super('unknown flow'); }
+}
+
 const isTruthy = (v: Value): boolean | null => {
 	if (v.kind !== 'value') return null;
 	if (v.type === 'integer' || v.type === 'float') return Math.trunc(v.value) !== 0;
@@ -662,7 +734,12 @@ function resolveLabelFromExprInner(target: Expr, env: Env, ctx: EvalContext): st
 }
 
 export function evalStmt(stmt: Stmt, env: Env = new Env(), options?: EvalOptions): Value | null {
-	return evalStmtInner(stmt, env, new EvalContext(options));
+	try {
+		return evalStmtInner(stmt, env, new EvalContext(options));
+	} catch (sig: unknown) {
+		if (sig instanceof UnknownFlowSignal || sig instanceof JumpSignal || sig instanceof StateChangeSignal) return null;
+		throw sig;
+	}
 }
 
 function evalStmtInner(stmt: Stmt, env: Env, ctx: EvalContext): Value | null {
@@ -702,12 +779,7 @@ function evalStmtInner(stmt: Stmt, env: Env, ctx: EvalContext): Value | null {
 				} else if (b === false) {
 					return stmt.else ? evalStmtInner(stmt.else, env.child(), ctx) : null;
 				} else {
-					const a = evalStmtInner(stmt.then, env.child(), ctx);
-					if (a != null) return runtime.unknown(a.type);
-					if (stmt.else) {
-						const b = evalStmtInner(stmt.else, env.child(), ctx);
-						if (b != null) return runtime.unknown(b.type);
-					}
+					throw new UnknownFlowSignal();
 				}
 				return null;
 			}
@@ -717,7 +789,7 @@ function evalStmtInner(stmt: Stmt, env: Env, ctx: EvalContext): Value | null {
 				for (;;) {
 					const c = isTruthy(evalExprInner(stmt.condition, env, ctx));
 					if (c === false) break;            // known false => loop never/ends now
-					if (c === null) return null;       // unknown condition => stop folding
+					if (c === null) throw new UnknownFlowSignal();
 					// c === true
 					const r = evalStmtInner(stmt.body, env.child(), ctx);
 					if (r !== null) return r;          // propagate a definite return
@@ -733,7 +805,7 @@ function evalStmtInner(stmt: Stmt, env: Env, ctx: EvalContext): Value | null {
 					if (r !== null) return r;
 					const c = isTruthy(evalExprInner(stmt.condition, env.child(), ctx));
 					if (c === false) break;
-					if (c === null) return null;
+					if (c === null) throw new UnknownFlowSignal();
 					if (++iters > ctx.opts.maxLoopIters) return null;
 				}
 				return null;
@@ -749,7 +821,7 @@ function evalStmtInner(stmt: Stmt, env: Env, ctx: EvalContext): Value | null {
 					if (stmt.condition) {
 						c = isTruthy(evalExprInner(stmt.condition, env, ctx));
 						if (c === false) break;
-						if (c === null) return null;
+						if (c === null) throw new UnknownFlowSignal();
 					}
 					// body
 					const r = evalStmtInner(stmt.body, env.child(), ctx);

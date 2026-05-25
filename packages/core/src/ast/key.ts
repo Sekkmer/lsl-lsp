@@ -8,7 +8,7 @@ export function isKnownKeyString(value: string): boolean {
 }
 
 export function keyValueFromString(value: string): string | null {
-	if (value === '') return NULL_KEY_VALUE;
+	if (value === '') return '';
 	const trimmed = value.trim();
 	return UUID_RE.test(trimmed) ? trimmed.toLowerCase() : null;
 }

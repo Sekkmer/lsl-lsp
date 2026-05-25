@@ -1,5 +1,6 @@
-// Minimal LSL runtime helpers callable by the AST evaluator.
-// Each function returns a typed value wrapper or Unknown for non-deterministic results.
+// Minimal deterministic LSL runtime helpers callable by the AST evaluator.
+// Each exported ll* function must be safe to constant-fold and returns a typed
+// value wrapper or Unknown when its inputs are not concrete enough.
 import * as nodeCrypto from 'crypto';
 
 export type LSLType = 'key' | 'list' | 'integer' | 'float' | 'rotation' | 'string' | 'vector';
@@ -246,6 +247,111 @@ export function llBase64ToString(src: Value): Value {
 // ===== List helpers =====
 const toList = (v: Value): Value[] | null => v.kind === 'value' && v.type === 'list' ? v.value : null;
 
+const JSON_ARRAY = '\uFDD2';
+const JSON_NUMBER = '\uFDD3';
+const JSON_STRING = '\uFDD4';
+const JSON_NULL = '\uFDD5';
+const JSON_TRUE = '\uFDD6';
+const JSON_FALSE = '\uFDD7';
+const JSON_INVALID = '\uFDD0';
+const JSON_OBJECT = '\uFDD1';
+
+type JsonNumberValue = { kind: 'json-number'; value: number; forceFloat: boolean };
+type JsonValue = null | boolean | number | JsonNumberValue | string | JsonValue[] | { [key: string]: JsonValue };
+
+function isJsonNumberValue(value: JsonValue | undefined): value is JsonNumberValue {
+	return typeof value === 'object' && value !== null && !Array.isArray(value) && value.kind === 'json-number' && typeof value.value === 'number';
+}
+
+function isJsonObject(value: JsonValue | undefined): value is { [key: string]: JsonValue } {
+	return typeof value === 'object' && value !== null && !Array.isArray(value) && !isJsonNumberValue(value);
+}
+
+function lslNumberString(value: number): string {
+	return Number.isInteger(value) ? String(i32(value)) : value.toFixed(6);
+}
+
+export function lslValueString(value: Value): string | null {
+	if (value.kind === 'unknown') return null;
+	switch (value.type) {
+		case 'integer':
+			return String(i32(value.value));
+		case 'float':
+			return value.value.toFixed(6);
+		case 'string':
+		case 'key':
+			return value.value;
+		case 'vector':
+			return `<${value.value.map(component => component.toFixed(6)).join(', ')}>`;
+		case 'rotation':
+			return `<${value.value.map(component => component.toFixed(6)).join(', ')}>`;
+		case 'list':
+			return null;
+	}
+}
+
+function lslListStrings(list: Value[]): string[] | null {
+	const out: string[] = [];
+	for (const value of list) {
+		const text = lslValueString(value);
+		if (text === null) return null;
+		out.push(text);
+	}
+	return out;
+}
+
+function lslStringListValues(list: Value[]): string[] | null {
+	const out: string[] = [];
+	for (const value of list) {
+		if (value.kind === 'unknown') return null;
+		if (value.type === 'string' || value.type === 'key') out.push(value.value);
+	}
+	return out;
+}
+
+function valueAsInteger(value: Value | undefined): number {
+	if (!value || value.kind !== 'value') return 0;
+	if (value.type === 'integer' || value.type === 'float') return i32(value.value);
+	if (value.type === 'string' || value.type === 'key') {
+		const m = value.value.trim().match(/^([+-]?0x[0-9a-f]+|[+-]?\d+)/i);
+		return m ? i32(parseInt(m[1]!, 0)) : 0;
+	}
+	return 0;
+}
+
+function valueAsFloat(value: Value | undefined): number {
+	if (!value || value.kind !== 'value') return 0;
+	if (value.type === 'integer' || value.type === 'float') return value.value;
+	if (value.type === 'string' || value.type === 'key') {
+		const parsed = Number(value.value);
+		return Number.isFinite(parsed) ? parsed : 0;
+	}
+	return 0;
+}
+
+function valueAsString(value: Value | undefined): string {
+	if (!value) return '';
+	return lslValueString(value) ?? '';
+}
+
+function valueAsVector(value: Value | undefined): [number, number, number] {
+	if (value?.kind === 'value' && value.type === 'vector') return value.value;
+	if (value?.kind === 'value' && value.type === 'string') {
+		const match = /^\s*<\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,>]+)\s*>\s*$/.exec(value.value);
+		if (match) return [Number(match[1]), Number(match[2]), Number(match[3])];
+	}
+	return [0, 0, 0];
+}
+
+function valueAsRotation(value: Value | undefined): [number, number, number, number] {
+	if (value?.kind === 'value' && value.type === 'rotation') return value.value;
+	if (value?.kind === 'value' && value.type === 'string') {
+		const match = /^\s*<\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,>]+)\s*>\s*$/.exec(value.value);
+		if (match) return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])];
+	}
+	return [0, 0, 0, 1];
+}
+
 function valueContainsUnknown(value: Value): boolean {
 	if (value.kind === 'unknown') return true;
 	return value.type === 'list' && value.value.some(valueContainsUnknown);
@@ -351,7 +457,250 @@ export function llDumpList2String(list: Value, sep: Value): Value {
 	const arr = toList(list);
 	const s = toStringVal(sep);
 	if (arr === null || s === null) return unknown('string');
-	return { kind: 'value', type: 'string', value: arr.map(x => String(x)).join(s) };
+	const items = lslListStrings(arr);
+	return items === null ? unknown('string') : asStrVal(items.join(s));
+}
+
+export function llList2CSV(list: Value): Value {
+	const arr = toList(list);
+	if (arr === null) return unknown('string');
+	const items = lslListStrings(arr);
+	return items === null ? unknown('string') : asStrVal(items.join(', '));
+}
+
+function parseStringToList(src: string, separators: Value[], spacers: Value[], keepNulls: boolean): Value {
+	const seps = (lslStringListValues(separators) ?? []).filter(s => s !== '').slice(0, 8);
+	const spaces = (lslStringListValues(spacers) ?? []).filter(s => s !== '').slice(0, 8);
+	const out: Value[] = [];
+	let current = '';
+	let i = 0;
+	const pushCurrent = () => {
+		if (keepNulls || current !== '') out.push(asStrVal(current));
+		current = '';
+	};
+	while (i < src.length) {
+		const sep = seps.find(candidate => src.startsWith(candidate, i));
+		if (sep !== undefined) {
+			pushCurrent();
+			i += sep.length;
+			continue;
+		}
+		const spacer = spaces.find(candidate => src.startsWith(candidate, i));
+		if (spacer !== undefined) {
+			pushCurrent();
+			out.push(asStrVal(spacer));
+			i += spacer.length;
+			continue;
+		}
+		current += src[i]!;
+		i++;
+	}
+	pushCurrent();
+	return { kind: 'value', type: 'list', value: out };
+}
+
+export function llParseString2List(src: Value, separators: Value, spacers: Value): Value {
+	if (!isStr(src)) return unknown('list');
+	const sepList = toList(separators);
+	const spacerList = toList(spacers);
+	if (sepList === null || spacerList === null) return unknown('list');
+	return parseStringToList(src.value, sepList, spacerList, false);
+}
+
+export function llParseStringKeepNulls(src: Value, separators: Value, spacers: Value): Value {
+	if (!isStr(src)) return unknown('list');
+	const sepList = toList(separators);
+	const spacerList = toList(spacers);
+	if (sepList === null || spacerList === null) return unknown('list');
+	return parseStringToList(src.value, sepList, spacerList, true);
+}
+
+function jsonStringify(value: JsonValue): string {
+	if (value === null) return 'null';
+	if (isJsonNumberValue(value)) {
+		return value.forceFloat ? value.value.toFixed(6) : lslNumberString(value.value);
+	}
+	if (typeof value === 'boolean') return value ? 'true' : 'false';
+	if (typeof value === 'number') return lslNumberString(value);
+	if (typeof value === 'string') return JSON.stringify(value);
+	if (Array.isArray(value)) return `[${value.map(jsonStringify).join(',')}]`;
+	return `{${Object.entries(value).map(([key, child]) => `${JSON.stringify(key)}:${jsonStringify(child)}`).join(',')}}`;
+}
+
+function jsonValueFromLsl(value: Value): JsonValue | undefined {
+	if (value.kind !== 'value') return undefined;
+	switch (value.type) {
+		case 'integer':
+			return value.value;
+		case 'float':
+			return { kind: 'json-number', value: value.value, forceFloat: true };
+		case 'string':
+		case 'key':
+			if (value.value === JSON_TRUE) return true;
+			if (value.value === JSON_FALSE) return false;
+			if (value.value === JSON_NULL) return null;
+			return value.value;
+		case 'vector':
+		case 'rotation':
+			return lslValueString(value);
+		case 'list':
+			return undefined;
+	}
+}
+
+function lslValueFromJson(value: JsonValue): Value {
+	if (value === null) return asStrVal(JSON_NULL);
+	if (typeof value === 'boolean') return asStrVal(value ? JSON_TRUE : JSON_FALSE);
+	if (typeof value === 'number') return Number.isInteger(value) ? asIntVal(value) : asFloat(value);
+	if (typeof value === 'string') return asStrVal(value);
+	return asStrVal(jsonStringify(value));
+}
+
+function parseJsonValue(value: string): JsonValue | null {
+	try {
+		return JSON.parse(value) as JsonValue;
+	} catch {
+		return null;
+	}
+}
+
+function jsonType(value: JsonValue | undefined): string {
+	if (value === undefined) return JSON_INVALID;
+	if (value === null) return JSON_NULL;
+	if (typeof value === 'boolean') return value ? JSON_TRUE : JSON_FALSE;
+	if (typeof value === 'number' || isJsonNumberValue(value)) return JSON_NUMBER;
+	if (typeof value === 'string') return JSON_STRING;
+	return Array.isArray(value) ? JSON_ARRAY : JSON_OBJECT;
+}
+
+function jsonSpecifierValue(value: Value): string | number | null {
+	if (value.kind !== 'value') return null;
+	if (value.type === 'integer') return i32(value.value);
+	if (value.type === 'float') return i32(value.value);
+	if (value.type === 'string' || value.type === 'key') return value.value;
+	return null;
+}
+
+function getJsonPath(root: JsonValue, specifiers: Value[]): JsonValue | undefined {
+	let current: JsonValue | undefined = root;
+	for (const specifier of specifiers) {
+		const key = jsonSpecifierValue(specifier);
+		if (key === null || current === undefined || current === null) return undefined;
+		if (Array.isArray(current)) {
+			if (typeof key !== 'number') return undefined;
+			current = current[key];
+		} else if (isJsonObject(current)) {
+			current = (current as Record<string, JsonValue>)[String(key)];
+		} else {
+			return undefined;
+		}
+	}
+	return current;
+}
+
+function parseJsonSetInput(value: string): JsonValue {
+	if (value === JSON_TRUE) return true;
+	if (value === JSON_FALSE) return false;
+	if (value === JSON_NULL) return null;
+	const parsed = parseJsonValue(value);
+	return parsed ?? value;
+}
+
+export function llList2Json(jsonTypeValue: Value, values: Value): Value {
+	if (!isStr(jsonTypeValue)) return unknown('string');
+	const arr = toList(values);
+	if (arr === null) return unknown('string');
+	if (jsonTypeValue.value === JSON_ARRAY) {
+		const jsonValues = arr.map(jsonValueFromLsl);
+		if (jsonValues.some(value => value === undefined)) return unknown('string');
+		return asStrVal(jsonStringify(jsonValues as JsonValue[]));
+	}
+	if (jsonTypeValue.value === JSON_OBJECT) {
+		const out: { [key: string]: JsonValue } = {};
+		for (let i = 0; i + 1 < arr.length; i += 2) {
+			const key = lslValueString(arr[i]!);
+			const value = jsonValueFromLsl(arr[i + 1]!);
+			if (key === null || value === undefined) return unknown('string');
+			out[key] = value;
+		}
+		return asStrVal(jsonStringify(out));
+	}
+	return asStrVal(JSON_INVALID);
+}
+
+export function llJson2List(json: Value): Value {
+	if (!isStr(json)) return unknown('list');
+	const parsed = parseJsonValue(json.value);
+	if (parsed === null) return unknown('list');
+	if (Array.isArray(parsed)) return { kind: 'value', type: 'list', value: parsed.map(lslValueFromJson) };
+	if (typeof parsed === 'object') {
+		const out: Value[] = [];
+		for (const [key, value] of Object.entries(parsed)) {
+			out.push(asStrVal(key), lslValueFromJson(value));
+		}
+		return { kind: 'value', type: 'list', value: out };
+	}
+	return { kind: 'value', type: 'list', value: [lslValueFromJson(parsed)] };
+}
+
+export function llJsonGetValue(json: Value, specifiers: Value): Value {
+	if (!isStr(json)) return unknown('string');
+	const specs = toList(specifiers);
+	if (specs === null) return unknown('string');
+	const parsed = parseJsonValue(json.value);
+	if (parsed === null) return asStrVal(JSON_INVALID);
+	const value = getJsonPath(parsed, specs);
+	if (value === undefined) return asStrVal(JSON_INVALID);
+	if (value === null) return asStrVal(JSON_NULL);
+	if (typeof value === 'boolean') return asStrVal(value ? JSON_TRUE : JSON_FALSE);
+	if (typeof value === 'number') return asStrVal(lslNumberString(value));
+	if (typeof value === 'string') return asStrVal(value);
+	return asStrVal(jsonStringify(value));
+}
+
+export function llJsonValueType(json: Value, specifiers: Value): Value {
+	if (!isStr(json)) return unknown('string');
+	const specs = toList(specifiers);
+	if (specs === null) return unknown('string');
+	const parsed = parseJsonValue(json.value);
+	if (parsed === null) return asStrVal(JSON_INVALID);
+	return asStrVal(jsonType(getJsonPath(parsed, specs)));
+}
+
+export function llJsonSetValue(json: Value, specifiers: Value, value: Value): Value {
+	if (!isStr(json) || !isStr(value)) return unknown('string');
+	const specs = toList(specifiers);
+	if (specs === null || specs.length === 0) return unknown('string');
+	const parsed = parseJsonValue(json.value);
+	if (parsed === null) return asStrVal(JSON_INVALID);
+	const replacement = parseJsonSetInput(value.value);
+	let current: JsonValue = parsed;
+	for (let i = 0; i < specs.length - 1; i++) {
+		const key = jsonSpecifierValue(specs[i]!);
+		if (key === null || current === null || typeof current !== 'object') return asStrVal(JSON_INVALID);
+		let next: JsonValue | undefined;
+		if (Array.isArray(current)) {
+			if (typeof key !== 'number') return asStrVal(JSON_INVALID);
+			next = current[key];
+		} else if (isJsonObject(current)) {
+			next = (current as Record<string, JsonValue>)[String(key)];
+		} else {
+			return asStrVal(JSON_INVALID);
+		}
+		if (next === undefined) return asStrVal(JSON_INVALID);
+		current = next;
+	}
+	const last = jsonSpecifierValue(specs[specs.length - 1]!);
+	if (last === null || current === null || typeof current !== 'object') return asStrVal(JSON_INVALID);
+	if (Array.isArray(current)) {
+		if (typeof last !== 'number') return asStrVal(JSON_INVALID);
+		current[last] = replacement;
+	} else if (isJsonObject(current)) {
+		(current as Record<string, JsonValue>)[String(last)] = replacement;
+	} else {
+		return asStrVal(JSON_INVALID);
+	}
+	return asStrVal(jsonStringify(parsed));
 }
 
 // ===== Vector math helpers (when actual values are present) =====
@@ -391,6 +740,12 @@ export function llMD5String(src: Value, nonce: Value): Value {
 export function llSHA1String(src: Value): Value {
 	if (!isStr(src)) return unknown('string');
 	try { return asStrVal(nodeCrypto.createHash('sha1').update(src.value, 'utf8').digest('hex')); }
+	catch { return unknown('string'); }
+}
+
+export function llSHA256String(src: Value): Value {
+	if (!isStr(src)) return unknown('string');
+	try { return asStrVal(nodeCrypto.createHash('sha256').update(src.value, 'utf8').digest('hex')); }
 	catch { return unknown('string'); }
 }
 
@@ -527,69 +882,61 @@ const toIndex = (len: number, idx: number) => {
 };
 const fromList = (v: Value) => v.kind === 'value' && v.type === 'list' ? v.value : null;
 
-export function llList2Integer(list: Value, index: Value): Value {
-	const arr = fromList(list); if (!arr || !isNum(index)) return unknown('integer');
-	const i = i32(index.value); if (i < -arr.length || i >= arr.length) return asIntVal(0);
+function listValueAt(list: Value, index: Value): Value | 'out-of-range' | null {
+	const arr = fromList(list);
+	if (!arr || !isNum(index)) return null;
+	const i = i32(index.value);
+	if (i < -arr.length || i >= arr.length) return 'out-of-range';
 	const j = i < 0 ? arr.length + i : i;
-	const x = arr[j];
-	switch (x.kind) {
-		case 'value':
-			if (typeof x.value === 'number') return asIntVal(x.value);
-			if (typeof x.value === 'string') {
-				// decimal or 0x... hex gets parsed per wiki caveat
-				const m = x.value.trim().match(/^([+-]?0x[0-9a-f]+|[+-]?\d+)/i);
-				return asIntVal(m ? parseInt(m[1], 0) : 0);
-			}
-			break;
-	}
-	return asIntVal(0);
+	return arr[j] ?? 'out-of-range';
+}
+
+export function llList2Integer(list: Value, index: Value): Value {
+	const value = listValueAt(list, index);
+	if (value === null) return unknown('integer');
+	if (value === 'out-of-range') return asIntVal(0);
+	if (value.kind === 'unknown') return unknown('integer');
+	return asIntVal(valueAsInteger(value));
 }
 
 export function llList2Float(list: Value, index: Value): Value {
-	const arr = fromList(list); if (!arr || !isNum(index)) return unknown('float');
-	const i = i32(index.value); if (i < -arr.length || i >= arr.length) return asFloat(0);
-	const j = i < 0 ? arr.length + i : i;
-	const x = arr[j];
-	if (typeof x === 'number') return asFloat(x);
-	if (typeof x === 'string') {
-		const n = Number(x); return Number.isFinite(n) ? asFloat(n) : asFloat(0);
-	}
-	return asFloat(0);
+	const value = listValueAt(list, index);
+	if (value === null) return unknown('float');
+	if (value === 'out-of-range') return asFloat(0);
+	if (value.kind === 'unknown') return unknown('float');
+	return asFloat(valueAsFloat(value));
 }
 
 export function llList2String(list: Value, index: Value): Value {
-	const arr = fromList(list); if (!arr || !isNum(index)) return unknown('string');
-	const i = i32(index.value); if (i < -arr.length || i >= arr.length) return asStrVal('');
-	const j = i < 0 ? arr.length + i : i;
-	return asStrVal(String(arr[j] ?? ''));
+	const value = listValueAt(list, index);
+	if (value === null) return unknown('string');
+	if (value === 'out-of-range') return asStrVal('');
+	if (value.kind === 'unknown') return unknown('string');
+	return asStrVal(valueAsString(value));
 }
 
 export function llList2Key(list: Value, index: Value): Value {
-	const arr = fromList(list); if (!arr || !isNum(index)) return unknown('string');
-	const i = i32(index.value); if (i < -arr.length || i >= arr.length) return asStrVal('');
-	const j = i < 0 ? arr.length + i : i;
-	const x = arr[j];
-	return asStrVal(typeof x === 'string' ? x : String(x));
+	const value = listValueAt(list, index);
+	if (value === null) return unknown('key');
+	if (value === 'out-of-range') return { kind: 'value', type: 'key', value: '' };
+	if (value.kind === 'unknown') return unknown('key');
+	return { kind: 'value', type: 'key', value: valueAsString(value) };
 }
 
 export function llList2Vector(list: Value, index: Value): Value {
-	const arr = fromList(list); if (!arr || !isNum(index)) return unknown('vector');
-	const i = i32(index.value); if (i < -arr.length || i >= arr.length) return asVecVal([0, 0, 0]);
-	const j = i < 0 ? arr.length + i : i;
-	const x = arr[j];
-	if (Array.isArray(x) && x.length === 3) return asVecVal([+x[0], +x[1], +x[2]]);
-	if (x.kind === 'value' && x.type === 'vector') return asVecVal(x.value);
-	return asVecVal([0, 0, 0]);
+	const value = listValueAt(list, index);
+	if (value === null) return unknown('vector');
+	if (value === 'out-of-range') return asVecVal([0, 0, 0]);
+	if (value.kind === 'unknown') return unknown('vector');
+	return asVecVal(valueAsVector(value));
 }
 
 export function llList2Rot(list: Value, index: Value): Value {
-	const arr = fromList(list); if (!arr || !isNum(index)) return unknown('rotation');
-	const i = i32(index.value); if (i < -arr.length || i >= arr.length) return asRotVal([0, 0, 0, 1]);
-	const j = i < 0 ? arr.length + i : i;
-	const x = arr[j];
-	if (Array.isArray(x) && x.length === 4) return asRotVal([+x[0], +x[1], +x[2], +x[3]]);
-	if (x.kind === 'value' && x.type === 'rotation') return asRotVal(x.value);
-	return asRotVal([0, 0, 0, 1]);
+	const value = listValueAt(list, index);
+	if (value === null) return unknown('rotation');
+	if (value === 'out-of-range') return asRotVal([0, 0, 0, 1]);
+	if (value.kind === 'unknown') return unknown('rotation');
+	return asRotVal(valueAsRotation(value));
 }
 
 export function llList2ListStrided(list: Value, start: Value, end: Value, stride: Value): Value {
@@ -651,7 +998,9 @@ export const LIST_STAT = {
 export function llListStatistics(operation: Value, list: Value): Value {
 	if (!isNum(operation)) return unknown('float');
 	const arr = fromList(list); if (!arr) return unknown('float');
-	const nums = arr.filter(x => typeof x === 'number').map(x => Number(x));
+	const nums = arr
+		.filter(x => x.kind === 'value' && (x.type === 'integer' || x.type === 'float'))
+		.map(x => (x as IntVal | FloatVal).value);
 	if (nums.length === 0) return asFloat(0);
 	const op = i32(operation.value);
 	const sum = nums.reduce((a, b) => a + b, 0);
@@ -693,6 +1042,14 @@ export function llXorBase64(s1: Value, s2: Value): Value {
 		for (let i = 0; i < a.length; i++) out[i] = a[i] ^ b[i % b.length];
 		return asStrVal(out.toString('base64'));
 	} catch { return unknown('string'); }
+}
+
+export function llXorBase64StringsCorrect(s1: Value, s2: Value): Value {
+	return llXorBase64(s1, s2);
+}
+
+export function llXorBase64Strings(s1: Value, s2: Value): Value {
+	return llXorBase64(s1, s2);
 }
 
 // ===== Vectors & rotations =====

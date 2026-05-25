@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { docFrom, runPipeline } from './testUtils';
 import { loadTestDefs } from './loadDefs.testutil';
 import { loadDefs } from '../src/defs';
-import { NULL_KEY_VALUE } from '../src/ast/key';
 import { evalExpr } from '../src/ast/eval';
 import type { Expr } from '../src/ast/types';
 import { join } from 'node:path';
@@ -141,7 +140,7 @@ default {
 		expect(wrongType).toBeFalsy();
 	});
 
-	it('evaluates empty string cast to key as NULL_KEY', () => {
+	it('evaluates empty string cast to key as an empty key', () => {
 		const span = { start: 0, end: 0 };
 		const expr: Expr = {
 			kind: 'Cast',
@@ -149,6 +148,6 @@ default {
 			argument: { kind: 'StringLiteral', value: '', span },
 			span,
 		};
-		expect(evalExpr(expr)).toEqual({ kind: 'value', type: 'key', value: NULL_KEY_VALUE });
+		expect(evalExpr(expr)).toEqual({ kind: 'value', type: 'key', value: '' });
 	});
 });
