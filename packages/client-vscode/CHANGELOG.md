@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.16
+- Added static Mono memory estimates through the `lsl-lsp measure` CLI command and VS Code inlay hints, including optimized-output comparison and a calibrated error band.
+- Improved optimizer inlining decisions using the AST memory estimator so generated scripts can reduce Mono memory more reliably.
+- Added tracked AST measurement regression tests and documentation for the new memory estimate workflow.
+
 ## 0.1.15
 - Fixed optimizer output for constant globals, member access, prefix/postfix operators, unary expressions, macro-expanded booleans, and empty-state preservation so generated scripts stay valid LSL.
 - Added diagnostics for empty states without event handlers, matching Second Life compiler behavior while keeping empty event/function bodies as warnings.
