@@ -46,7 +46,7 @@ export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', op
 		peek: () => ts.peek(),
 		pushBack: (t: Token) => ts.pushBack(t)
 	} as unknown as Lexer;
-	const P = new Parser(lxAdapter as Lexer, text, { disableSourceHeuristics: true, lazyLists: !!pre.extensions.lazyLists });
+	const P = new Parser(lxAdapter as Lexer, text, { disableSourceHeuristics: true, lazyLists: !!pre.extensions.lazyLists, switchStatements: !!pre.extensions.switch });
 	const script = P.parseScript();
 	return pre.extensions.lazyLists ? lowerLazyListExpressions(script) : script;
 }
@@ -129,7 +129,7 @@ function mergeTokensWithComments(code: Token[], comments: Token[]): Token[] {
 	return out;
 }
 
-interface ParserOptions { disableSourceHeuristics?: boolean; lazyLists?: boolean }
+interface ParserOptions { disableSourceHeuristics?: boolean; lazyLists?: boolean; switchStatements?: boolean }
 
 class Parser {
 	private readonly lx: Lexer;
@@ -140,8 +140,11 @@ class Parser {
 	private diagnostics: Diagnostic[] = [];
 	private readonly disableSourceHeuristics: boolean;
 	private readonly lazyLists: boolean;
+	private readonly switchStatements: boolean;
+	private syntheticLabelCounter = 0;
+	private switchBreakLabels: string[] = [];
 
-	constructor(lx: Lexer, src: string, opts?: ParserOptions) { this.lx = lx; this.src = src; this.disableSourceHeuristics = !!opts?.disableSourceHeuristics; this.lazyLists = !!opts?.lazyLists; }
+	constructor(lx: Lexer, src: string, opts?: ParserOptions) { this.lx = lx; this.src = src; this.disableSourceHeuristics = !!opts?.disableSourceHeuristics; this.lazyLists = !!opts?.lazyLists; this.switchStatements = !!opts?.switchStatements; }
 
 	private next(): Token {
 		if (this.look) { const t = this.look; this.look = null; return t; }
@@ -948,6 +951,12 @@ class Parser {
 		const t = this.peek();
 		// empty statement ';'
 		if (t.kind === 'punct' && t.value === ';') { const semi = this.next(); return { span: semi.span, kind: 'EmptyStmt' } as Stmt; }
+		if (this.switchStatements && t.kind === 'id' && t.value === 'switch') return this.parseSwitch(inFunctionOrEvent);
+		if (this.switchStatements && t.kind === 'id' && t.value === 'break' && this.switchBreakLabels.length > 0) {
+			const kw = this.eat('id', 'break');
+			const semi = this.eat('punct', ';');
+			return this.switchJumpStmt(this.switchBreakLabels[this.switchBreakLabels.length - 1]!, spanFrom(kw.span.start, semi.span.end || kw.span.end));
+		}
 		// block
 		if (t.kind === 'punct' && t.value === '{') return this.parseBlock(inFunctionOrEvent);
 		// Standalone 'else' is handled at the block level to allow attaching to the previous IfStmt.
@@ -1094,6 +1103,74 @@ class Parser {
 		}
 		const body = this.parseStmtInner(inFunctionOrEvent);
 		return { span: spanFrom(kw.span.start, body.span.end), kind: 'ForStmt', init, condition: cond, update, body } as Stmt;
+	}
+
+	private parseSwitch(inFunctionOrEvent: boolean): Stmt {
+		type SwitchCase = { label: string; test?: Expr; statements: Stmt[]; span: Span };
+		const kw = this.eat('id', 'switch');
+		this.eat('punct', '(');
+		const discriminator = this.parseExpr();
+		this.eat('punct', ')');
+		this.eat('punct', '{');
+		const switchId = this.syntheticLabelCounter++;
+		const breakLabel = `__lsl_switch_${switchId}_break`;
+		const cases: SwitchCase[] = [];
+		let defaultCase: SwitchCase | undefined;
+		let current: SwitchCase | undefined;
+		let caseIndex = 0;
+		this.switchBreakLabels.push(breakLabel);
+		try {
+			while (!(this.peek().kind === 'punct' && this.peek().value === '}') && this.peek().kind !== 'eof') {
+				const look = this.peek();
+				if (look.kind === 'id' && look.value === 'case') {
+					const caseTok = this.eat('id', 'case');
+					const test = this.parseExpr();
+					this.eat('punct', ':');
+					current = { label: `__lsl_switch_${switchId}_case_${caseIndex++}`, test, statements: [], span: caseTok.span };
+					cases.push(current);
+					continue;
+				}
+				if (look.kind === 'keyword' && look.value === 'default') {
+					const defTok = this.eat('keyword', 'default');
+					this.eat('punct', ':');
+					current = { label: `__lsl_switch_${switchId}_default`, statements: [], span: defTok.span };
+					if (defaultCase) this.report(defTok, 'Duplicate default label in switch', 'LSL000');
+					defaultCase = current;
+					cases.push(current);
+					continue;
+				}
+				if (!current) {
+					this.report(look, 'expected case or default in switch body', 'LSL000');
+					current = { label: `__lsl_switch_${switchId}_case_${caseIndex++}`, statements: [], span: look.span };
+					cases.push(current);
+				}
+				current.statements.push(this.parseStmt(inFunctionOrEvent));
+			}
+		} finally {
+			this.switchBreakLabels.pop();
+		}
+		const close = this.eat('punct', '}');
+		const statements: Stmt[] = [];
+		for (const entry of cases) {
+			if (!entry.test) continue;
+			statements.push({
+				span: spanFrom(kw.span.start, entry.test.span.end),
+				kind: 'IfStmt',
+				condition: { span: spanFrom(discriminator.span.start, entry.test.span.end), kind: 'Binary', op: '==', left: discriminator, right: entry.test },
+				then: this.switchJumpStmt(entry.label, entry.test.span)
+			});
+		}
+		statements.push(this.switchJumpStmt(defaultCase?.label ?? breakLabel, close.span));
+		for (const entry of cases) {
+			statements.push({ span: entry.span, kind: 'LabelStmt', name: entry.label });
+			statements.push(...entry.statements);
+		}
+		statements.push({ span: close.span, kind: 'LabelStmt', name: breakLabel });
+		return { span: spanFrom(kw.span.start, close.span.end), kind: 'BlockStmt', statements };
+	}
+
+	private switchJumpStmt(label: string, span: Span): Stmt {
+		return { span, kind: 'JumpStmt', target: { span, kind: 'Identifier', name: label } };
 	}
 
 	// Helper to ensure inFunctionOrEvent flag is passed into nested blocks/statements
