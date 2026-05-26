@@ -69,6 +69,7 @@
 			{ "command": "lsl.showActiveDefinitions", "title": "Show Active Definitions", "category": "LSL" },
 			{ "command": "lsl.openPreprocessedScript", "title": "Open Preprocessed Script", "category": "LSL" },
 			{ "command": "lsl.openOptimizedScript", "title": "Open Optimized Script", "category": "LSL" },
+			{ "command": "lsl.openFirestormOriginalSource", "title": "Open Firestorm Original Source", "category": "LSL" },
 			{ "command": "lsl.buildServer", "title": "Build Server (repo task)", "category": "LSL" }
 		],
 		"menus": {
@@ -82,6 +83,11 @@
 					"command": "lsl.openOptimizedScript",
 					"when": "editorLangId == lsl",
 					"group": "navigation@21"
+				},
+				{
+					"command": "lsl.openFirestormOriginalSource",
+					"when": "editorLangId == lsl",
+					"group": "navigation@22"
 				}
 			]
 		},
@@ -157,6 +163,11 @@
 						"removeUnusedFunctions": { "type": "boolean", "default": true },
 						"shrinkNames": { "type": "boolean", "default": true }
 					}
+				},
+				"lsl.output.firestormHeaderForOptimized": {
+					"type": "boolean",
+					"default": false,
+					"description": "Prefix generated optimized output with a Firestorm-compatible reversible original-source header."
 				},
 				"lsl.measure.inlayHints": {
 					"type": "boolean",

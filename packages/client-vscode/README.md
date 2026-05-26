@@ -41,7 +41,8 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 - Generated script output
 	- `LSL: Open Preprocessed Script` opens the include/macro-expanded output in a read-only editor tab
 	- `LSL: Open Optimized Script` opens a readable optimized copy beside the source file without modifying the source
-	- Both commands are available from the command palette and from the editor context menu in LSL files
+	- `LSL: Open Firestorm Original Source` reconstructs the original source embedded in a Firestorm-style preprocessor header
+	- Generated-output commands are available from the command palette and from the editor context menu in LSL files
 - Memory estimate
 	- Inlay hints show estimated Mono free memory at the script state, the optimized free-memory estimate, and the calibrated error band
 - Diagnostics (server‑side analysis)
@@ -75,6 +76,7 @@ A Visual Studio Code extension providing rich, AST‑based support for LSL (Lind
 - `lsl.macros`: Project-wide predefined macros for conditionals
 - `lsl.dynamicMacros`: Macros to preserve as unknown typed values instead of expanding, written as `name:type` entries such as `__AGENTID__:string` or `__UNIXTIME__:integer`
 - `lsl.optimize`: Optimizer feature switches used by `LSL: Open Optimized Script`. All optimizer features are enabled by default; set individual flags to `false` to disable them.
+- `lsl.output.firestormHeaderForOptimized`: Prefix generated optimized output with a Firestorm-compatible reversible original-source header. Off by default.
 - `lsl.measure.inlayHints`: Show or hide Mono memory estimate inlay hints.
 - `lsl.enableSemanticTokens`: Toggle semantic tokens
 - `lsl.diagnostics.disable`: Diagnostic codes or friendly names to disable globally

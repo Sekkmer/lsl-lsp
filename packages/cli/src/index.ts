@@ -38,10 +38,13 @@ import {
 	parseLslExtensionSettings,
 	parseScriptFromText,
 	preprocessForAst,
+	decodeFirestormPreprocessorHeader,
+	detectFirestormRuntimeDirective,
 	measureAst,
 	optimizeScript,
 	formatLslText,
 	renderExpandedTokens,
+	wrapWithFirestormPreprocessorHeader,
 	shrinkNameOptionsFromDefs,
 	shouldCheckDefinitionUpdate,
 	updateDefinitions,
@@ -74,6 +77,8 @@ interface CliOptions {
 	write: boolean;
 	checkFormat: boolean;
 	compareOptimized: boolean;
+	firestormHeader: boolean;
+	decodeFirestormHeader: boolean;
 	braceStyle: FormatSettings['braceStyle'];
 }
 
@@ -118,6 +123,8 @@ Options:
       --disable <code[,code]>    Suppress diagnostics by code or friendly name.
       --json                     Print supported command output as JSON.
       --compare-optimized        Include optimized-output measure deltas with the measure command.
+      --firestorm-header         Prefix preprocess/optimize output with a Firestorm-compatible original-source header.
+      --decode-firestorm-header  Decode and print original source from a Firestorm preprocessor header.
       --brace-style <style>      Formatting brace style: same-line or next-line.
       --write                    Write formatted files in-place.
       --check                    Exit non-zero if formatting would change files.
@@ -172,7 +179,8 @@ async function runOptimize(opts: CliOptions, defs: Defs): Promise<number> {
 	const optimizeOptions = cliOptimizeOptions(defs, opts);
 	const optimized = results.map(result => {
 		const out = optimizeScript(result.ast, optimizeOptions);
-		const text = formatLslText(out.code, { enabled: true, braceStyle: opts.braceStyle });
+		const body = formatLslText(out.code, { enabled: true, braceStyle: opts.braceStyle });
+		const text = maybeWrapFirestormHeader(result.text, body, opts);
 		return { result, out, text };
 	});
 
@@ -479,6 +487,7 @@ async function runFormat(opts: CliOptions, defs: Defs): Promise<number> {
 }
 
 async function runPreprocess(opts: CliOptions): Promise<number> {
+	if (opts.decodeFirestormHeader) return decodeFirestormHeaderFile(opts);
 	const results = await Promise.all(opts.files.map(file => preprocessFile(file, opts)));
 	if (opts.json) {
 		process.stdout.write(`${JSON.stringify(results.map(preprocessToJson), null, 2)}\n`);
@@ -547,14 +556,35 @@ interface PreprocessFileResult {
 }
 
 async function preprocessFile(file: string, opts: CliOptions): Promise<PreprocessFileResult> {
-	const { filePath, doc, full } = await readAndPreprocessFile(file, opts);
+	const { filePath, text, doc, full } = await readAndPreprocessFile(file, opts);
 	const pre = toPreprocResult(full);
+	const body = renderExpandedTokens(pre.expandedTokens ?? []);
 	return {
 		filePath,
 		doc,
 		pre,
-		expandedText: renderExpandedTokens(pre.expandedTokens ?? []),
+		expandedText: maybeWrapFirestormHeader(text, body, opts),
 	};
+}
+
+async function decodeFirestormHeaderFile(opts: CliOptions): Promise<number> {
+	if (opts.files.length !== 1) throw new CliError('Decoding Firestorm headers requires exactly one input file.');
+	const filePath = path.resolve(opts.files[0]!);
+	const text = await fs.readFile(filePath, 'utf8');
+	const decoded = decodeFirestormPreprocessorHeader(text);
+	if (!decoded) throw new CliError(`No Firestorm preprocessor header found: ${filePath}`);
+	process.stdout.write(decoded.originalSource);
+	if (!decoded.originalSource.endsWith('\n')) process.stdout.write('\n');
+	return 0;
+}
+
+function maybeWrapFirestormHeader(source: string, body: string, opts: CliOptions): string {
+	if (!opts.firestormHeader) return body;
+	return wrapWithFirestormPreprocessorHeader(source, body, {
+		programVersion: `lsl-lsp ${CLI_VERSION}`,
+		lastCompiled: new Date().toISOString(),
+		runtime: detectFirestormRuntimeDirective(source),
+	});
 }
 
 async function readAndPreprocessFile(file: string, opts: CliOptions) {
@@ -763,6 +793,8 @@ function parseArgs(argv: string[]): CliOptions | null {
 		write: false,
 		checkFormat: false,
 		compareOptimized: false,
+		firestormHeader: false,
+		decodeFirestormHeader: false,
 		braceStyle: 'same-line',
 	};
 
@@ -782,6 +814,14 @@ function parseArgs(argv: string[]): CliOptions | null {
 		}
 		if (arg === '--compare-optimized') {
 			opts.compareOptimized = true;
+			continue;
+		}
+		if (arg === '--firestorm-header') {
+			opts.firestormHeader = true;
+			continue;
+		}
+		if (arg === '--decode-firestorm-header') {
+			opts.decodeFirestormHeader = true;
 			continue;
 		}
 		if (arg === '--write') {
@@ -860,6 +900,10 @@ function parseArgs(argv: string[]): CliOptions | null {
 	if (opts.write && opts.checkFormat) throw new CliError('--write and --check cannot be used together.');
 	if (opts.json && opts.command === 'format') throw new CliError('--json is not supported by format.');
 	if (opts.compareOptimized && opts.command !== 'measure') throw new CliError('--compare-optimized is only supported by measure.');
+	if (opts.firestormHeader && opts.command !== 'preprocess' && opts.command !== 'optimize') throw new CliError('--firestorm-header is only supported by preprocess and optimize.');
+	if (opts.decodeFirestormHeader && opts.command !== 'preprocess') throw new CliError('--decode-firestorm-header is only supported by preprocess.');
+	if (opts.decodeFirestormHeader && opts.firestormHeader) throw new CliError('--decode-firestorm-header and --firestorm-header cannot be used together.');
+	if (opts.decodeFirestormHeader && opts.json) throw new CliError('--decode-firestorm-header does not support --json.');
 	if ((opts.write || opts.checkFormat) && opts.command !== 'format' && opts.command !== 'optimize') throw new CliError('--write and --check are only supported by format and optimize.');
 	if (opts.command === 'update-defs') opts.definitionsForceUpdate = true;
 	if (opts.defaultIncludePath) opts.includePaths.unshift(process.cwd());

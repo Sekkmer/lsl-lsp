@@ -10,6 +10,7 @@ import {
 	shouldCheckDefinitionUpdate,
 	updateDefinitions,
 } from '@lsl-lsp/core/definitionUpdate';
+import { decodeFirestormPreprocessorHeader } from '@lsl-lsp/core/firestormHeader';
 
 let client: LanguageClient;
 
@@ -278,6 +279,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			dynamicMacros: currentCfg.get('dynamicMacros'),
 			extensions: currentCfg.get('extensions'),
 			optimize: currentCfg.get('optimize'),
+			output: { firestormHeaderForOptimized: currentCfg.get('output.firestormHeaderForOptimized') },
 			measure: { inlayHints: currentCfg.get('measure.inlayHints') },
 			logFile,
 			diagnostics: { disable: currentCfg.get('diagnostics.disable') },
@@ -377,6 +379,24 @@ export async function activate(context: vscode.ExtensionContext) {
 		}
 	}
 
+	async function openFirestormOriginalSource(): Promise<void> {
+		const editor = vscode.window.activeTextEditor;
+		if (!editor || editor.document.languageId !== 'lsl') {
+			vscode.window.showWarningMessage('LSL: open an LSL document first.');
+			return;
+		}
+		const decoded = decodeFirestormPreprocessorHeader(editor.document.getText());
+		if (!decoded) {
+			vscode.window.showWarningMessage('LSL: no Firestorm preprocessor header found in the active document.');
+			return;
+		}
+		const uri = outputUri(`${path.basename(editor.document.uri.path || 'script.lsl')}.firestorm-source.lsl`);
+		generatedProvider.set(uri, decoded.originalSource);
+		let doc = await vscode.workspace.openTextDocument(uri);
+		if (doc.languageId !== 'lsl') doc = await vscode.languages.setTextDocumentLanguage(doc, 'lsl');
+		await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+	}
+
 	// Commands for quick debug
 	const showLogsCmd = vscode.commands.registerCommand('lsl.showServerLogs', () => traceChannel.show(true));
 	const showClientLogsCmd = vscode.commands.registerCommand('lsl.showClientLogs', () => {
@@ -422,7 +442,8 @@ export async function activate(context: vscode.ExtensionContext) {
 	});
 	const openPreprocessedCmd = vscode.commands.registerCommand('lsl.openPreprocessedScript', () => openRenderedScript('preprocess'));
 	const openOptimizedCmd = vscode.commands.registerCommand('lsl.openOptimizedScript', () => openRenderedScript('optimize'));
-	context.subscriptions.push(showLogsCmd, showClientLogsCmd, restartCmd, clearCachesCmd, buildServerCmd, updateDefinitionsCmd, useBundledDefinitionsCmd, showDefinitionsCmd, openPreprocessedCmd, openOptimizedCmd, generatedProviderRegistration, generatedProvider, status, debugChannel, traceChannel);
+	const openFirestormOriginalCmd = vscode.commands.registerCommand('lsl.openFirestormOriginalSource', openFirestormOriginalSource);
+	context.subscriptions.push(showLogsCmd, showClientLogsCmd, restartCmd, clearCachesCmd, buildServerCmd, updateDefinitionsCmd, useBundledDefinitionsCmd, showDefinitionsCmd, openPreprocessedCmd, openOptimizedCmd, openFirestormOriginalCmd, generatedProviderRegistration, generatedProvider, status, debugChannel, traceChannel);
 
 	client.onDidChangeState(({ newState }) => {
 		if (newState === State.Running) {

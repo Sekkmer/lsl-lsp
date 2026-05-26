@@ -49,6 +49,7 @@ import {
 	diagCodeFriendly,
 	documentSymbols,
 	filterDiagnostics,
+	detectFirestormRuntimeDirective,
 	findAllReferences,
 	foldConstGlobalExpressions,
 	formatDocumentEdits,
@@ -73,6 +74,7 @@ import {
 	resolveCompletion,
 	semanticTokensLegend,
 	shrinkNameOptionsFromDefs,
+	wrapWithFirestormPreprocessorHeader,
 	type DynamicMacroMap,
 	type LslExtensionSettings,
 } from '@lsl-lsp/core';
@@ -116,6 +118,9 @@ const settings = {
 	dynamicMacros: {} as DynamicMacroMap,
 	extensions: {} as LslExtensionSettings,
 	optimize: {} as OptimizeSettings,
+	output: {
+		firestormHeaderForOptimized: false,
+	},
 	measure: {
 		inlayHints: true,
 	},
@@ -329,6 +334,9 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 	settings.dynamicMacros = parseConfiguredDynamicMacros(initOpts.dynamicMacros);
 	settings.extensions = parseConfiguredExtensions(initOpts.extensions);
 	settings.optimize = parseOptimizeSettings(initOpts.optimize);
+	if (initOpts.output && typeof initOpts.output === 'object' && typeof initOpts.output.firestormHeaderForOptimized === 'boolean') {
+		settings.output.firestormHeaderForOptimized = initOpts.output.firestormHeaderForOptimized;
+	}
 	if (initOpts.measure && typeof initOpts.measure === 'object' && typeof initOpts.measure.inlayHints === 'boolean') {
 		settings.measure.inlayHints = initOpts.measure.inlayHints;
 	}
@@ -490,7 +498,14 @@ connection.onRequest('lsl/renderScript', (params: RenderScriptParams): RenderScr
 		}
 		if (!pipeline.ast) return { ok: false, error: 'Unable to parse script for optimization.' };
 		const optimized = optimizeScript(pipeline.ast, optimizeOptionsFromSettings(defs));
-		const content = formatLslText(optimized.code, { ...settings.format, enabled: true });
+		const formatted = formatLslText(optimized.code, { ...settings.format, enabled: true });
+		const content = settings.output.firestormHeaderForOptimized
+			? wrapWithFirestormPreprocessorHeader(doc.getText(), formatted, {
+				programVersion: 'lsl-lsp',
+				lastCompiled: new Date().toISOString(),
+				runtime: detectFirestormRuntimeDirective(doc.getText()),
+			})
+			: formatted;
 		return {
 			ok: true,
 			mode: params.mode,
@@ -631,6 +646,10 @@ connection.onDidChangeConfiguration(async change => {
 	if (newSettings.measure && typeof newSettings.measure === 'object') {
 		const measure = newSettings.measure as Record<string, unknown>;
 		if (typeof measure.inlayHints === 'boolean') settings.measure.inlayHints = measure.inlayHints;
+	}
+	if (newSettings.output && typeof newSettings.output === 'object') {
+		const output = newSettings.output as Record<string, unknown>;
+		if (typeof output.firestormHeaderForOptimized === 'boolean') settings.output.firestormHeaderForOptimized = output.firestormHeaderForOptimized;
 	}
 	baselineMacros = { ...settings.macros }; // refresh baseline on config change
 	settings.enableSemanticTokens = newSettings.enableSemanticTokens ?? settings.enableSemanticTokens;

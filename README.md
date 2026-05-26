@@ -29,6 +29,8 @@ The runtime definition source is `third_party/lsl-definitions/lsl_definitions.ya
 - Run core tests: `pnpm -C packages/core test`
 - Run CLI diagnostics after build: `node packages/cli/out/lsl-lsp.cjs check path/to/script.lsl`
 - Inspect preprocessing after build: `node packages/cli/out/lsl-lsp.cjs preprocess --json path/to/script.lsl`
+- Render Firestorm-style reversible preprocessor output after build: `node packages/cli/out/lsl-lsp.cjs preprocess --firestorm-header path/to/script.lsl`
+- Reconstruct original source from Firestorm-style preprocessor output: `node packages/cli/out/lsl-lsp.cjs preprocess --decode-firestorm-header path/to/preprocessed.lsl`
 - Estimate AST/Mono memory shape after build: `node packages/cli/out/lsl-lsp.cjs measure --compare-optimized path/to/script.lsl`
 - Optimize a script after build: `node packages/cli/out/lsl-lsp.cjs optimize path/to/script.lsl`
 - Check whether optimizer output would change a script: `node packages/cli/out/lsl-lsp.cjs optimize --check path/to/script.lsl`

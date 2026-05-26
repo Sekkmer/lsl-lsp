@@ -6,6 +6,7 @@ export * from './definitionUpdate';
 export * from './diagSettings';
 export * from './format';
 export * from './extensions';
+export * from './firestormHeader';
 export * from './hover';
 export * from './lexer';
 export * from './navigation';

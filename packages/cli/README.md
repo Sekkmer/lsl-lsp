@@ -23,6 +23,8 @@ lsl-lsp check --dynamic-macro __AGENTID__:string script.lsl
 lsl-lsp check --no-default-include -I includes script.lsl
 lsl-lsp preprocess -I includes script.lsl
 lsl-lsp preprocess --json -I includes script.lsl
+lsl-lsp preprocess --firestorm-header -I includes script.lsl
+lsl-lsp preprocess --decode-firestorm-header preprocessed.lsl
 lsl-lsp measure --compare-optimized script.lsl
 lsl-lsp measure --json --compare-optimized script.lsl
 lsl-lsp symbols script.lsl
@@ -34,6 +36,7 @@ lsl-lsp check --auto-update-defs script.lsl
 lsl-lsp format --check script.lsl
 lsl-lsp format --write script.lsl
 lsl-lsp optimize script.lsl
+lsl-lsp optimize --firestorm-header script.lsl
 lsl-lsp optimize --dynamic-macro __UNIXTIME__:integer script.lsl
 lsl-lsp optimize --write script.lsl
 ```
