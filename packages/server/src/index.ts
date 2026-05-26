@@ -289,7 +289,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 		conditionalGroups: full.conditionalGroups,
 	};
 	const tokens = lex(doc, pre.inactiveRanges ?? pre.disabledRanges);
-	let ast: Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, dynamicMacros: settings.dynamicMacros, includePaths: settings.includePaths, pre: full });
+	let ast: Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, dynamicMacros: settings.dynamicMacros, includePaths: settings.includePaths, defs, pre: full });
 	if (pre.extensions?.constGlobalExpressions) {
 		ast = foldConstGlobalExpressions(ast, {
 			builtinConstants: builtinConstantValues(defs),

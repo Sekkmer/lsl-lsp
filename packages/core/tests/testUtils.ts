@@ -63,7 +63,7 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOpt
 	// (notably for synthetic built-ins like __FILE__ whose presence controls conditional branches).
 	// Passing full.macros ensures #if defined(__FILE__) guarded declarations are preserved
 	// consistently between the preprocessing used for analysis and the parser invocation here.
-	let script = parseScriptFromText(doc.getText(), doc.uri, { macros: { ...full.macros, ...(opts?.macros || {}) }, dynamicMacros: opts?.dynamicMacros, includePaths: opts?.includePaths, pre: full });
+	let script = parseScriptFromText(doc.getText(), doc.uri, { macros: { ...full.macros, ...(opts?.macros || {}) }, dynamicMacros: opts?.dynamicMacros, includePaths: opts?.includePaths, defs, pre: full });
 	if (full.extensions.constGlobalExpressions) {
 		script = foldConstGlobalExpressions(script, {
 			builtinConstants: builtinConstantValuesFromDefs(defs),

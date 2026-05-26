@@ -525,6 +525,7 @@ async function analyzeFile(file: string, opts: CliOptions, defs: Defs): Promise<
 		macros: { ...full.macros, ...opts.defines },
 		dynamicMacros: opts.dynamicMacros,
 		includePaths: opts.includePaths,
+		defs,
 		pre: full,
 	});
 	if (pre.extensions?.constGlobalExpressions) {

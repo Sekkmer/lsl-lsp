@@ -10,6 +10,7 @@ import type { Token } from '../core/tokens';
 import { preprocessForAst } from '../core/pipeline';
 import type { MacroDefines } from '../core/macro';
 import type { DynamicMacros } from '../core/preproc';
+import type { Defs } from '../defs';
 import { basenameFromUri } from '../builtins';
 import { lazyListIndexCall, lowerLazyListExpressions } from './lazyLists';
 import { Tokenizer } from '../core/tokenizer';
@@ -22,6 +23,7 @@ type ParseOptions = {
 	macros?: MacroDefines;
 	dynamicMacros?: DynamicMacros;
 	includePaths?: string[];
+	defs?: Defs;
 	// When provided, reuse precomputed preprocessing (tokens/macros) instead of invoking internally again.
 	pre?: ReturnType<typeof preprocessForAst>;
 };
@@ -48,7 +50,7 @@ export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', op
 	} as unknown as Lexer;
 	const P = new Parser(lxAdapter as Lexer, text, { disableSourceHeuristics: true, lazyLists: !!pre.extensions.lazyLists, switchStatements: !!pre.extensions.switch });
 	const script = P.parseScript();
-	return pre.extensions.lazyLists ? lowerLazyListExpressions(script) : script;
+	return pre.extensions.lazyLists ? lowerLazyListExpressions(script, { defs: opts?.defs }) : script;
 }
 
 function computeLineStarts(text: string): number[] {

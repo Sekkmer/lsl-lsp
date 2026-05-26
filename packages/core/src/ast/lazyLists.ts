@@ -1,11 +1,14 @@
 import type { Expr, Function as FnNode, Script, State, Stmt, Type } from './types';
-import { spanFrom } from './types';
+import { canonicalType, isTypeName, spanFrom } from './types';
 import { AssertNever } from '../utils';
+import type { Defs } from '../defs';
 
 const LAZY_INDEX_CALLEE = '__lsl_lsp_lazy_index';
 const LAZY_SET_HELPER = '__lsl_lsp_lazy_list_set';
 
 type LowerResult<T> = { node: T; needsSetHelper: boolean };
+type LowerOptions = { defs?: Defs };
+type LowerContext = { expectedType?: Type; signatures: Map<string, Type[][]> };
 
 export function lazyListIndexCall(object: Expr, index: Expr): Expr {
 	return {
@@ -16,24 +19,25 @@ export function lazyListIndexCall(object: Expr, index: Expr): Expr {
 	};
 }
 
-export function lowerLazyListExpressions(script: Script): Script {
+export function lowerLazyListExpressions(script: Script, opts: LowerOptions = {}): Script {
 	let needsSetHelper = false;
+	const context: LowerContext = { signatures: collectCallSignatures(script, opts.defs) };
 	const functions = new Map<string, FnNode>();
 	for (const [name, fn] of script.functions) {
-		const lowered = lowerFunction(fn);
+		const lowered = lowerFunction(fn, context);
 		needsSetHelper = needsSetHelper || lowered.needsSetHelper;
 		functions.set(name, lowered.node);
 	}
 	const states = new Map<string, State>();
 	for (const [name, state] of script.states) {
-		const lowered = lowerState(state);
+		const lowered = lowerState(state, context);
 		needsSetHelper = needsSetHelper || lowered.needsSetHelper;
 		states.set(name, lowered.node);
 	}
 	const globals = new Map(script.globals);
 	for (const [name, global] of globals) {
 		if (!global.initializer) continue;
-		const lowered = lowerExpr(global.initializer);
+		const lowered = lowerExpr(global.initializer, { ...context, expectedType: global.varType });
 		needsSetHelper = needsSetHelper || lowered.needsSetHelper;
 		globals.set(name, { ...global, initializer: lowered.node });
 	}
@@ -43,22 +47,22 @@ export function lowerLazyListExpressions(script: Script): Script {
 	return { ...script, globals, functions, states };
 }
 
-function lowerFunction(fn: FnNode): LowerResult<FnNode> {
-	const body = lowerStmt(fn.body);
+function lowerFunction(fn: FnNode, context: LowerContext): LowerResult<FnNode> {
+	const body = lowerStmt(fn.body, context);
 	return { node: { ...fn, body: body.node }, needsSetHelper: body.needsSetHelper };
 }
 
-function lowerState(state: State): LowerResult<State> {
+function lowerState(state: State, context: LowerContext): LowerResult<State> {
 	let needsSetHelper = false;
 	const events = state.events.map(event => {
-		const body = lowerStmt(event.body);
+		const body = lowerStmt(event.body, context);
 		needsSetHelper = needsSetHelper || body.needsSetHelper;
 		return { ...event, body: body.node };
 	});
 	return { node: { ...state, events }, needsSetHelper };
 }
 
-function lowerStmt(stmt: Stmt): LowerResult<Stmt> {
+function lowerStmt(stmt: Stmt, context: LowerContext): LowerResult<Stmt> {
 	switch (stmt.kind) {
 		case 'EmptyStmt':
 		case 'ErrorStmt':
@@ -66,53 +70,53 @@ function lowerStmt(stmt: Stmt): LowerResult<Stmt> {
 		case 'StateChangeStmt':
 			return { node: stmt, needsSetHelper: false };
 		case 'ExprStmt': {
-			const expression = lowerExpr(stmt.expression);
+			const expression = lowerExpr(stmt.expression, context);
 			return { node: { ...stmt, expression: expression.node }, needsSetHelper: expression.needsSetHelper };
 		}
 		case 'VarDecl': {
-			const initializer = stmt.initializer ? lowerExpr(stmt.initializer) : null;
+			const initializer = stmt.initializer ? lowerExpr(stmt.initializer, { ...context, expectedType: stmt.varType }) : null;
 			return {
 				node: initializer ? { ...stmt, initializer: initializer.node } : stmt,
 				needsSetHelper: !!initializer?.needsSetHelper,
 			};
 		}
 		case 'ReturnStmt': {
-			const expression = stmt.expression ? lowerExpr(stmt.expression) : null;
+			const expression = stmt.expression ? lowerExpr(stmt.expression, context) : null;
 			return {
 				node: expression ? { ...stmt, expression: expression.node } : stmt,
 				needsSetHelper: !!expression?.needsSetHelper,
 			};
 		}
 		case 'IfStmt': {
-			const condition = lowerExpr(stmt.condition);
-			const then = lowerStmt(stmt.then);
-			const els = stmt.else ? lowerStmt(stmt.else) : null;
+			const condition = lowerExpr(stmt.condition, context);
+			const then = lowerStmt(stmt.then, context);
+			const els = stmt.else ? lowerStmt(stmt.else, context) : null;
 			return {
 				node: { ...stmt, condition: condition.node, then: then.node, else: els?.node },
 				needsSetHelper: condition.needsSetHelper || then.needsSetHelper || !!els?.needsSetHelper,
 			};
 		}
 		case 'WhileStmt': {
-			const condition = lowerExpr(stmt.condition);
-			const body = lowerStmt(stmt.body);
+			const condition = lowerExpr(stmt.condition, context);
+			const body = lowerStmt(stmt.body, context);
 			return {
 				node: { ...stmt, condition: condition.node, body: body.node },
 				needsSetHelper: condition.needsSetHelper || body.needsSetHelper,
 			};
 		}
 		case 'DoWhileStmt': {
-			const body = lowerStmt(stmt.body);
-			const condition = lowerExpr(stmt.condition);
+			const body = lowerStmt(stmt.body, context);
+			const condition = lowerExpr(stmt.condition, context);
 			return {
 				node: { ...stmt, body: body.node, condition: condition.node },
 				needsSetHelper: body.needsSetHelper || condition.needsSetHelper,
 			};
 		}
 		case 'ForStmt': {
-			const init = stmt.init ? lowerExpr(stmt.init) : null;
-			const condition = stmt.condition ? lowerExpr(stmt.condition) : null;
-			const update = stmt.update ? lowerExpr(stmt.update) : null;
-			const body = lowerStmt(stmt.body);
+			const init = stmt.init ? lowerExpr(stmt.init, context) : null;
+			const condition = stmt.condition ? lowerExpr(stmt.condition, context) : null;
+			const update = stmt.update ? lowerExpr(stmt.update, context) : null;
+			const body = lowerStmt(stmt.body, context);
 			return {
 				node: { ...stmt, init: init?.node, condition: condition?.node, update: update?.node, body: body.node },
 				needsSetHelper: !!init?.needsSetHelper || !!condition?.needsSetHelper || !!update?.needsSetHelper || body.needsSetHelper,
@@ -121,14 +125,14 @@ function lowerStmt(stmt: Stmt): LowerResult<Stmt> {
 		case 'BlockStmt': {
 			let needsSetHelper = false;
 			const statements = stmt.statements.map(child => {
-				const lowered = lowerStmt(child);
+				const lowered = lowerStmt(child, context);
 				needsSetHelper = needsSetHelper || lowered.needsSetHelper;
 				return lowered.node;
 			});
 			return { node: { ...stmt, statements }, needsSetHelper };
 		}
 		case 'JumpStmt': {
-			const target = lowerExpr(stmt.target);
+			const target = lowerExpr(stmt.target, context);
 			return { node: { ...stmt, target: target.node }, needsSetHelper: target.needsSetHelper };
 		}
 		default:
@@ -137,7 +141,7 @@ function lowerStmt(stmt: Stmt): LowerResult<Stmt> {
 	}
 }
 
-function lowerExpr(expr: Expr): LowerResult<Expr> {
+function lowerExpr(expr: Expr, context: LowerContext): LowerResult<Expr> {
 	switch (expr.kind) {
 		case 'ErrorExpr':
 		case 'StringLiteral':
@@ -145,19 +149,19 @@ function lowerExpr(expr: Expr): LowerResult<Expr> {
 		case 'Identifier':
 			return { node: expr, needsSetHelper: false };
 		case 'Member': {
-			const object = lowerExpr(expr.object);
+			const object = lowerExpr(expr.object, context);
 			return { node: { ...expr, object: object.node }, needsSetHelper: object.needsSetHelper };
 		}
 		case 'Unary': {
-			const argument = lowerExpr(expr.argument);
+			const argument = lowerExpr(expr.argument, context);
 			return { node: { ...expr, argument: argument.node }, needsSetHelper: argument.needsSetHelper };
 		}
 		case 'Binary': {
 			const lazyAssign = lazyIndexArgs(expr.left);
 			if (expr.op === '=' && lazyAssign) {
-				const object = lowerExpr(lazyAssign[0]);
-				const index = lowerExpr(lazyAssign[1]);
-				const right = lowerExpr(expr.right);
+				const object = lowerExpr(lazyAssign[0], context);
+				const index = lowerExpr(lazyAssign[1], context);
+				const right = lowerExpr(expr.right, context);
 				return {
 					node: {
 						span: expr.span,
@@ -169,8 +173,8 @@ function lowerExpr(expr: Expr): LowerResult<Expr> {
 					needsSetHelper: true,
 				};
 			}
-			const left = lowerExpr(expr.left);
-			const right = lowerExpr(expr.right);
+			const left = lowerExpr(expr.left, context);
+			const right = lowerExpr(expr.right, context);
 			return {
 				node: { ...expr, left: left.node, right: right.node },
 				needsSetHelper: left.needsSetHelper || right.needsSetHelper,
@@ -180,8 +184,8 @@ function lowerExpr(expr: Expr): LowerResult<Expr> {
 			{
 				const lazy = lazyIndexArgs(expr.argument);
 				if (lazy) {
-					const object = lowerExpr(lazy[0]);
-					const index = lowerExpr(lazy[1]);
+					const object = lowerExpr(lazy[0], context);
+					const index = lowerExpr(lazy[1], context);
 					return {
 						node: lazyReadCall(expr.type, object.node, index.node, expr.span),
 						needsSetHelper: object.needsSetHelper || index.needsSetHelper,
@@ -189,20 +193,20 @@ function lowerExpr(expr: Expr): LowerResult<Expr> {
 				}
 			}
 			{
-				const argument = lowerExpr(expr.argument);
+				const argument = lowerExpr(expr.argument, context);
 				return {
 					node: { ...expr, argument: argument.node },
 					needsSetHelper: argument.needsSetHelper,
 				};
 			}
 		case 'Paren': {
-			const expression = lowerExpr(expr.expression);
+			const expression = lowerExpr(expr.expression, context);
 			return { node: { ...expr, expression: expression.node }, needsSetHelper: expression.needsSetHelper };
 		}
 		case 'ListLiteral': {
 			let needsSetHelper = false;
 			const elements = expr.elements.map(element => {
-				const lowered = lowerExpr(element);
+				const lowered = lowerExpr(element, context);
 				needsSetHelper = needsSetHelper || lowered.needsSetHelper;
 				return lowered.node;
 			});
@@ -211,7 +215,7 @@ function lowerExpr(expr: Expr): LowerResult<Expr> {
 		case 'VectorLiteral': {
 			let needsSetHelper = false;
 			const elements = expr.elements.map(element => {
-				const lowered = lowerExpr(element);
+				const lowered = lowerExpr(element, context);
 				needsSetHelper = needsSetHelper || lowered.needsSetHelper;
 				return lowered.node;
 			}) as Expr[] as [Expr, Expr, Expr] | [Expr, Expr, Expr, Expr];
@@ -221,19 +225,23 @@ function lowerExpr(expr: Expr): LowerResult<Expr> {
 			{
 				const lazy = lazyIndexArgs(expr);
 				if (lazy) {
-					const object = lowerExpr(lazy[0]);
-					const index = lowerExpr(lazy[1]);
+					const object = lowerExpr(lazy[0], context);
+					const index = lowerExpr(lazy[1], context);
 					return {
-						node: lazyReadCall('list', object.node, index.node, expr.span),
+						node: lazyReadCall(context.expectedType ?? 'list', object.node, index.node, expr.span),
 						needsSetHelper: object.needsSetHelper || index.needsSetHelper,
 					};
 				}
 			}
 			{
-				const callee = lowerExpr(expr.callee);
+				const callee = lowerExpr(expr.callee, context);
 				let needsSetHelper = callee.needsSetHelper;
-				const args = expr.args.map((arg: Expr) => {
-					const lowered = lowerExpr(arg);
+				const argTypes = expr.callee.kind === 'Identifier'
+					? expectedCallArgTypes(context.signatures, expr.callee.name, expr.args.length)
+					: [];
+				const args = expr.args.map((arg: Expr, index) => {
+					const expectedType = argTypes[index];
+					const lowered = lowerExpr(arg, expectedType ? { ...context, expectedType } : context);
 					needsSetHelper = needsSetHelper || lowered.needsSetHelper;
 					return lowered.node;
 				});
@@ -246,6 +254,53 @@ function lowerExpr(expr: Expr): LowerResult<Expr> {
 			AssertNever(expr);
 			return { node: expr, needsSetHelper: false };
 	}
+}
+
+function collectCallSignatures(script: Script, defs?: Defs): Map<string, Type[][]> {
+	const signatures = new Map<string, Type[][]>();
+	if (defs) {
+		for (const [name, overloads] of defs.funcs) {
+			for (const overload of overloads) {
+				const params: Type[] = [];
+				let valid = true;
+				for (const param of overload.params ?? []) {
+					const type = concreteType(param.type);
+					if (!type) {
+						valid = false;
+						break;
+					}
+					params.push(type);
+				}
+				if (valid) appendSignature(signatures, name, params);
+			}
+		}
+	}
+	for (const [name, fn] of script.functions) {
+		appendSignature(signatures, name, [...fn.parameters.values()]);
+	}
+	return signatures;
+}
+
+function concreteType(type: string | undefined): Type | null {
+	const normalized = (type ?? '').trim();
+	return isTypeName(normalized) ? canonicalType(normalized) : null;
+}
+
+function appendSignature(signatures: Map<string, Type[][]>, name: string, params: Type[]): void {
+	const existing = signatures.get(name) ?? [];
+	existing.push(params);
+	signatures.set(name, existing);
+}
+
+function expectedCallArgTypes(signatures: Map<string, Type[][]>, name: string, arity: number): Array<Type | undefined> {
+	const sameArity = (signatures.get(name) ?? []).filter(params => params.length === arity);
+	if (!sameArity.length) return [];
+	const out: Array<Type | undefined> = [];
+	for (let index = 0; index < arity; index++) {
+		const first = sameArity[0]![index];
+		out[index] = first && sameArity.every(params => params[index] === first) ? first : undefined;
+	}
+	return out;
 }
 
 function lazyIndexArgs(expr: Expr): [Expr, Expr] | null {
