@@ -23,17 +23,18 @@ export async function readFixture(rel: string) {
 	return fs.readFile(p, 'utf8');
 }
 
-export type RunPipelineOptions = { macros?: Record<string, string | number | boolean>; dynamicMacros?: DynamicMacros; includePaths?: string[] };
+export type RunPipelineOptions = { macros?: Record<string, string | number | boolean>; dynamicMacros?: DynamicMacros; includePaths?: string[]; extensions?: Parameters<typeof preprocessForAst>[1]['extensions'] };
 
 export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOptions) {
 	// Use new tokenizer+macro pipeline for disabled ranges/macros/includes, mirroring server integration
 	const fromPath = fileUriToPath(doc.uri) ?? '';
-	const full = preprocessForAst(doc.getText(), { includePaths: opts?.includePaths ?? [], fromPath, defines: opts?.macros ?? {}, dynamicMacros: opts?.dynamicMacros });
+	const full = preprocessForAst(doc.getText(), { includePaths: opts?.includePaths ?? [], fromPath, defines: opts?.macros ?? {}, dynamicMacros: opts?.dynamicMacros, extensions: opts?.extensions });
 	const pre: PreprocResult = {
 		disabledRanges: full.disabledRanges,
 		inactiveRanges: full.inactiveRanges,
 		macros: { ...full.macros },
 		dynamicMacros: full.dynamicMacros,
+		extensions: full.extensions,
 		funcMacros: full.funcMacros,
 		macroDefs: full.macroDefs,
 		includes: full.includes,

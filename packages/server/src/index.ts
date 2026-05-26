@@ -64,6 +64,7 @@ import {
 	optimizeScript,
 	parseDisabledDiagList,
 	parseDynamicMacroList,
+	parseLslExtensionSettings,
 	parseScriptFromText,
 	prepareRename as navPrepareRename,
 	preprocessForAst,
@@ -72,6 +73,7 @@ import {
 	semanticTokensLegend,
 	shrinkNameOptionsFromDefs,
 	type DynamicMacroMap,
+	type LslExtensionSettings,
 } from '@lsl-lsp/core';
 
 const connection: Connection = createConnection(ProposedFeatures.all);
@@ -111,6 +113,7 @@ const settings = {
 	includePaths: [] as string[],
 	macros: {} as Record<string, string | number | boolean>,
 	dynamicMacros: {} as DynamicMacroMap,
+	extensions: {} as LslExtensionSettings,
 	optimize: {} as OptimizeSettings,
 	measure: {
 		inlayHints: true,
@@ -154,6 +157,10 @@ function parseConfiguredDynamicMacros(raw: unknown): DynamicMacroMap {
 		connection.console.error('[lsl-lsp] invalid dynamic macro configuration: ' + String(e));
 		return {};
 	}
+}
+
+function parseConfiguredExtensions(raw: unknown): LslExtensionSettings {
+	return parseLslExtensionSettings(raw);
 }
 
 function parseOptimizeSettings(raw: unknown): OptimizeSettings {
@@ -240,12 +247,12 @@ function djb2Hash(str: string): number {
 	for (let i = 0; i < str.length; i++) h = (((h << 5) + h) ^ str.charCodeAt(i)) >>> 0;
 	return h >>> 0;
 }
-function computeConfigHash(macros: Record<string, string | number | boolean>, includePaths: string[], dynamicMacros: DynamicMacroMap, docUri?: string): number {
+function computeConfigHash(macros: Record<string, string | number | boolean>, includePaths: string[], dynamicMacros: DynamicMacroMap, extensions: LslExtensionSettings, docUri?: string): number {
 	// Include docUri so that per-file guard patterns (e.g. #ifndef FOO / #define FOO at top)
 	// never reuse another file's cached macro tables/disabled ranges. Without this a file opened
 	// after another sharing the same guards could see its body disabled if the previous file
 	// defined the guard macro. (User report: "seeing macros defined at the first line".)
-	const s = stableStringify({ macros, includePaths, dynamicMacros, doc: docUri || '' });
+	const s = stableStringify({ macros, includePaths, dynamicMacros, extensions, doc: docUri || '' });
 	return djb2Hash(s);
 }
 
@@ -257,11 +264,11 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 	const text = doc.getText();
 	let h = 2166136261 >>> 0; for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 16777619); } const currentTextHash = h >>> 0;
 	const hit = pipelineCache.get(key);
-	const currentHash = computeConfigHash(settings.macros, settings.includePaths, settings.dynamicMacros, doc.uri);
+	const currentHash = computeConfigHash(settings.macros, settings.includePaths, settings.dynamicMacros, settings.extensions, doc.uri);
 	if (hit && hit.version === currentVersion && hit.configHash === currentHash && hit.textHash === currentTextHash) return hit;
 
 	// Single unified preprocessing run (new pipeline)
-	const full = preprocessForAst(text, { includePaths: settings.includePaths, fromPath: URI.parse(doc.uri).fsPath, defines: { ...baselineMacros }, dynamicMacros: settings.dynamicMacros });
+	const full = preprocessForAst(text, { includePaths: settings.includePaths, fromPath: URI.parse(doc.uri).fsPath, defines: { ...baselineMacros }, dynamicMacros: settings.dynamicMacros, extensions: settings.extensions });
 	const macrosOnlyIncludes: string[] = full.includes || [];
 	if (!arraysShallowEqual(hit?.macrosOnlyIncludes, macrosOnlyIncludes)) indexIncludesList(key, macrosOnlyIncludes);
 	const pre: PreprocResult = {
@@ -269,6 +276,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 		inactiveRanges: full.inactiveRanges,
 		macros: full.macros,
 		dynamicMacros: full.dynamicMacros,
+		extensions: full.extensions,
 		funcMacros: full.funcMacros,
 		expandedTokens: full.expandedTokens,
 		macroDefs: full.macroDefs,
@@ -312,6 +320,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 	settings.includePaths = initOpts.includePaths || [];
 	settings.macros = initOpts.macros || {};
 	settings.dynamicMacros = parseConfiguredDynamicMacros(initOpts.dynamicMacros);
+	settings.extensions = parseConfiguredExtensions(initOpts.extensions);
 	settings.optimize = parseOptimizeSettings(initOpts.optimize);
 	if (initOpts.measure && typeof initOpts.measure === 'object' && typeof initOpts.measure.inlayHints === 'boolean') {
 		settings.measure.inlayHints = initOpts.measure.inlayHints;
@@ -605,6 +614,9 @@ connection.onDidChangeConfiguration(async change => {
 	settings.macros = newSettings.macros ?? settings.macros;
 	if (Object.prototype.hasOwnProperty.call(newSettings, 'dynamicMacros')) {
 		settings.dynamicMacros = parseConfiguredDynamicMacros(newSettings.dynamicMacros);
+	}
+	if (Object.prototype.hasOwnProperty.call(newSettings, 'extensions')) {
+		settings.extensions = parseConfiguredExtensions(newSettings.extensions);
 	}
 	if (Object.prototype.hasOwnProperty.call(newSettings, 'optimize')) {
 		settings.optimize = parseOptimizeSettings(newSettings.optimize);

@@ -5,6 +5,7 @@ import { Tokenizer } from './tokenizer';
 import { type MacroDefines, type IncludeResolver, preprocessAndExpandNew, MacroConditionalProcessor } from './macro';
 import type { ConditionalGroup, DisabledRange, DynamicMacros, PreprocDiagnostic } from './preproc';
 import { normalizeDiagCode } from '../analysisTypes';
+import { type LslExtensionSettings, resolveLslExtensions, type ResolvedLslExtensions } from '../extensions';
 
 // Maintain previous macro snapshot for delta detection between successive preprocessForAst calls
 const _prevMacroSnapshot: { macros: Record<string, unknown> } = { macros: {} };
@@ -51,9 +52,10 @@ export function buildIncludeResolver(opts: IncludeResolverOptions): IncludeResol
 	};
 }
 
-export function preprocessForAst(text: string, opts: IncludeResolverOptions & { defines?: MacroDefines; dynamicMacros?: DynamicMacros }): {
+export function preprocessForAst(text: string, opts: IncludeResolverOptions & { defines?: MacroDefines; dynamicMacros?: DynamicMacros; extensions?: LslExtensionSettings }): {
 	macros: MacroDefines;
 	dynamicMacros?: DynamicMacros;
+	extensions: ResolvedLslExtensions;
 	funcMacros: Record<string, string>;
 	macroDefs?: Record<string, { start: number; end: number; file: string }>;
 	includes: string[];
@@ -89,6 +91,8 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	})();
 	// Provide __FILE__ lazily: allow builtin expansion later; no need to predefine for branch forcing because new preprocessor already records undefined identifiers.
 	const pre = preprocessAndExpandNew(opts.fromPath || '<memory>', version, rootTokens, initialDefines, resolver, opts.dynamicMacros);
+	const extensionCommentLines = rootTokens.filter(t => t.kind === 'comment-line').map(t => t.value);
+	const extensions = resolveLslExtensions(text, opts.extensions, pre.macros, extensionCommentLines);
 	// Build diagnostic suppression directives & disabled ranges by scanning comments.
 	// Supported forms (see tests/diag_suppress.test.ts):
 	//  // lsl-disable-line CODE1, CODE2
@@ -257,6 +261,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	return {
 		macros: pre.macros,
 		dynamicMacros: opts.dynamicMacros,
+		extensions,
 		funcMacros,
 		macroDefs: pre.macroDefs,
 		includes: pre.includes,
@@ -275,7 +280,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 }
 
 // Legacy wrapper used by core_pipeline*.tests to get preprocessed tokens & macro tables without full AST.
-export function preprocessTokens(text: string, opts: IncludeResolverOptions & { defines?: MacroDefines; dynamicMacros?: DynamicMacros } = { includePaths: [] }) {
+export function preprocessTokens(text: string, opts: IncludeResolverOptions & { defines?: MacroDefines; dynamicMacros?: DynamicMacros; extensions?: LslExtensionSettings } = { includePaths: [] }) {
 	const r = preprocessForAst(text, opts);
 	return {
 		macros: r.macros,

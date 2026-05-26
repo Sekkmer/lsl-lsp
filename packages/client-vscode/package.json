@@ -128,6 +128,17 @@
 					"default": [],
 					"description": "Macros to preserve as typed dynamic values, using name:type entries such as __AGENTID__:string."
 				},
+				"lsl.extensions": {
+					"type": "object",
+					"default": {},
+					"additionalProperties": false,
+					"description": "Off-by-default LSL dialect extensions accepted by the parser and lowered to standard LSL when rendering preprocessed or optimized output.",
+					"properties": {
+						"switch": { "type": "boolean", "default": false },
+						"lazyLists": { "type": "boolean", "default": false },
+						"constGlobalExpressions": { "type": "boolean", "default": false }
+					}
+				},
 				"lsl.optimize": {
 					"type": "object",
 					"default": {},

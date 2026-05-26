@@ -1,6 +1,7 @@
 import type { MacroDefines } from './macro';
 import type { Token } from './tokens';
 import type { Type } from '../ast/types';
+import type { ResolvedLslExtensions } from '../extensions';
 
 export type DisabledRange = { start: number; end: number; file?: string };
 export type DynamicMacros = Record<string, Type>;
@@ -21,6 +22,7 @@ export interface PreprocResult {
 	inactiveRanges?: DisabledRange[];
 	macros: MacroDefines;
 	dynamicMacros?: DynamicMacros;
+	extensions?: ResolvedLslExtensions;
 	funcMacros: Record<string, string>;
 	macroDefs?: Record<string, { start: number; end: number; file: string }>;
 	includes: string[];

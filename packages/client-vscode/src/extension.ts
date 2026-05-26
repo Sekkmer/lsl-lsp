@@ -276,6 +276,7 @@ export async function activate(context: vscode.ExtensionContext) {
 			includePaths: resolveIncludePaths(currentCfg.get('includePaths')),
 			macros: currentCfg.get('macros'),
 			dynamicMacros: currentCfg.get('dynamicMacros'),
+			extensions: currentCfg.get('extensions'),
 			optimize: currentCfg.get('optimize'),
 			measure: { inlayHints: currentCfg.get('measure.inlayHints') },
 			logFile,

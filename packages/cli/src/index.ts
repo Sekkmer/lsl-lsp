@@ -34,6 +34,7 @@ import {
 	lslHover,
 	parseDisabledDiagList,
 	parseDynamicMacroList,
+	parseLslExtensionSettings,
 	parseScriptFromText,
 	preprocessForAst,
 	measureAst,
@@ -47,6 +48,7 @@ import {
 	type SimpleType,
 	type Value,
 	type DynamicMacroMap,
+	type LslExtensionSettings,
 } from '@lsl-lsp/core';
 
 declare const CLI_VERSION: string;
@@ -65,6 +67,7 @@ interface CliOptions {
 	definitionsForceUpdate: boolean;
 	defines: Record<string, string | number | boolean>;
 	dynamicMacros: DynamicMacroMap;
+	extensions: LslExtensionSettings;
 	disabledDiagnostics: Set<Diag['code']>;
 	json: boolean;
 	write: boolean;
@@ -105,6 +108,7 @@ Options:
   -D, --define <name[=value]>    Add a predefined macro. Can be repeated.
       --dynamic-macro <name:type>
                                   Preserve a dynamic macro as an unknown typed value.
+      --enable-extension <name>   Enable an off-by-default LSL extension. Names: switch, lazy-lists, const-globals.
       --definitions <path>       Use a custom definitions JSON/YAML file.
       --auto-update-defs         Check for cached official definition updates before loading bundled definitions.
       --force-definition-update  Fetch definitions even if the cached check interval has not expired.
@@ -554,6 +558,7 @@ async function readAndPreprocessFile(file: string, opts: CliOptions) {
 		fromPath: filePath,
 		defines: { ...opts.defines },
 		dynamicMacros: opts.dynamicMacros,
+		extensions: opts.extensions,
 	});
 	return { filePath, text, doc, full };
 }
@@ -564,6 +569,7 @@ function toPreprocResult(full: ReturnType<typeof preprocessForAst>): PreprocResu
 		inactiveRanges: full.inactiveRanges,
 		macros: full.macros,
 		dynamicMacros: full.dynamicMacros,
+		extensions: full.extensions,
 		funcMacros: full.funcMacros,
 		macroDefs: full.macroDefs,
 		includes: full.includes,
@@ -743,6 +749,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 		definitionsForceUpdate: false,
 		defines: {},
 		dynamicMacros: {},
+		extensions: {},
 		disabledDiagnostics: new Set(),
 		json: false,
 		write: false,
@@ -799,6 +806,12 @@ function parseArgs(argv: string[]): CliOptions | null {
 		}
 		if (arg === '--dynamic-macro') {
 			Object.assign(opts.dynamicMacros, parseDynamicMacroList(expectValue(args, ++i, arg)));
+			continue;
+		}
+		if (arg === '--enable-extension') {
+			const parsed = parseLslExtensionSettings(expectValue(args, ++i, arg));
+			if (Object.keys(parsed).length === 0) throw new CliError(`Invalid extension name: ${args[i]}`);
+			Object.assign(opts.extensions, parsed);
 			continue;
 		}
 		if (arg === '--definitions') {

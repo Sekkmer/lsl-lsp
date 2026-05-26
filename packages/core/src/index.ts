@@ -5,6 +5,7 @@ export * from './defs';
 export * from './definitionUpdate';
 export * from './diagSettings';
 export * from './format';
+export * from './extensions';
 export * from './hover';
 export * from './lexer';
 export * from './navigation';
