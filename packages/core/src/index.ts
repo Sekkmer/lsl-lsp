@@ -24,6 +24,7 @@ export * from './ast/eval';
 export * from './ast/emit';
 export * from './ast/infer';
 export * from './ast/key';
+export * from './ast/lazyLists';
 export * from './ast/lexer';
 export * from './ast/measure';
 export * from './ast/optimize';

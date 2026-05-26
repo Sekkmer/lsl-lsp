@@ -11,6 +11,7 @@ import { preprocessForAst } from '../core/pipeline';
 import type { MacroDefines } from '../core/macro';
 import type { DynamicMacros } from '../core/preproc';
 import { basenameFromUri } from '../builtins';
+import { lazyListIndexCall, lowerLazyListExpressions } from './lazyLists';
 import { Tokenizer } from '../core/tokenizer';
 import { TokenStream } from '../core/tokens';
 import { fileUriToPath } from '../protocol';
@@ -45,8 +46,9 @@ export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', op
 		peek: () => ts.peek(),
 		pushBack: (t: Token) => ts.pushBack(t)
 	} as unknown as Lexer;
-	const P = new Parser(lxAdapter as Lexer, text, { disableSourceHeuristics: true });
-	return P.parseScript();
+	const P = new Parser(lxAdapter as Lexer, text, { disableSourceHeuristics: true, lazyLists: !!pre.extensions.lazyLists });
+	const script = P.parseScript();
+	return pre.extensions.lazyLists ? lowerLazyListExpressions(script) : script;
 }
 
 function computeLineStarts(text: string): number[] {
@@ -127,7 +129,7 @@ function mergeTokensWithComments(code: Token[], comments: Token[]): Token[] {
 	return out;
 }
 
-interface ParserOptions { disableSourceHeuristics?: boolean }
+interface ParserOptions { disableSourceHeuristics?: boolean; lazyLists?: boolean }
 
 class Parser {
 	private readonly lx: Lexer;
@@ -137,8 +139,9 @@ class Parser {
 	private leadingComment = '';
 	private diagnostics: Diagnostic[] = [];
 	private readonly disableSourceHeuristics: boolean;
+	private readonly lazyLists: boolean;
 
-	constructor(lx: Lexer, src: string, opts?: ParserOptions) { this.lx = lx; this.src = src; this.disableSourceHeuristics = !!opts?.disableSourceHeuristics; }
+	constructor(lx: Lexer, src: string, opts?: ParserOptions) { this.lx = lx; this.src = src; this.disableSourceHeuristics = !!opts?.disableSourceHeuristics; this.lazyLists = !!opts?.lazyLists; }
 
 	private next(): Token {
 		if (this.look) { const t = this.look; this.look = null; return t; }
@@ -1325,12 +1328,17 @@ class Parser {
 				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Unary', op: '--', argument: expr, postfix: true };
 				continue;
 			}
-			// unsupported indexing operator expr[...]
 			if (this.maybe('punct', '[')) {
-				while (!this.maybe('punct', ']') && this.peek().kind !== 'eof') { try { this.parseExpr(); } catch { this.next(); } this.maybe('punct', ','); }
-				const fileForIdx = (expr as unknown as { file?: string }).file || this.peek().file || '<unknown>';
-				this.report({ kind: 'punct', value: '[]', span: { start: expr.span.start, end: this.peek().span.end }, file: fileForIdx }, 'Indexing with [] is not supported', 'LSL000');
-				expr = { ...expr, span: spanFrom(expr.span.start, this.peek().span.end) };
+				if (this.lazyLists) {
+					const index = this.parseExpr();
+					const close = this.eat('punct', ']');
+					expr = lazyListIndexCall(expr, { ...index, span: spanFrom(index.span.start, close.span.end) });
+				} else {
+					while (!this.maybe('punct', ']') && this.peek().kind !== 'eof') { try { this.parseExpr(); } catch { this.next(); } this.maybe('punct', ','); }
+					const fileForIdx = (expr as unknown as { file?: string }).file || this.peek().file || '<unknown>';
+					this.report({ kind: 'punct', value: '[]', span: { start: expr.span.start, end: this.peek().span.end }, file: fileForIdx }, 'Indexing with [] is not supported', 'LSL000');
+					expr = { ...expr, span: spanFrom(expr.span.start, this.peek().span.end) };
+				}
 				continue;
 			}
 			break;
