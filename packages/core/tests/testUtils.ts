@@ -11,6 +11,7 @@ import type { Token as LexToken } from '../src/lexer';
 import type { SimpleToken } from '../src/navigation';
 import { parseScriptFromText } from '../src/ast/parser';
 import { analyzeAst } from '../src/ast/analyze';
+import { builtinConstantValuesFromDefs, foldConstGlobalExpressions } from '../src/ast/constGlobalExpressions';
 import { fileUriToPath } from '../src/protocol';
 import { basenameFromUri } from '../src/builtins';
 
@@ -62,11 +63,17 @@ export function runPipeline(doc: TextDocument, defs: Defs, opts?: RunPipelineOpt
 	// (notably for synthetic built-ins like __FILE__ whose presence controls conditional branches).
 	// Passing full.macros ensures #if defined(__FILE__) guarded declarations are preserved
 	// consistently between the preprocessing used for analysis and the parser invocation here.
-	const script = parseScriptFromText(doc.getText(), doc.uri, { macros: { ...full.macros, ...(opts?.macros || {}) }, dynamicMacros: opts?.dynamicMacros, includePaths: opts?.includePaths, pre: full });
+	let script = parseScriptFromText(doc.getText(), doc.uri, { macros: { ...full.macros, ...(opts?.macros || {}) }, dynamicMacros: opts?.dynamicMacros, includePaths: opts?.includePaths, pre: full });
+	if (full.extensions.constGlobalExpressions) {
+		script = foldConstGlobalExpressions(script, {
+			builtinConstants: builtinConstantValuesFromDefs(defs),
+			dynamicMacros: opts?.dynamicMacros,
+		});
+	}
 	const analysis = analyzeAst(doc, script, defs, pre);
 	const sem = buildSemanticTokens(doc, tokens, defs, pre, analysis);
 
-	return { pre, tokens, rawTokens, expandedTokens: expanded, analysis, sem };
+	return { pre, tokens, rawTokens, expandedTokens: expanded, script, analysis, sem };
 }
 
 export function tokensToDebug(tokens: ReturnType<typeof lex>) {

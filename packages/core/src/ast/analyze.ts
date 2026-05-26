@@ -877,6 +877,41 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		}
 	}
 
+	function isFoldableGlobalInitializer(expr: Expr, env: Env): boolean {
+		if (!isConstGlobalFoldCandidate(expr)) return false;
+		return evalExpr(expr, env, ANALYSIS_EVAL_OPTIONS).kind === 'value';
+	}
+
+	function isConstGlobalFoldCandidate(expr: Expr): boolean {
+		switch (expr.kind) {
+			case 'ErrorExpr':
+				return false;
+			case 'StringLiteral':
+			case 'NumberLiteral':
+			case 'Identifier':
+				return true;
+			case 'Member':
+				return isConstGlobalFoldCandidate(expr.object);
+			case 'Unary':
+				return expr.op !== '++' && expr.op !== '--' && isConstGlobalFoldCandidate(expr.argument);
+			case 'Binary':
+				return !assignmentOps.has(expr.op) && isConstGlobalFoldCandidate(expr.left) && isConstGlobalFoldCandidate(expr.right);
+			case 'Cast':
+				return isConstGlobalFoldCandidate(expr.argument);
+			case 'Paren':
+				return isConstGlobalFoldCandidate(expr.expression);
+			case 'ListLiteral':
+				return expr.elements.every(isConstGlobalFoldCandidate);
+			case 'VectorLiteral':
+				return expr.elements.every(isConstGlobalFoldCandidate);
+			case 'Call':
+				return expr.callee.kind === 'Identifier' && expr.args.every(isConstGlobalFoldCandidate);
+			default:
+				AssertNever(expr, 'Unhandled Expr kind in isConstGlobalFoldCandidate');
+				return false;
+		}
+	}
+
 	const assignmentOps = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
 	function rootIdentifier(expr: Expr): string | null {
 		if (expr.kind === 'Identifier') return expr.name;
@@ -1297,7 +1332,9 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (g.initializer) {
 			if (currentGlobal) {
 				walkExpr(g.initializer, globalScope, globalTypeScope);
-				if (!isValidGlobalInitializer(g.initializer, globalScope)) {
+				const foldedInitializer = pre.extensions?.constGlobalExpressions
+					&& isFoldableGlobalInitializer(g.initializer, currentValueEnv());
+				if (!isValidGlobalInitializer(g.initializer, globalScope) && !foldedInitializer) {
 					diagnostics.push({
 						code: LSL_DIAGCODES.SYNTAX,
 						message: 'Global initializer must be a literal, builtin constant, or previously declared global',

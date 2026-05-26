@@ -26,6 +26,7 @@ import {
 	fileUriToPath,
 	filePathToUri,
 	filterDiagnostics,
+	foldConstGlobalExpressions,
 	formatDocumentEdits,
 	gotoDefinition,
 	cachedDefinitionPath,
@@ -520,12 +521,18 @@ async function runHover(opts: CliOptions, defs: Defs): Promise<number> {
 async function analyzeFile(file: string, opts: CliOptions, defs: Defs): Promise<PipelineResult> {
 	const { filePath, text, doc, full } = await readAndPreprocessFile(file, opts);
 	const pre = toPreprocResult(full);
-	const ast: Script = parseScriptFromText(text, doc.uri, {
+	let ast: Script = parseScriptFromText(text, doc.uri, {
 		macros: { ...full.macros, ...opts.defines },
 		dynamicMacros: opts.dynamicMacros,
 		includePaths: opts.includePaths,
 		pre: full,
 	});
+	if (pre.extensions?.constGlobalExpressions) {
+		ast = foldConstGlobalExpressions(ast, {
+			builtinConstants: builtinConstantValues(defs),
+			dynamicMacros: opts.dynamicMacros,
+		});
+	}
 	const analysis = analyzeAst(doc, ast, defs, pre);
 	const diagnostics = collectDiagnostics(doc, pre, analysis.diagnostics, opts);
 	return { filePath, text, doc, ast, pre, analysis, diagnostics };

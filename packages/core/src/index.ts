@@ -18,6 +18,7 @@ export * from './symbols';
 export * from './utils';
 export * from './ast/analyze';
 export * from './ast/compat';
+export * from './ast/constGlobalExpressions';
 export * from './ast/constantGlobals';
 export * from './ast/eval';
 export * from './ast/emit';

@@ -50,6 +50,7 @@ import {
 	documentSymbols,
 	filterDiagnostics,
 	findAllReferences,
+	foldConstGlobalExpressions,
 	formatDocumentEdits,
 	formatLslText,
 	formatRangeEdits,
@@ -288,7 +289,13 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 		conditionalGroups: full.conditionalGroups,
 	};
 	const tokens = lex(doc, pre.inactiveRanges ?? pre.disabledRanges);
-	const ast: Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, dynamicMacros: settings.dynamicMacros, includePaths: settings.includePaths, pre: full });
+	let ast: Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, dynamicMacros: settings.dynamicMacros, includePaths: settings.includePaths, pre: full });
+	if (pre.extensions?.constGlobalExpressions) {
+		ast = foldConstGlobalExpressions(ast, {
+			builtinConstants: builtinConstantValues(defs),
+			dynamicMacros: settings.dynamicMacros,
+		});
+	}
 	const analysis: Analysis = analyzeAst(doc, ast, defs, pre);
 	const entry: PipelineCache = { version: currentVersion, textHash: currentTextHash, pre, tokens, analysis, ast, macrosOnlyIncludes, configHash: currentHash };
 	pipelineCache.set(key, entry);
