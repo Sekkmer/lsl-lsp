@@ -326,6 +326,25 @@ describe('optimizer plumbing', () => {
 		expect(parseScriptFromText(formatted).diagnostics).toHaveLength(0);
 	});
 
+	it('preserves numeric-to-string casts required by function signatures', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer verbosityMode;',
+			'default { state_entry() {',
+			'  llMessageLinked(LINK_THIS, 8, (string)verbosityMode, NULL_KEY);',
+			'} }',
+		].join('\n')), {
+			builtinConstants: new Map([
+				['LINK_THIS', { kind: 'value', type: 'integer', value: -4 }],
+				['NULL_KEY', { kind: 'value', type: 'key', value: '00000000-0000-0000-0000-000000000000' }],
+			]),
+			dropNoOpCasts: true,
+			shrinkNames: true,
+		});
+		expect(result.code).toContain('llMessageLinked(-4,8,(string)');
+		expect(result.code).not.toContain('llMessageLinked(-4,8,_,');
+		expect(parseScriptFromText(result.code).diagnostics.filter(diagnostic => diagnostic.severity !== 'warning' && diagnostic.severity !== 'info')).toHaveLength(0);
+	});
+
 	it('keeps optimized list-length loop headers valid after formatting', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'string link(key id) { return (string)id; }',

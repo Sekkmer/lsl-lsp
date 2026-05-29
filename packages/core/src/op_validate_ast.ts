@@ -541,8 +541,7 @@ export function validateOperatorsFromAst(
 		}
 		// Allow weak numeric coercions similar to LSL
 		if (expected === 'float' && got === 'integer') return { ok: true };
-		// LSL implicitly stringifies many values when a string is expected
-		if (expected === 'string' && (got === 'integer' || got === 'float' || got === 'key')) return { ok: true };
+		if (expected === 'string' && got === 'key') return { ok: true };
 		return { ok: false };
 	}
 	function isAssignable(n: Expr): boolean {
