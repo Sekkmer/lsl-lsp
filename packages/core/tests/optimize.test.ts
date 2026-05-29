@@ -1,5 +1,8 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { formatLslText, optimizeScript, parseScriptFromText, shrinkNameOptionsFromDefs } from '../src';
+import { builtinConstantValuesFromDefs, formatLslText, loadDefs, optimizeScript, parseScriptFromText, shrinkNameOptionsFromDefs } from '../src';
+
+const defsPath = path.join(__dirname, '..', '..', '..', 'third_party', 'lsl-definitions', 'lsl_definitions.yaml');
 
 function optimize(code: string) {
 	return optimizeScript(parseScriptFromText(code));
@@ -197,6 +200,21 @@ describe('optimizer plumbing', () => {
 			]),
 		});
 		expect(result.code).toBe('default{state_entry(){integer a=1;integer b=3;}}');
+	});
+
+	it('does not fold escaped official string sentinel constants', async () => {
+		const defs = await loadDefs(defsPath);
+		const builtinConstants = builtinConstantValuesFromDefs(defs);
+		expect(builtinConstants.has('EOF')).toBe(false);
+		expect(builtinConstants.has('NAK')).toBe(false);
+		expect(builtinConstants.has('JSON_TRUE')).toBe(false);
+		expect(builtinConstants.has('NULL_KEY')).toBe(true);
+		const result = optimizeScript(parseScriptFromText('default { dataserver(key query, string data) { if (data != EOF) llOwnerSay(data); if (data == JSON_TRUE) llOwnerSay("json"); } }'), {
+			builtinConstants,
+		});
+		expect(result.code).toContain('data!=EOF');
+		expect(result.code).toContain('data==JSON_TRUE');
+		expect(result.code).not.toContain('\\\\n\\\\n\\\\n');
 	});
 
 	it('can rewrite list length checks using Mono list truthiness', () => {

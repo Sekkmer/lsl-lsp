@@ -40,8 +40,8 @@ import {
 	type PreprocResult,
 	type Script,
 	type SimpleType,
-	type Value,
 	analyzeAst,
+	builtinConstantValuesFromDefs,
 	buildSemanticTokens,
 	clearIncludeResolverCache,
 	computeRenameEdits,
@@ -297,7 +297,7 @@ function getPipeline(doc: TextDocument): PipelineCache | null {
 	let ast: Script = parseScriptFromText(text, doc.uri, { macros: { ...baselineMacros }, dynamicMacros: settings.dynamicMacros, includePaths: settings.includePaths, defs, pre: full });
 	if (pre.extensions?.constGlobalExpressions) {
 		ast = foldConstGlobalExpressions(ast, {
-			builtinConstants: builtinConstantValues(defs),
+			builtinConstants: builtinConstantValuesFromDefs(defs),
 			dynamicMacros: settings.dynamicMacros,
 		});
 	}
@@ -543,7 +543,7 @@ function ensureTrailingNewline(text: string): string {
 function optimizeOptionsFromSettings(defs: Defs): OptimizeOptions {
 	const flag = (name: OptimizeFlag): boolean => settings.optimize[name] ?? true;
 	return {
-		builtinConstants: builtinConstantValues(defs),
+		builtinConstants: builtinConstantValuesFromDefs(defs),
 		builtinFunctionReturnTypes: builtinReturnTypes(defs),
 		dynamicMacros: settings.dynamicMacros,
 		bitwiseBooleanOps: flag('bitwiseBooleanOps'),
@@ -559,34 +559,6 @@ function optimizeOptionsFromSettings(defs: Defs): OptimizeOptions {
 		shrinkNames: flag('shrinkNames'),
 		shrinkNameOptions: shrinkNameOptionsFromDefs(defs),
 	};
-}
-
-function builtinConstantValues(defs: Defs): ReadonlyMap<string, Value> {
-	const out = new Map<string, Value>();
-	for (const [name, constant] of defs.consts) {
-		const value = constant.value;
-		switch (constant.type) {
-			case 'integer':
-				if (typeof value === 'number' || typeof value === 'boolean') {
-					out.set(name, { kind: 'value', type: 'integer', value: Number(value) | 0 });
-				}
-				break;
-			case 'float':
-				if (typeof value === 'number') {
-					out.set(name, { kind: 'value', type: 'float', value });
-				}
-				break;
-			case 'string':
-			case 'key':
-				if (typeof value === 'string') {
-					out.set(name, { kind: 'value', type: constant.type, value });
-				}
-				break;
-			default:
-				break;
-		}
-	}
-	return out;
 }
 
 function builtinReturnTypes(defs: Defs): ReadonlyMap<string, SimpleType> {

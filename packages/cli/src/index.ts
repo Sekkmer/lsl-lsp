@@ -21,6 +21,7 @@ import {
 	type DefFunction,
 	TextDocument,
 	analyzeAst,
+	builtinConstantValuesFromDefs,
 	diagCodeFriendly,
 	documentSymbols,
 	fileUriToPath,
@@ -50,7 +51,6 @@ import {
 	updateDefinitions,
 	type OptimizeOptions,
 	type SimpleType,
-	type Value,
 	type DynamicMacroMap,
 	type LslExtensionSettings,
 } from '@lsl-lsp/core';
@@ -220,7 +220,7 @@ async function runOptimize(opts: CliOptions, defs: Defs): Promise<number> {
 
 function cliOptimizeOptions(defs: Defs, opts: CliOptions): OptimizeOptions {
 	return {
-		builtinConstants: builtinConstantValues(defs),
+		builtinConstants: builtinConstantValuesFromDefs(defs),
 		builtinFunctionReturnTypes: builtinReturnTypes(defs),
 		dynamicMacros: opts.dynamicMacros,
 		bitwiseBooleanOps: true,
@@ -233,34 +233,6 @@ function cliOptimizeOptions(defs: Defs, opts: CliOptions): OptimizeOptions {
 		shrinkNames: true,
 		shrinkNameOptions: shrinkNameOptionsFromDefs(defs),
 	};
-}
-
-function builtinConstantValues(defs: Defs): ReadonlyMap<string, Value> {
-	const out = new Map<string, Value>();
-	for (const [name, constant] of defs.consts) {
-		const value = constant.value;
-		switch (constant.type) {
-			case 'integer':
-				if (typeof value === 'number' || typeof value === 'boolean') {
-					out.set(name, { kind: 'value', type: 'integer', value: Number(value) | 0 });
-				}
-				break;
-			case 'float':
-				if (typeof value === 'number') {
-					out.set(name, { kind: 'value', type: 'float', value });
-				}
-				break;
-			case 'string':
-			case 'key':
-				if (typeof value === 'string') {
-					out.set(name, { kind: 'value', type: constant.type, value });
-				}
-				break;
-			default:
-				break;
-		}
-	}
-	return out;
 }
 
 function builtinReturnTypes(defs: Defs): ReadonlyMap<string, SimpleType> {
@@ -539,7 +511,7 @@ async function analyzeFile(file: string, opts: CliOptions, defs: Defs): Promise<
 	});
 	if (pre.extensions?.constGlobalExpressions) {
 		ast = foldConstGlobalExpressions(ast, {
-			builtinConstants: builtinConstantValues(defs),
+			builtinConstants: builtinConstantValuesFromDefs(defs),
 			dynamicMacros: opts.dynamicMacros,
 		});
 	}

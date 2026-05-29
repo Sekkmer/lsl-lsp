@@ -62,7 +62,7 @@ export function builtinConstantValuesFromDefs(defs: Pick<Defs, 'consts'>): Reado
 				break;
 			case 'string':
 			case 'key':
-				if (typeof value === 'string') {
+				if (typeof value === 'string' && isFoldableBuiltinStringValue(value)) {
 					out.set(name, { kind: 'value', type: normalizeType(constant.type) as 'string' | 'key', value });
 				}
 				break;
@@ -71,6 +71,12 @@ export function builtinConstantValuesFromDefs(defs: Pick<Defs, 'consts'>): Reado
 		}
 	}
 	return out;
+}
+
+function isFoldableBuiltinStringValue(value: string): boolean {
+	// The official YAML stores EOF, NAK, and JSON sentinel constants as escaped
+	// source text. Folding those identifiers would emit the escape text itself.
+	return !value.includes('\\');
 }
 
 function isFoldCandidateExpr(expr: Expr): boolean {
