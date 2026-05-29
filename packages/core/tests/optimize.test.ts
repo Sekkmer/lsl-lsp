@@ -8,6 +8,10 @@ function optimize(code: string) {
 	return optimizeScript(parseScriptFromText(code));
 }
 
+function blockingDiagnostics(code: string) {
+	return parseScriptFromText(code).diagnostics.filter(diagnostic => diagnostic.severity !== 'warning' && diagnostic.severity !== 'info');
+}
+
 describe('optimizer plumbing', () => {
 	it('emits stable compact LSL', () => {
 		const first = optimize('integer x = 1;\nfoo(integer a) { return; }\ndefault { state_entry() { ; } }');
@@ -625,6 +629,44 @@ describe('optimizer plumbing', () => {
 		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
 	});
 
+	it('does not specialize constant arguments for parameters written by the function', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer parse(integer index, list values) {',
+			'  index += values != [];',
+			'  return index;',
+			'}',
+			'integer version(string value) {',
+			'  value = (string)llParseString2List(value, ["."], []);',
+			'  return value != "";',
+			'}',
+			'integer post(integer index) {',
+			'  index++;',
+			'  return index;',
+			'}',
+			'integer pre(integer index) {',
+			'  --index;',
+			'  return index;',
+			'}',
+			'default { state_entry() {',
+			'  llOwnerSay((string)parse(-1, [1]));',
+			'  llOwnerSay((string)version("1.2.3"));',
+			'  llOwnerSay((string)post(1));',
+			'  llOwnerSay((string)pre(1));',
+			'} }',
+		].join('\n')), {
+			inlineFunctions: true,
+			removeUnusedFunctions: true,
+			listLength: true,
+			listAdd: true,
+			builtinFunctionReturnTypes: new Map([['llParseString2List', 'list']]),
+		});
+		expect(result.code).not.toContain('-1+=');
+		expect(result.code).not.toContain('"1.2.3"=');
+		expect(result.code).not.toContain('1++');
+		expect(result.code).not.toContain('--1');
+		expect(blockingDiagnostics(result.code)).toHaveLength(0);
+	});
+
 	it('removes unreachable user functions when requested', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'integer unused() { return 1; }',
@@ -801,6 +843,61 @@ describe('optimizer plumbing', () => {
 		expect(result.code.match(/"b"/g)).toHaveLength(1);
 		expect(result.code.match(/"c"/g)).toHaveLength(1);
 		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
+	});
+
+	it('keeps local initializer values read by a later self-referential assignment', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  list avatars = [llGetOwner(), "Ada"];',
+			'  integer index = 1;',
+			'  string name = llList2String(avatars, index);',
+			'  name = (string)(index++) + " " + name;',
+			'  name = llGetSubString(name, 0, 23);',
+			'  llOwnerSay(name);',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+			listAdd: true,
+			builtinFunctionReturnTypes: new Map([
+				['llGetOwner', 'key'],
+				['llList2String', 'string'],
+				['llGetSubString', 'string'],
+			]),
+		});
+		expect(result.code).toContain('string name=llList2String');
+		expect(result.code).toContain('name=(string)(index++)+" "+name;');
+		expect(result.code).not.toContain('string name;');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
+	});
+
+	it('keeps initializer values read by later self-updates', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer count = llGetUnixTime();',
+			'  count = count + 1;',
+			'  integer absolute = llGetUnixTime();',
+			'  absolute = llAbs(absolute);',
+			'  integer doubled = llGetUnixTime();',
+			'  doubled += doubled;',
+			'  integer index = llGetUnixTime();',
+			'  integer shown = index++;',
+			'  integer decremented = --index;',
+			'  llOwnerSay((string)count + ":" + (string)absolute + ":" + (string)doubled + ":" + (string)shown + ":" + (string)decremented + ":" + (string)index);',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+			builtinFunctionReturnTypes: new Map([['llAbs', 'integer'], ['llGetUnixTime', 'integer']]),
+		});
+		expect(result.code).toContain('integer count=llGetUnixTime();');
+		expect(result.code).toContain('count=count+1;');
+		expect(result.code).toContain('integer absolute=llGetUnixTime();');
+		expect(result.code).toContain('absolute=llAbs(absolute);');
+		expect(result.code).toContain('integer doubled=llGetUnixTime();');
+		expect(result.code).toContain('doubled+=doubled;');
+		expect(result.code).toContain('integer index=llGetUnixTime();');
+		expect(result.code).toContain('integer shown=index++;');
+		expect(result.code).toContain('integer decremented=--index;');
+		expect(blockingDiagnostics(result.code)).toHaveLength(0);
 	});
 
 	it('reuses same-type local slots when lifetimes do not overlap', () => {

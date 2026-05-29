@@ -6,9 +6,7 @@ All notable changes to this project will be documented in this file.
 - Added official definition auto-update support so bundled LSL definitions can be refreshed from upstream instead of going stale.
 - Added opt-in Firestorm-style LSL extension support, including constant global expressions, lazy list access lowering, switch lowering, and extension detection.
 - Added Firestorm preprocessor header support so generated files can carry and recover original source text.
-- Fixed optimizer handling of escaped builtin sentinel constants such as `EOF`, `NAK`, and JSON sentinel values so they are not folded into incorrect escaped source text.
-- Fixed optimized memory comparison for self-dependent list/string append assignments so unstable optimizer output cannot report misleading lower free-memory estimates.
-- Added measured optimizer flow passes for demand/use cleanup, local value propagation, constant-argument specialization, branch simplification, and local slot reuse.
+- Added measured optimizer flow passes for demand/use cleanup, local value propagation, constant-argument specialization, branch simplification, and local slot reuse, with safeguards for escaped builtin sentinel constants, stable memory comparison, assignment targets, and self-update liveness.
 
 ## 0.1.16
 - Added static Mono memory estimates through the `lsl-lsp measure` CLI command and VS Code inlay hints, including optimized-output comparison and a calibrated error band.

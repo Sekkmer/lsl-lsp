@@ -69,8 +69,10 @@ export function optimizeScript(script: Script, options: OptimizeOptions = {}): O
 			stable = true;
 			break;
 		}
+		const nextScript = parseScriptFromText(nextCode, 'file:///optimized.lsl', { dynamicMacros: opts.dynamicMacros });
+		if (hasBlockingOptimizeDiagnostics(nextScript)) break;
 		currentCode = nextCode;
-		currentScript = parseScriptFromText(currentCode, 'file:///optimized.lsl', { dynamicMacros: opts.dynamicMacros });
+		currentScript = nextScript;
 	}
 
 	return {
@@ -79,6 +81,10 @@ export function optimizeScript(script: Script, options: OptimizeOptions = {}): O
 		changed: currentCode !== initial,
 		stable,
 	};
+}
+
+function hasBlockingOptimizeDiagnostics(script: Script): boolean {
+	return script.diagnostics?.some(diagnostic => diagnostic.severity !== 'warning' && diagnostic.severity !== 'info') ?? false;
 }
 
 function optimizeScriptOnce(script: Script, opts: ResolvedOptimizeOptions): Script {
@@ -912,9 +918,12 @@ function collectSpecializationCandidates(script: Script): SpecializationCandidat
 		const fn = script.functions.get(call.callee.name);
 		if (!fn || stmtCallsFunction(fn.body, fn.name)) return;
 		const params = [...fn.parameters.keys()];
+		const writtenParams = collectWrittenNamesInStmt(fn.body);
 		if (call.args.length !== params.length) return;
 		const fixed = new Map<number, Expr>();
 		call.args.forEach((arg, index) => {
+			const param = params[index];
+			if (param && writtenParams.has(param)) return;
 			if (isSpecializableConstantArg(arg)) fixed.set(index, arg);
 		});
 		if (!fixed.size || fixed.size === params.length) return;
@@ -1806,8 +1815,8 @@ function removeDeadLocalAssignments(statements: Stmt[], pureFunctions: ReadonlyS
 	for (let index = statements.length - 1; index >= 0; index--) {
 		const stmt = statements[index]!;
 		if (isDeadLocalAssignment(stmt, locals, live, pureFunctions, noOpFunctions)) continue;
-		collectReadNamesFromStmt(stmt, live);
 		removeDefiniteLocalWritesFromLive(stmt, locals, live);
+		collectReadNamesFromStmt(stmt, live);
 		out.push(stmt);
 	}
 	out.reverse();
@@ -1835,8 +1844,8 @@ function dropDeadLocalInitializers(statements: Stmt[], pureFunctions: ReadonlySe
 			changed = true;
 			continue;
 		}
-		collectReadNamesFromStmt(stmt, live);
 		removeDefiniteLocalWritesFromLive(stmt, locals, live);
+		collectReadNamesFromStmt(stmt, live);
 		out.push(stmt);
 	}
 	out.reverse();
