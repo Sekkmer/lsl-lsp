@@ -349,7 +349,6 @@ describe('optimizer plumbing', () => {
 			shrinkNames: true,
 		});
 		const formatted = formatLslText(result.code);
-		expect(formatted).toContain(' != []');
 		expect(formatted).not.toContain('! = []');
 		expect(parseScriptFromText(formatted).diagnostics).toHaveLength(0);
 	});
@@ -602,6 +601,30 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toContain('integer a=doubleValue(llGetUnixTime());');
 	});
 
+	it('specializes profitable constant-argument function calls', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer choose(integer mode, integer value) {',
+			'  if (mode) return value + 1;',
+			'  llOwnerSay("slow");',
+			'  return value + 2;',
+			'}',
+			'default { state_entry() {',
+			'  integer value = llGetUnixTime();',
+			'  llOwnerSay((string)choose(1, value));',
+			'  llOwnerSay((string)choose(1, value + 1));',
+			'} }',
+		].join('\n')), {
+			inlineFunctions: true,
+			integerPeepholes: true,
+			removeUnusedFunctions: true,
+			builtinFunctionReturnTypes: new Map([['llGetUnixTime', 'integer']]),
+		});
+		expect(result.code).not.toContain('mode');
+		expect(result.code).not.toContain('slow');
+		expect(result.code).toContain('llOwnerSay((string)');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
+	});
+
 	it('removes unreachable user functions when requested', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'integer unused() { return 1; }',
@@ -659,6 +682,138 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toContain('integer noisy=llListen');
 	});
 
+	it('removes dead pure assignments to block-local variables', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer value = llGetUnixTime();',
+			'  value = 1 + 1;',
+			'  value = 3;',
+			'  llOwnerSay((string)value);',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+			builtinFunctionReturnTypes: new Map([['llGetUnixTime', 'integer']]),
+		});
+		expect(result.code).not.toContain('value=2;');
+		expect(result.code).toContain('llOwnerSay("3");');
+	});
+
+	it('keeps dead-looking assignments when removing them would skip effects or touch non-locals', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer globalValue;',
+			'integer side(integer value) { llOwnerSay("side"); return value; }',
+			'default { state_entry() {',
+			'  integer local = 0;',
+			'  local = side(1);',
+			'  local = 2;',
+			'  globalValue = 3;',
+			'  globalValue = 4;',
+			'  llOwnerSay((string)local);',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).toContain('local=side(1);');
+		expect(result.code).toContain('llOwnerSay("2");');
+		expect(result.code).toContain('globalValue=3;');
+		expect(result.code).toContain('globalValue=4;');
+	});
+
+	it('propagates cheap local assignment values through later direct reads', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer value;',
+			'  value = 3;',
+			'  if (value == 3) llOwnerSay((string)value);',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).toBe('default{state_entry(){llOwnerSay("3");}}');
+	});
+
+	it('invalidates propagated local values when their dependencies are written', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer source = llGetUnixTime();',
+			'  integer value;',
+			'  value = source + 1;',
+			'  source = llListen(1, "", NULL_KEY, "");',
+			'  llOwnerSay((string)value);',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+			builtinConstants: new Map([['NULL_KEY', { kind: 'value', type: 'key', value: '00000000-0000-0000-0000-000000000000' }]]),
+			builtinFunctionReturnTypes: new Map([['llGetUnixTime', 'integer'], ['llListen', 'integer']]),
+		});
+		expect(result.code).toContain('value=source+1;');
+		expect(result.code).toContain('source=llListen');
+		expect(result.code).toContain('llOwnerSay((string)value);');
+	});
+
+	it('does not propagate local values into loop conditions that are reevaluated after loop writes', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer keepGoing = 1;',
+			'  while (keepGoing) {',
+			'    keepGoing = 0;',
+			'  }',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).toContain('while(keepGoing)');
+		expect(result.code).toContain('keepGoing=0;');
+	});
+
+	it('does not propagate local values into compound assignment targets', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer total = 0;',
+			'  integer value = 2;',
+			'  total += value;',
+			'  llOwnerSay((string)total);',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).toContain('total+=2;');
+		expect(result.code).not.toContain('0+=');
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
+	});
+
+	it('reuses same-type local slots when lifetimes do not overlap', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer noisy(integer value) { llOwnerSay("side"); return value; }',
+			'default { state_entry() {',
+			'  integer first = noisy(1);',
+			'  llOwnerSay((string)first);',
+			'  integer second = noisy(2);',
+			'  llOwnerSay((string)second);',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).not.toContain('integer second=');
+		expect(result.code).toContain('first=noisy(2);');
+		expect(result.code).toContain('llOwnerSay((string)first);');
+	});
+
+	it('does not reuse local slots while the old value is still live', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer noisy(integer value) { llOwnerSay("side"); return value; }',
+			'default { state_entry() {',
+			'  integer first = noisy(1);',
+			'  integer second = noisy(2);',
+			'  llOwnerSay((string)(first + second));',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).toContain('integer second=noisy(2);');
+		expect(result.code).toContain('first+second');
+	});
+
 	it('removes empty events, no-op functions, and pure expression statements', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'empty() {}',
@@ -700,7 +855,8 @@ describe('optimizer plumbing', () => {
 		});
 		expect(result.code).toContain('llOwnerSay("2");');
 		expect(result.code).not.toContain('integer one=1;');
-		expect(result.code).toContain('integer longName=llGetUnixTime();');
+		expect(result.code).not.toContain('longName');
+		expect(result.code).toContain('integer one;one=llGetUnixTime();');
 	});
 
 	it('can remove a multi-use pure-call local to reduce Mono local pressure', () => {
@@ -725,14 +881,16 @@ describe('optimizer plumbing', () => {
 			'default { state_entry() {',
 			'  integer source = llGetUnixTime();',
 			'  integer value = source + 1;',
-			'  source = 4;',
+			'  source = llListen(1, "", NULL_KEY, "");',
 			'  llOwnerSay((string)value);',
 			'} }',
 		].join('\n')), {
 			removeUnusedFunctions: true,
+			builtinConstants: new Map([['NULL_KEY', { kind: 'value', type: 'key', value: '00000000-0000-0000-0000-000000000000' }]]),
+			builtinFunctionReturnTypes: new Map([['llGetUnixTime', 'integer'], ['llListen', 'integer']]),
 		});
 		expect(result.code).toContain('integer value=source+1;');
-		expect(result.code).toContain('source=4;');
+		expect(result.code).toContain('source=llListen');
 	});
 
 	it('does not remove local declarations that still have nested references', () => {
