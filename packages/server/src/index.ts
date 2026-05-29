@@ -781,6 +781,7 @@ connection.languages.inlayHint.on((params: InlayHintParams, token): InlayHint[] 
 	const optimizedFree = (() => {
 		try {
 			const optimized = optimizeScript(entry.ast, optimizeOptionsFromSettings(defs!));
+			if (!optimized.stable) return null;
 			if (!optimized.changed) return current.estimatedMonoFreeMemory;
 			const optimizedAst = parseScriptFromText(optimized.code, 'file:///optimized.lsl', { dynamicMacros: settings.dynamicMacros });
 			if (optimizedAst.diagnostics?.some(d => d.severity !== 'warning' && d.severity !== 'info')) return null;

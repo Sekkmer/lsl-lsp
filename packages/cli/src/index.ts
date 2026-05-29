@@ -270,6 +270,19 @@ async function runMeasure(opts: CliOptions, defs: Defs): Promise<number> {
 		const base = measureAst(result.ast, { sourceText: result.text });
 		if (!optimizeOptions) return { result, base, optimized: null };
 		const optimizedOut = optimizeScript(result.ast, optimizeOptions);
+		if (!optimizedOut.stable) {
+			return {
+				result,
+				base,
+				optimized: {
+					stable: optimizedOut.stable,
+					passes: optimizedOut.passes,
+					changed: optimizedOut.changed,
+					measure: null,
+					delta: null,
+				},
+			};
+		}
 		const optimizedText = formatLslText(optimizedOut.code, { enabled: true, braceStyle: opts.braceStyle });
 		const optimizedAst = parseScriptFromText(optimizedText, result.doc.uri, {
 			macros: result.pre.macros,
@@ -317,8 +330,8 @@ function measureToJson(item: {
 		stable: boolean;
 		passes: number;
 		changed: boolean;
-		measure: ReturnType<typeof measureAst>;
-		delta: object;
+		measure: ReturnType<typeof measureAst> | null;
+		delta: object | null;
 	} | null;
 }): object {
 	return {
@@ -336,18 +349,22 @@ function printMeasure(item: {
 		stable: boolean;
 		passes: number;
 		changed: boolean;
-		measure: ReturnType<typeof measureAst>;
-		delta: object;
+		measure: ReturnType<typeof measureAst> | null;
+		delta: object | null;
 	} | null;
 }): void {
 	process.stdout.write(`${item.result.filePath}\n`);
 	printMeasureBlock('  source', item.base);
 	if (item.optimized) {
-		const delta = item.optimized.delta as { estimatedMonoUsedMemory: number; estimatedMonoFreeMemory: number; compactCharacters: number };
-		printMeasureBlock('  optimized', item.optimized.measure);
-		process.stdout.write(
-			`  delta: used ${signed(delta.estimatedMonoUsedMemory)}, free ${signed(delta.estimatedMonoFreeMemory)}, compact chars ${signed(delta.compactCharacters)}\n`,
-		);
+		if (!item.optimized.measure || !item.optimized.delta) {
+			process.stdout.write(`  optimized: skipped; optimizer did not reach a stable output in ${item.optimized.passes} pass(es)\n`);
+		} else {
+			const delta = item.optimized.delta as { estimatedMonoUsedMemory: number; estimatedMonoFreeMemory: number; compactCharacters: number };
+			printMeasureBlock('  optimized', item.optimized.measure);
+			process.stdout.write(
+				`  delta: used ${signed(delta.estimatedMonoUsedMemory)}, free ${signed(delta.estimatedMonoFreeMemory)}, compact chars ${signed(delta.compactCharacters)}\n`,
+			);
+		}
 	}
 	for (const note of item.base.notes) process.stdout.write(`  note: ${note}\n`);
 }

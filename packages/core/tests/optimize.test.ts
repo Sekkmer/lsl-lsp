@@ -782,6 +782,27 @@ describe('optimizer plumbing', () => {
 		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
 	});
 
+	it('does not propagate self-dependent assignment values', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  list buttons = [];',
+			'  buttons = buttons + "a";',
+			'  buttons = buttons + "b";',
+			'  buttons = buttons + "c";',
+			'  llOwnerSay(llDumpList2String(buttons, ","));',
+			'} }',
+		].join('\n')), {
+			listAdd: true,
+			removeUnusedFunctions: true,
+			builtinFunctionReturnTypes: new Map([['llDumpList2String', 'string']]),
+		});
+		expect(result.stable).toBe(true);
+		expect(result.code.match(/"a"/g)).toHaveLength(1);
+		expect(result.code.match(/"b"/g)).toHaveLength(1);
+		expect(result.code.match(/"c"/g)).toHaveLength(1);
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
+	});
+
 	it('reuses same-type local slots when lifetimes do not overlap', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'integer noisy(integer value) { llOwnerSay("side"); return value; }',

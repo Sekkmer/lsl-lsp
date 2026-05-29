@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 - Added opt-in Firestorm-style LSL extension support, including constant global expressions, lazy list access lowering, switch lowering, and extension detection.
 - Added Firestorm preprocessor header support so generated files can carry and recover original source text.
 - Fixed optimizer handling of escaped builtin sentinel constants such as `EOF`, `NAK`, and JSON sentinel values so they are not folded into incorrect escaped source text.
+- Fixed optimized memory comparison for self-dependent list/string append assignments so unstable optimizer output cannot report misleading lower free-memory estimates.
 - Added measured optimizer flow passes for demand/use cleanup, local value propagation, constant-argument specialization, branch simplification, and local slot reuse.
 
 ## 0.1.16

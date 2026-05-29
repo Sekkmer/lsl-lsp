@@ -1681,9 +1681,12 @@ function updateLocalValueFacts(stmt: Stmt, locals: ReadonlySet<string>, facts: M
 function addLocalValueFact(name: string, expr: Expr, locals: ReadonlySet<string>, facts: Map<string, LocalValueFact>, pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): void {
 	if (!isCheapLocalValueExpr(expr, locals, pureFunctions, noOpFunctions)) return;
 	const dependencies = new Set<string>();
+	let selfDependent = false;
 	visitVariableIdentifiers(expr, ref => {
-		if (ref !== name) dependencies.add(ref);
+		if (ref === name) selfDependent = true;
+		else dependencies.add(ref);
 	});
+	if (selfDependent) return;
 	facts.set(name, { expr, dependencies });
 }
 
