@@ -893,6 +893,42 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toContain('llOwnerSay((string)value);');
 	});
 
+	it('does not propagate local values after conditional writes to the same local', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer source = llGetUnixTime();',
+			'  integer value = source + 1;',
+			'  if (llGetFreeMemory()) value = 2;',
+			'  llOwnerSay((string)value);',
+			'  llOwnerSay((string)source);',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+			builtinFunctionReturnTypes: new Map([['llGetFreeMemory', 'integer'], ['llGetUnixTime', 'integer']]),
+		});
+		expect(result.code).toContain('if(llGetFreeMemory())value=2;');
+		expect(result.code).toContain('llOwnerSay((string)value);');
+		expect(result.code).toContain('llOwnerSay((string)source);');
+		expect(result.code).not.toContain('llOwnerSay((string)(source+1));');
+	});
+
+	it('does not propagate local values after conditional writes to dependencies', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer source = llGetUnixTime();',
+			'  integer value = source + 1;',
+			'  if (llGetFreeMemory()) source = 2;',
+			'  llOwnerSay((string)value);',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+			builtinFunctionReturnTypes: new Map([['llGetFreeMemory', 'integer'], ['llGetUnixTime', 'integer']]),
+		});
+		expect(result.code).toContain('if(llGetFreeMemory())source=2;');
+		expect(result.code).toContain('llOwnerSay((string)value);');
+		expect(result.code).not.toContain('llOwnerSay((string)(source+1));');
+	});
+
 	it('does not propagate local values into loop conditions that are reevaluated after loop writes', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'default { state_entry() {',
@@ -906,6 +942,47 @@ describe('optimizer plumbing', () => {
 		});
 		expect(result.code).toContain('while(keepGoing)');
 		expect(result.code).toContain('keepGoing=0;');
+	});
+
+	it('does not propagate dependency-backed values into loops that write dependencies', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer source = llGetUnixTime();',
+			'  integer value = source;',
+			'  while (llGetFreeMemory()) {',
+			'    llOwnerSay((string)value);',
+			'    source = 2;',
+			'  }',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+			builtinFunctionReturnTypes: new Map([['llGetFreeMemory', 'integer'], ['llGetUnixTime', 'integer']]),
+		});
+		expect(result.code).toContain('while(llGetFreeMemory())');
+		expect(result.code).toContain('llOwnerSay((string)value);');
+		expect(result.code).toContain('source=2;');
+		expect(result.code).not.toContain('llOwnerSay((string)source);');
+	});
+
+	it('propagates local values within straight-line segments before jump barriers', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  string texture = "a";',
+			'  if (llGetUnixTime()) texture = "b";',
+			'  string copy = texture;',
+			'  integer index;',
+			'  for (index = 0; index < 1; ++index) llOwnerSay(copy);',
+			'  jump done;',
+			'  llOwnerSay("skip");',
+			'  @done;',
+			'} }',
+		].join('\n')), {
+			removeUnusedFunctions: true,
+			builtinFunctionReturnTypes: new Map([['llGetUnixTime', 'integer']]),
+		});
+		expect(result.code).not.toContain('copy');
+		expect(result.code).toContain('llOwnerSay(texture);');
+		expect(result.code).toContain('jump done;llOwnerSay("skip");@done;');
 	});
 
 	it('does not propagate local values into compound assignment targets', () => {

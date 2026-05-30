@@ -1486,7 +1486,8 @@ function cleanupStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, noOpFunctio
 			const propagated = inlineLocalDeclsBySize(withoutDeadAssignments, pureFunctions, noOpFunctions);
 			const reusedLocals = reuseNonEscapingLocalSlots(propagated);
 			const withoutDeadInitializers = dropDeadLocalInitializers(reusedLocals, pureFunctions, noOpFunctions);
-			return { ...stmt, statements: removeImmediateJumpLabels(withoutDeadInitializers) };
+			const withoutFlowUnused = removeUnusedLocalDecls(withoutDeadInitializers, pureFunctions, noOpFunctions);
+			return { ...stmt, statements: removeImmediateJumpLabels(withoutFlowUnused) };
 		}
 		case 'JumpStmt':
 			return stmt;
@@ -1680,9 +1681,32 @@ interface LocalValueFact {
 }
 
 function propagateLocalValueFlow(statements: Stmt[], pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): Stmt[] {
-	if (statements.some(stmt => stmt.kind === 'LabelStmt' || stmt.kind === 'JumpStmt')) return statements;
 	const locals = collectDirectLocalDeclarations(statements);
 	if (!locals.size) return statements;
+	const out: Stmt[] = [];
+	let segment: Stmt[] = [];
+	let changed = false;
+	const flushSegment = () => {
+		if (!segment.length) return;
+		const rewritten = propagateLocalValueFlowSegment(segment, locals, pureFunctions, noOpFunctions);
+		if (rewritten !== segment) changed = true;
+		out.push(...rewritten);
+		segment = [];
+	};
+	for (const stmt of statements) {
+		if (stmt.kind === 'LabelStmt' || stmt.kind === 'JumpStmt' || stmt.kind === 'StateChangeStmt') {
+			flushSegment();
+			out.push(stmt);
+			continue;
+		}
+		segment.push(stmt);
+		if (stmt.kind === 'ReturnStmt') flushSegment();
+	}
+	flushSegment();
+	return changed ? out : statements;
+}
+
+function propagateLocalValueFlowSegment(statements: Stmt[], locals: ReadonlySet<string>, pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): Stmt[] {
 	const facts = new Map<string, LocalValueFact>();
 	const out: Stmt[] = [];
 	let changed = false;
@@ -1758,15 +1782,46 @@ function replaceLocalValueFactsInStmt(stmt: Stmt, facts: ReadonlyMap<string, Loc
 			return expression === stmt.expression ? stmt : { ...stmt, expression };
 		}
 		case 'IfStmt': {
-			const condition = replaceLocalValueFactsInExpr(stmt.condition, facts);
-			return condition === stmt.condition ? stmt : { ...stmt, condition };
+			const nestedFacts = filterLocalValueFactsForNestedStmt(stmt, facts);
+			const condition = replaceLocalValueFactsInExpr(stmt.condition, nestedFacts);
+			const thenFacts = filterLocalValueFactsForNestedStmt(stmt.then, nestedFacts);
+			const elseFacts = stmt.else ? filterLocalValueFactsForNestedStmt(stmt.else, nestedFacts) : undefined;
+			const thenStmt = replaceLocalValueFactsInStmt(stmt.then, thenFacts);
+			const elseStmt = stmt.else && elseFacts ? replaceLocalValueFactsInStmt(stmt.else, elseFacts) : stmt.else;
+			return condition === stmt.condition && thenStmt === stmt.then && elseStmt === stmt.else ? stmt : { ...stmt, condition, then: thenStmt, else: elseStmt };
+		}
+		case 'WhileStmt': {
+			const nestedFacts = filterLocalValueFactsForNestedStmt(stmt, facts);
+			const condition = replaceLocalValueFactsInExpr(stmt.condition, nestedFacts);
+			const body = replaceLocalValueFactsInStmt(stmt.body, filterLocalValueFactsForNestedStmt(stmt.body, nestedFacts));
+			return condition === stmt.condition && body === stmt.body ? stmt : { ...stmt, condition, body };
+		}
+		case 'DoWhileStmt': {
+			const nestedFacts = filterLocalValueFactsForNestedStmt(stmt, facts);
+			const body = replaceLocalValueFactsInStmt(stmt.body, filterLocalValueFactsForNestedStmt(stmt.body, nestedFacts));
+			const condition = replaceLocalValueFactsInExpr(stmt.condition, nestedFacts);
+			return body === stmt.body && condition === stmt.condition ? stmt : { ...stmt, body, condition };
+		}
+		case 'ForStmt': {
+			const nestedFacts = filterLocalValueFactsForNestedStmt(stmt, facts);
+			const init = stmt.init ? replaceLocalValueFactsInExpr(stmt.init, nestedFacts) : undefined;
+			const condition = stmt.condition ? replaceLocalValueFactsInExpr(stmt.condition, nestedFacts) : undefined;
+			const update = stmt.update ? replaceLocalValueFactsInExpr(stmt.update, nestedFacts) : undefined;
+			const body = replaceLocalValueFactsInStmt(stmt.body, filterLocalValueFactsForNestedStmt(stmt.body, nestedFacts));
+			return init === stmt.init && condition === stmt.condition && update === stmt.update && body === stmt.body ? stmt : { ...stmt, init, condition, update, body };
+		}
+		case 'BlockStmt': {
+			const nestedFacts = filterLocalValueFactsForNestedStmt(stmt, facts);
+			let changed = false;
+			const statements = stmt.statements.map(child => {
+				const rewritten = replaceLocalValueFactsInStmt(child, nestedFacts);
+				if (rewritten !== child) changed = true;
+				return rewritten;
+			});
+			return changed ? { ...stmt, statements } : stmt;
 		}
 		case 'EmptyStmt':
 		case 'ErrorStmt':
-		case 'WhileStmt':
-		case 'DoWhileStmt':
-		case 'ForStmt':
-		case 'BlockStmt':
 		case 'JumpStmt':
 		case 'LabelStmt':
 		case 'StateChangeStmt':
@@ -1775,6 +1830,18 @@ function replaceLocalValueFactsInStmt(stmt: Stmt, facts: ReadonlyMap<string, Loc
 			AssertNever(stmt);
 			return stmt;
 	}
+}
+
+function filterLocalValueFactsForNestedStmt(stmt: Stmt, facts: ReadonlyMap<string, LocalValueFact>): ReadonlyMap<string, LocalValueFact> {
+	if (!facts.size) return facts;
+	const written = collectWrittenNamesInStmt(stmt);
+	if (!written.size) return facts;
+	const filtered = new Map<string, LocalValueFact>();
+	for (const [name, fact] of facts) {
+		if (written.has(name) || intersects(written, fact.dependencies)) continue;
+		filtered.set(name, fact);
+	}
+	return filtered.size === facts.size ? facts : filtered;
 }
 
 function replaceLocalValueFactsInExpr(expr: Expr, facts: ReadonlyMap<string, LocalValueFact>): Expr {
