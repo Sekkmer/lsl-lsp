@@ -403,6 +403,23 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toContain('if((string)a!="")llOwnerSay("string");');
 	});
 
+	it('keeps inverted if/else-if chains parse-stable', () => {
+		const source = [
+			'default { link_message(integer sender, integer value, string text, key id) {',
+			'  if (value == 1) {',
+			'    llOwnerSay("one");',
+			'  } else if (value == 3) {',
+			'    llOwnerSay("three");',
+			'  }',
+			'} }',
+		].join('\n');
+		const result = optimizeScript(parseScriptFromText(source), { integerPeepholes: true });
+		expect(result.code).toContain('if(value^1){if(!(value^3)){llOwnerSay("three");}}else {llOwnerSay("one");}');
+		expect(result.code).not.toContain('if(value^1)if(value^3)');
+		expect(optimizeScript(parseScriptFromText(result.code), { integerPeepholes: true }).code).toBe(result.code);
+		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
+	});
+
 	it('parenthesizes nested unary peepholes used as multiplicative operands', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'default { state_entry() {',

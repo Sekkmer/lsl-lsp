@@ -68,7 +68,7 @@ function emitStmtInner(stmt: Stmt): string {
 			return stmt.expression ? `return ${emitExpr(stmt.expression)};` : 'return;';
 		case 'IfStmt': {
 			const elsePart = stmt.else ? `else ${emitControlledStmt(stmt.else)}` : '';
-			return `if(${emitExpr(stmt.condition)})${emitControlledStmt(stmt.then)}${elsePart}`;
+			return `if(${emitExpr(stmt.condition)})${emitControlledStmt(stmt.then, { avoidDanglingElse: !!stmt.else })}${elsePart}`;
 		}
 		case 'WhileStmt':
 			return `while(${emitExpr(stmt.condition)})${emitControlledStmt(stmt.body)}`;
@@ -92,8 +92,21 @@ function emitStmtInner(stmt: Stmt): string {
 	}
 }
 
-function emitControlledStmt(stmt: Stmt): string {
-	return stmt.kind === 'BlockStmt' ? emitStmtInner(stmt) : emitStmtInner(stmt);
+function emitControlledStmt(stmt: Stmt, options: { avoidDanglingElse?: boolean } = {}): string {
+	if (options.avoidDanglingElse && canCaptureFollowingElse(stmt)) return `{${emitStmtInner(stmt)}}`;
+	return emitStmtInner(stmt);
+}
+
+function canCaptureFollowingElse(stmt: Stmt): boolean {
+	switch (stmt.kind) {
+		case 'IfStmt':
+			return stmt.else ? canCaptureFollowingElse(stmt.else) : true;
+		case 'WhileStmt':
+		case 'ForStmt':
+			return canCaptureFollowingElse(stmt.body);
+		default:
+			return false;
+	}
 }
 
 function emitExprPrec(expr: Expr, parentPrec: number): string {
@@ -216,7 +229,6 @@ function binPrecedence(op: BinOp): number {
 		case '%=':
 			return 1;
 		case '||':
-			return 2;
 		case '&&':
 			return 3;
 		case '|':
