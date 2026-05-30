@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.18
+- Fixed optimized control-flow output so inverted `if`/`else if` chains cannot attach `else` clauses to the wrong nested branch.
+- Fixed optimized `&&`/`||` emission to preserve Second Life operator grouping.
+- Added optimizer semantic regression coverage backed by local Second Life probes for branch shape, operator precedence, and evaluation order.
+
 ## 0.1.17
 - Added official definition auto-update support so bundled LSL definitions can be refreshed from upstream instead of going stale.
 - Added opt-in Firestorm-style LSL extension support, including constant global expressions, lazy list access lowering, switch lowering, and extension detection.
