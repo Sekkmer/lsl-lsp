@@ -3,7 +3,6 @@ import { emitExpr, emitScript, emitStmt } from './emit';
 import { Env, evalExpr, type Value } from './eval';
 import { inferExprTypeFromAst, type SimpleType } from './infer';
 import { measureAst } from './measure';
-import { NULL_KEY_VALUE } from './key';
 import { parseScriptFromText } from './parser';
 import * as runtime from './runtime';
 import { shrinkScriptNames, type ShrinkNamesOptions } from './shrinkNames';
@@ -1144,7 +1143,7 @@ function isDefaultInitializer(type: Type, expr: Expr): boolean {
 		case 'string':
 			return expr.kind === 'StringLiteral' && expr.value === '';
 		case 'key':
-			return isNullKeyInitializer(expr);
+			return isEmptyKeyInitializer(expr);
 		case 'list':
 			return expr.kind === 'ListLiteral' && expr.elements.length === 0;
 		case 'vector':
@@ -1164,10 +1163,10 @@ function isNumericZero(expr: Expr): boolean {
 	return false;
 }
 
-function isNullKeyInitializer(expr: Expr): boolean {
-	if (expr.kind === 'Paren') return isNullKeyInitializer(expr.expression);
-	if (expr.kind === 'StringLiteral') return expr.value === NULL_KEY_VALUE;
-	return expr.kind === 'Cast' && expr.type === 'key' && isNullKeyInitializer(expr.argument);
+function isEmptyKeyInitializer(expr: Expr): boolean {
+	if (expr.kind === 'Paren') return isEmptyKeyInitializer(expr.expression);
+	if (expr.kind === 'StringLiteral') return expr.value === '';
+	return expr.kind === 'Cast' && expr.type === 'key' && isEmptyKeyInitializer(expr.argument);
 }
 
 function isVectorInitializer(expr: Expr, values: readonly number[]): boolean {

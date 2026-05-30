@@ -124,7 +124,12 @@ function valueToExpr(value: Value, original: Expr, targetType: Type): Expr | nul
 		case 'string':
 			return { span: original.span, kind: 'StringLiteral', value: value.value };
 		case 'key':
-			return { span: original.span, kind: 'StringLiteral', value: value.value };
+			return {
+				span: original.span,
+				kind: 'Cast',
+				type: 'key',
+				argument: { span: original.span, kind: 'StringLiteral', value: value.value },
+			};
 		case 'vector':
 			if (targetType !== 'vector' && targetType !== 'list') return null;
 			return {

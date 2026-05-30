@@ -86,6 +86,26 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toBe('integer mutable;default{state_entry(){integer local;integer keep=1;mutable=0;llOwnerSay((string)mutable+(string)local+(string)keep);}}');
 	});
 
+	it('keeps NULL_KEY initializers because the key default is the empty key', () => {
+		const source = [
+			'key current = NULL_KEY;',
+			'key empty = "";',
+			'reset() { current = NULL_KEY; }',
+			'default { touch_start(integer total) {',
+			'  key id = llDetectedKey(0);',
+			'  if (current == NULL_KEY || current == id) current = id;',
+			'  if (empty == "") llOwnerSay("empty");',
+			'} }',
+		].join('\n');
+		const result = optimizeScript(parseScriptFromText(source), {
+			dropDefaultInitializers: true,
+			inlineConstantGlobals: true,
+			builtinConstants: new Map([['NULL_KEY', { kind: 'value', type: 'key', value: '00000000-0000-0000-0000-000000000000' }]]),
+		});
+		expect(result.code).toContain('key current=(key)"00000000-0000-0000-0000-000000000000";');
+		expect(result.code).toContain('current==(key)"00000000-0000-0000-0000-000000000000"');
+	});
+
 	it('can inline immutable global constants for CLI optimization', () => {
 		const source = [
 			'integer channel = 7;',

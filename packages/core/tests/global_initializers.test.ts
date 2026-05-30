@@ -60,6 +60,24 @@ default { state_entry() { } }
 		expect(emitScript(script)).toContain('list l=[3,"ab",<2.0,4.0,6.0>];');
 	});
 
+	it('preserves key typed values when folding const global expressions', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom(`
+// lsl-lsp extensions: const-globals
+key empty = (key)"";
+key nullKey = (key)"00000000-0000-0000-0000-000000000000";
+list keys = [(key)"", nullKey];
+default { state_entry() { } }
+`, 'file:///global_key_initializers.lsl');
+		const { analysis, script } = runPipeline(doc, defs);
+		const msgs = analysis.diagnostics.map(d => `${d.message} @${d.code}`);
+		expect(msgs.some(m => m.includes('Global initializer must'))).toBe(false);
+		const emitted = emitScript(script);
+		expect(emitted).toContain('key empty=(key)"";');
+		expect(emitted).toContain('key nullKey=(key)"00000000-0000-0000-0000-000000000000";');
+		expect(emitted).toContain('list keys=[(key)"",(key)"00000000-0000-0000-0000-000000000000"];');
+	});
+
 	it('keeps non-foldable const global expressions invalid with the extension enabled', async () => {
 		const defs = await loadTestDefs();
 		const msgs = messagesFor(`

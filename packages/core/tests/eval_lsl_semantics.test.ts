@@ -206,6 +206,7 @@ default {
 		vector zero = ZERO_VECTOR;
 		key nonNull = "00000000-0000-0000-0000-000000000001";
 		key nullKey = NULL_KEY;
+		key emptyKey = "";
 		if (nonEmpty) { }
 		if (empty) { }
 		if (populated) { }
@@ -214,6 +215,7 @@ default {
 		if (zero) { }
 		if (nonNull) { }
 		if (nullKey) { }
+		if (emptyKey) { }
 	}
 }
 `;
@@ -222,7 +224,7 @@ default {
 		const truthy = analysis.diagnostics.filter(d => d.code === LSL_DIAGCODES.ALWAYS_TRUE_CONDITION);
 		const falsy = analysis.diagnostics.filter(d => d.code === LSL_DIAGCODES.ALWAYS_FALSE_CONDITION);
 		expect(truthy).toHaveLength(4);
-		expect(falsy).toHaveLength(4);
+		expect(falsy).toHaveLength(5);
 	});
 
 	it('uses folded vector and rotation equality for constant-condition diagnostics', async () => {
