@@ -640,6 +640,18 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toContain('llOwnerSay("ok");');
 	});
 
+	it('flattens redundant blocks left by statement function inlining', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'applyOne() { string first = "a"; llOwnerSay(first); }',
+			'applyTwo() { string second = "b"; llOwnerSay(second); }',
+			'default { state_entry() { applyOne(); applyTwo(); } }',
+		].join('\n')), {
+			inlineFunctions: true,
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).toBe('default{state_entry(){llOwnerSay("a");llOwnerSay("b");}}');
+	});
+
 	it('inlines single-use expression functions when the measured Mono cost drops', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'integer addOne(integer value) { return value + 1; }',

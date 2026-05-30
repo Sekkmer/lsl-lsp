@@ -1479,7 +1479,8 @@ function cleanupStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, noOpFunctio
 				.map(child => cleanupStmt(child, pureFunctions, noOpFunctions))
 				.filter(child => !isEmptyStmt(child));
 			const reachable = dropStatementsAfterTerminal(statements);
-			const withoutUnused = removeUnusedLocalDecls(reachable, pureFunctions, noOpFunctions);
+			const flattened = flattenRedundantBlocks(reachable);
+			const withoutUnused = removeUnusedLocalDecls(flattened, pureFunctions, noOpFunctions);
 			const withValueFlow = propagateLocalValueFlow(withoutUnused, pureFunctions, noOpFunctions);
 			const withoutDeadAssignments = removeDeadLocalAssignments(withValueFlow, pureFunctions, noOpFunctions);
 			const propagated = inlineLocalDeclsBySize(withoutDeadAssignments, pureFunctions, noOpFunctions);
@@ -1493,6 +1494,42 @@ function cleanupStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, noOpFunctio
 			AssertNever(stmt);
 			return stmt;
 	}
+}
+
+function flattenRedundantBlocks(statements: Stmt[]): Stmt[] {
+	const topLevelNames = new Set<string>();
+	for (const stmt of statements) {
+		if (stmt.kind === 'VarDecl') topLevelNames.add(stmt.name);
+	}
+
+	const declared = new Set(topLevelNames);
+	const out: Stmt[] = [];
+	let changed = false;
+	for (const stmt of statements) {
+		if (stmt.kind !== 'BlockStmt') {
+			out.push(stmt);
+			continue;
+		}
+		const blockNames = collectDirectBlockLocalNames(stmt.statements);
+		const seenBlockNames = new Set<string>();
+		if (blockNames.some(name => declared.has(name) || topLevelNames.has(name) || seenBlockNames.size === seenBlockNames.add(name).size)) {
+			out.push(stmt);
+			continue;
+		}
+		for (const name of blockNames) declared.add(name);
+		out.push(...stmt.statements);
+		changed = true;
+	}
+	return changed ? out : statements;
+}
+
+function collectDirectBlockLocalNames(statements: readonly Stmt[]): string[] {
+	const names: string[] = [];
+	for (const stmt of statements) {
+		if (stmt.kind === 'VarDecl') names.push(stmt.name);
+		else if (stmt.kind === 'BlockStmt') names.push(...collectDirectBlockLocalNames(stmt.statements));
+	}
+	return names;
 }
 
 function dropStatementsAfterTerminal(statements: Stmt[]): Stmt[] {
@@ -2584,7 +2621,7 @@ function inlineStatementFunctionStmt(stmt: Stmt, candidate: StatementInlineCandi
 		case 'ForStmt':
 			return { ...stmt, body: inlineStatementFunctionStmt(stmt.body, candidate) };
 		case 'BlockStmt':
-			return { ...stmt, statements: stmt.statements.map(child => inlineStatementFunctionStmt(child, candidate)) };
+			return { ...stmt, statements: flattenRedundantBlocks(stmt.statements.map(child => inlineStatementFunctionStmt(child, candidate))) };
 		default:
 			AssertNever(stmt);
 			return stmt;
