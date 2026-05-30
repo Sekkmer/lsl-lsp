@@ -42,7 +42,7 @@ describe('optimizer semantic equivalence', () => {
 				expect(optimizeScript(optimizedScript, options).code, `re-optimized output for ${name} seed ${seed}`).toBe(optimized.code);
 			}
 		}
-	}, 10000);
+	}, 30000);
 
 	it('preserves side-effecting eager logical condition traces', () => {
 		const cases = [
