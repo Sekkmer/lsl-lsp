@@ -226,8 +226,33 @@ describe('optimizer plumbing', () => {
 			listAdd: true,
 			builtinFunctionReturnTypes: new Map([['llGetListLength', 'integer']]),
 		});
-		expect(result.code).toContain('integer n=items!=[];');
+		expect(result.code).toContain('integer n=llGetListLength(items);');
 		expect(result.code).toContain('if(items!=[])llOwnerSay("items");');
+	});
+
+	it('keeps numeric list length uses numeric', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  list rules = llParseString2List("0:a,1:b", [","], []);',
+			'  integer i;',
+			'  for (i = 0; i < llGetListLength(rules); ++i) llOwnerSay(llList2String(rules, i));',
+			'  if (llGetListLength(rules) >= 2) llOwnerSay("two");',
+			'  integer n = llGetListLength(rules);',
+			'} }',
+		].join('\n')), {
+			listAdd: true,
+			builtinFunctionReturnTypes: new Map([
+				['llGetListLength', 'integer'],
+				['llParseString2List', 'list'],
+				['llList2String', 'string'],
+			]),
+			integerPeepholes: true,
+		});
+		expect(result.code).toContain('i<llGetListLength(rules)');
+		expect(result.code).toContain('llGetListLength(rules)>=2');
+		expect(result.code).toContain('integer n=llGetListLength(rules);');
+		expect(result.code).not.toContain('i<rules!=[]');
+		expect(result.code).not.toContain('(rules!=[])>=2');
 	});
 
 	it('rewrites safe builtin list helpers', () => {
@@ -349,7 +374,7 @@ describe('optimizer plumbing', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'string link(key id) { return (string)id; }',
 			'default { state_entry() {',
-			'  list close = [];',
+			'  list close = llParseString2List(llGetObjectName(), [","], []);',
 			'  string txt = "Choose an avatar to add as owner, or enter an UUID:\\n";',
 			'  integer count = llGetListLength(close);',
 			'  list buttons = ["Back", " ", "UUID"];',
@@ -362,7 +387,12 @@ describe('optimizer plumbing', () => {
 			'  for (i = count; i < 6; i++) buttons += [" "];',
 			'} }',
 		].join('\n')), {
-			builtinFunctionReturnTypes: new Map([['llGetListLength', 'integer'], ['llList2Key', 'key']]),
+			builtinFunctionReturnTypes: new Map([
+				['llGetListLength', 'integer'],
+				['llList2Key', 'key'],
+				['llGetObjectName', 'string'],
+				['llParseString2List', 'list'],
+			]),
 			dropDefaultInitializers: true,
 			foldStringConcats: true,
 			inlineFunctions: true,
@@ -373,6 +403,8 @@ describe('optimizer plumbing', () => {
 		});
 		const formatted = formatLslText(result.code);
 		expect(formatted).not.toContain('! = []');
+		expect(result.code).toContain('llGetListLength(');
+		expect(result.code).not.toContain('!=[];C<6');
 		expect(parseScriptFromText(formatted).diagnostics).toHaveLength(0);
 	});
 

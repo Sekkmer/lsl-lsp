@@ -285,12 +285,6 @@ function needsStringCastMaterialization(expr: Expr): boolean {
 function optimizeCall(expr: Extract<Expr, { kind: 'Call' }>, opts: ResolvedOptimizeOptions, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>, constantEnv: Env): Expr {
 	const args = expr.args.map(arg => optimizeExpr(arg, opts, scope, functionReturnTypes, constantEnv));
 	if (expr.callee.kind !== 'Identifier') return { ...expr, callee: expr.callee, args };
-	if (expr.callee.name === 'llGetListLength' && args.length === 1) {
-		const arg = args[0]!;
-		if (inferExprTypeFromAst(arg, scope.view(), new Map(functionReturnTypes)) === 'list') {
-			return { ...expr, kind: 'Binary', op: '!=', left: arg, right: { ...expr, kind: 'ListLiteral', elements: [] } };
-		}
-	}
 	if (expr.callee.name === 'llDumpList2String' && args.length === 2) {
 		const list = args[0]!;
 		const separator = args[1]!;
