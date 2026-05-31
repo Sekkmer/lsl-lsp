@@ -34,4 +34,20 @@ describe('preprocessor: macro list of operators', () => {
 		expect(values).toContain('TRUE');
 		expect(values).not.toContain('true');
 	});
+
+	it('preserves parenthesized object-like macro grouping in bitmask expressions', async () => {
+		const defs = await loadTestDefs();
+		const code = [
+			'#define MOVE_CONTROLS (CONTROL_FWD | CONTROL_BACK | CONTROL_LEFT)',
+			'integer HasMoveControl(integer controls) { return (controls & MOVE_CONTROLS) != 0; }',
+			'default { state_entry() { } }',
+		].join('\n');
+		const doc = docFrom(code, 'file:///proj/main.lsl');
+		const { expandedTokens } = runPipeline(doc, defs, {});
+		const values = expandedTokens?.map(t => t.value) ?? [];
+		const returnIndex = values.indexOf('return');
+		expect(values.slice(returnIndex + 1, returnIndex + 14)).toEqual([
+			'(', 'controls', '&', '(', 'CONTROL_FWD', '|', 'CONTROL_BACK', '|', 'CONTROL_LEFT', ')', ')', '!=', '0',
+		]);
+	});
 });

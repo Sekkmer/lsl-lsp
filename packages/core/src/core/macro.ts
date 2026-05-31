@@ -1064,12 +1064,18 @@ function objectMacroToTokens(v: string | number | boolean, file?: string): Token
 	if (!text.length) return [];
 	let toks = tokenize(text).filter(t=> t.kind !== 'eof' && t.kind !== 'directive');
 	if (file) { for (const tk of toks) { if (!tk.file || tk.file === '<unknown>') (tk as Token).file = file; if (!tk.span.file || tk.span.file === '<unknown>') tk.span.file = file; } }
-	// If object-like macro is a single parenthesized literal or identifier, unwrap redundant parens so AST tests expecting NumberLiteral succeed
+	// If object-like macro is a single parenthesized literal or identifier, unwrap redundant parens so AST tests expecting NumberLiteral succeed.
+	// Do not strip grouping from compound expressions: a bitmask macro like (A | B) must stay grouped when used as x & MASK.
 	if (toks.length >=3 && toks[0].kind==='punct' && toks[0].value==='(' && toks[toks.length-1].kind==='punct' && toks[toks.length-1].value===')') {
 		let depth=0, ok=true; for (let i=0;i<toks.length;i++){ const tk=toks[i]!; if (tk.kind==='punct'){ if (tk.value==='(') depth++; else if (tk.value===')') depth--; if (depth===0 && i < toks.length-1) { ok=false; break; } } }
-		if (ok) toks = toks.slice(1,-1);
+		if (ok && canUnwrapParenthesizedMacroTokens(toks)) toks = toks.slice(1,-1);
 	}
 	return toks;
+}
+
+function canUnwrapParenthesizedMacroTokens(toks: Token[]): boolean {
+	const inner = toks.slice(1, -1).filter(t => t.kind !== 'comment-line' && t.kind !== 'comment-block');
+	return inner.length === 1 && (inner[0]!.kind === 'id' || inner[0]!.kind === 'number' || inner[0]!.kind === 'string' || inner[0]!.kind === 'keyword');
 }
 
 type MacroCall = { args: string[]; nextIndex: number; endSpanEnd: number };
@@ -1206,10 +1212,10 @@ function expandFunctionMacro(name: string, def: FuncMacroDef, callArgs: string[]
 	// Turn into tokens (lex body) and distribute span
 	let toks = body.length ? tokenize(body).filter(t=> t.kind !== 'eof' && t.kind !== 'directive') : [];
 	if (file) { for (const tk of toks) { if (!tk.file || tk.file === '<unknown>') (tk as Token).file = file; if (!tk.span.file || tk.span.file === '<unknown>') tk.span.file = file; } }
-	// Drop single enclosing paren pair if they wrap the entire expansion and aren't needed syntactically (e.g., ("text") or ((2)+(3))) so tests see inner node
+	// Drop single enclosing paren pair only for one-token literal/name expansions. Compound expressions need their grouping preserved.
 	if (toks.length >=3 && toks[0].kind==='punct' && toks[0].value==='(' && toks[toks.length-1].kind==='punct' && toks[toks.length-1].value===')') {
 		let depth=0, ok=true; for (let i=0;i<toks.length;i++){ const tk=toks[i]!; if (tk.kind==='punct'){ if (tk.value==='(') depth++; else if (tk.value===')') depth--; if (depth===0 && i < toks.length-1) { ok=false; break; } } }
-		if (ok) toks = toks.slice(1,-1);
+		if (ok && canUnwrapParenthesizedMacroTokens(toks)) toks = toks.slice(1,-1);
 	}
 	// Post-tokenization merging for token pasting that may still have split identifiers (e.g., n + 1 -> n1)
 	if (def.body.includes('##') && toks.length > 1) {

@@ -1001,6 +1001,20 @@ describe('optimizer plumbing', () => {
 		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
 	});
 
+	it('keeps object-like macro bitmask grouping while optimizing', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'#define MOVE_CONTROLS (1 | 2 | 4)',
+			'integer HasMoveControl(integer controls) {',
+			'  return (controls & MOVE_CONTROLS) != 0;',
+			'}',
+			'default { state_entry() { } }',
+		].join('\n')), {
+			integerPeepholes: true,
+		});
+		expect(result.code).toContain('return (controls&7)!=0;');
+		expect(result.code).not.toContain('controls&1|2|4');
+	});
+
 	it('does not propagate self-dependent assignment values', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'default { state_entry() {',
