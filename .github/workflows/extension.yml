@@ -86,6 +86,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout release sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download VSIX artifact
         uses: actions/download-artifact@v4
         with:
@@ -98,12 +103,43 @@ jobs:
           name: lsl-lsp-cli
           path: release-assets
 
+      - name: Build release notes from changelog
+        id: release_notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          notes_file="${RUNNER_TEMP}/release-notes.md"
+
+          awk -v version="${version}" '
+            $0 == "## " version { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' packages/client-vscode/CHANGELOG.md | sed '${/^$/d;}' > "${notes_file}"
+
+          if [[ ! -s "${notes_file}" ]]; then
+            echo "No changelog section found for ${version}" >&2
+            exit 1
+          fi
+
+          previous_tag="$(git tag --sort=-v:refname | awk -v tag="${tag}" '$0 == tag { seen = 1; next } seen && /^v[0-9]/ { print; exit }')"
+          if [[ -n "${previous_tag}" ]]; then
+            {
+              echo
+              echo "**Full Changelog**: https://github.com/${GITHUB_REPOSITORY}/compare/${previous_tag}...${tag}"
+            } >> "${notes_file}"
+          fi
+
+          echo "path=${notes_file}" >> "${GITHUB_OUTPUT}"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: ${{ steps.release_notes.outputs.path }}
           files: |
             release-assets/*.vsix
             release-assets/lsl-lsp.cjs
             release-assets/lsl-lsp.cjs.map
-          generate_release_notes: true
           fail_on_unmatched_files: true
