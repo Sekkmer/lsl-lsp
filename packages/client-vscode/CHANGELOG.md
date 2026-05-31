@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.19
+- Fixed optimizer list-length handling so numeric `llGetListLength` uses stay numeric instead of becoming boolean list checks.
+- Fixed key constant folding and default initializer handling so `NULL_KEY` remains distinct from the empty key and folded key literals keep their key type.
+- Fixed local value propagation around jump barriers, conditional writes, and loop dependency writes, with added regression coverage.
+- Fixed statement-function inlining cleanup so safe redundant blocks are flattened after inlining.
+- Fixed macro expansion so parenthesized compound macros preserve grouping in optimized expressions.
+
 ## 0.1.18
 - Fixed optimized control-flow output so inverted `if`/`else if` chains cannot attach `else` clauses to the wrong nested branch.
 - Fixed optimized `&&`/`||` emission to preserve Second Life operator grouping.
