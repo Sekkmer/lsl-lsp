@@ -140,6 +140,18 @@ const settings = {
 	}
 };
 const MONO_MEASURE_ERROR_BYTES = 900;
+let inlayHintRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleInlayHintRefresh(): void {
+	if (!settings.measure.inlayHints) return;
+	if (inlayHintRefreshTimer) clearTimeout(inlayHintRefreshTimer);
+	inlayHintRefreshTimer = setTimeout(() => {
+		inlayHintRefreshTimer = null;
+		connection.languages.inlayHint.refresh().catch(() => {
+			// Older clients may not advertise workspace/inlayHint/refresh support.
+		});
+	}, 75);
+}
 
 let disabledDiagCodes = new Set<DiagCode>();
 
@@ -652,6 +664,7 @@ documents.onDidChangeContent(async change => {
 	// Invalidate cache entry for this document version and revalidate
 	pipelineCache.delete(change.document.uri);
 	await validateTextDocument(change.document);
+	scheduleInlayHintRefresh();
 });
 
 documents.onDidClose(e => {
