@@ -202,6 +202,19 @@ class Parser {
 		return at;
 	}
 
+	private canStartExpression(t: Token): boolean {
+		if (t.kind === 'number' || t.kind === 'string' || t.kind === 'id') return true;
+		if (t.kind === 'keyword') {
+			if (t.value === 'default') return true;
+			if (!isTypeName(t.value)) return false;
+			const next = this.lookAheadNonTrivia(2)[1];
+			return next?.kind === 'punct' && next.value === '(';
+		}
+		if (t.kind === 'punct') return t.value === '(' || t.value === '[' || t.value === '<';
+		if (t.kind === 'op') return t.value === '<' || ['!', '~', '++', '--', '+', '-'].includes(t.value);
+		return false;
+	}
+
 	// Accept an identifier-like name token: either a normal identifier or a keyword used as a name.
 	// This lets the analyzer later flag reserved identifiers instead of the parser hard-failing.
 	private eatNameToken(): Token {
@@ -555,6 +568,15 @@ class Parser {
 			const comma = this.maybe('punct', ',');
 			if (comma && this.peek().kind === 'punct' && this.peek().value === ')') {
 				this.report(comma, 'Trailing comma is not allowed', 'LSL000');
+			} else if (!comma) {
+				const next = this.peek();
+				if (next.kind === 'punct' && next.value === ')') continue;
+				if (next.kind === 'keyword' && isTypeName(next.value)) {
+					this.report(next, 'Missing comma between parameters', 'LSL000');
+					continue;
+				}
+				this.report(next, 'missing ) to close parameter list', 'LSL000');
+				break;
 			}
 		}
 		return params;
@@ -1333,6 +1355,15 @@ class Parser {
 				const comma = this.maybe('punct', ',');
 				if (comma && this.peek().kind === 'punct' && this.peek().value === ']') {
 					this.report(comma, 'Trailing comma is not allowed', 'LSL000');
+				} else if (!comma) {
+					const next = this.peek();
+					if (next.kind === 'punct' && next.value === ']') continue;
+					if (this.canStartExpression(next)) {
+						this.report(next, 'Missing comma between list elements', 'LSL000');
+						continue;
+					}
+					this.report(next, 'missing ] to close list literal', 'LSL000');
+					break;
 				}
 			}
 			return this.parsePostfix({ span: spanFrom(t.span.start, this.peek().span.end), kind: 'ListLiteral', elements });
@@ -1389,6 +1420,15 @@ class Parser {
 					const comma = this.maybe('punct', ',');
 					if (comma && this.peek().kind === 'punct' && this.peek().value === ')') {
 						this.report(comma, 'Trailing comma is not allowed', 'LSL000');
+					} else if (!comma) {
+						const next = this.peek();
+						if (next.kind === 'punct' && next.value === ')') continue;
+						if (this.canStartExpression(next)) {
+							this.report(next, 'Missing comma between arguments', 'LSL000');
+							continue;
+						}
+						this.report(next, 'missing ) to close call', 'LSL000');
+						break;
 					}
 				}
 				expr = { span: spanFrom(expr.span.start, this.peek().span.end), kind: 'Call', callee: expr, args };
