@@ -194,6 +194,49 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		return { contents: { kind: MarkupKind.Markdown, value: ['```lsl', String(line), '```'].join('\n') } };
 	}
 
+	if (defs.funcs.has(w)) {
+		const fs = defs.funcs.get(w)!;
+		const lines = fs.map(fn => `${fn.returns} ${fn.name}(${fn.params.map(p=>`${p.type} ${p.name}`).join(', ')})`);
+		const code = ['```lsl', ...lines, '```'].join('\n');
+		const docstr = fmtDoc(fs[0].doc) ?? '';
+		// Collect any parameter docs; prefer first overload having docs
+		let paramDocs = '';
+		for (const f of fs) {
+			const withDocs = (f.params || []).filter(p => p.doc && p.doc.trim().length > 0);
+			if (withDocs.length > 0) {
+				const bullets = withDocs.map(p => `- ${p.name}: ${fmtDoc(p.doc)}`);
+				paramDocs = bullets.join('\n');
+				break;
+			}
+		}
+		const parts = [code];
+		appendFunctionMeta(parts, fs);
+		const wiki = fs.find(f => f.wiki)?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
+		parts.push('', `[Wiki](${wiki})`);
+		if (docstr) parts.push('', docstr);
+		if (paramDocs) parts.push('', 'Parameters:', withParamDocFormatting(paramDocs));
+		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
+	}
+
+	// User-defined function hover (from analysis)
+	if (analysis && analysis.functions.has(w)) {
+		const d = analysis.functions.get(w)!;
+		const sig = `${d.type ?? 'void'} ${d.name}(${(d.params || []).map(p=>`${p.type ?? 'any'} ${p.name}`).join(', ')})`;
+		const parts = ['```lsl', sig, '```'];
+		// Try to extract a leading JSDoc-style block comment (/** ... */) immediately before the decl
+		// Prefer the start of the full declaration (header) when available to avoid hitting parameter name token
+		const startPos = d.fullRange?.start ?? d.range.start;
+		const declStart = doc.offsetAt(startPos);
+		const jsdoc = extractLeadingJsDoc(doc.getText(), declStart);
+		if (jsdoc) parts.push('', jsdoc);
+		else {
+			// Fallback: search include headers for a preceding comment
+			const incDoc = extractIncludeSymbolDoc(w, 'func', pre);
+			if (incDoc) parts.push('', incDoc);
+		}
+		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
+	}
+
 	// If cursor is inside a function call, show the active parameter's doc (resolve through alias macro if needed)
 	const callCtx = findEnclosingCall(text, off);
 	if (callCtx) {
@@ -251,47 +294,6 @@ export function lslHover(doc: TextDocument, params: { position: Position }, defs
 		if (c.doc) parts.push('', fmtDoc(c.doc) as string);
 		const body = parts.join('\n');
 		return { contents: { kind: MarkupKind.Markdown, value: body } };
-	}
-	if (defs.funcs.has(w)) {
-		const fs = defs.funcs.get(w)!;
-		const lines = fs.map(fn => `${fn.returns} ${fn.name}(${fn.params.map(p=>`${p.type} ${p.name}`).join(', ')})`);
-		const code = ['```lsl', ...lines, '```'].join('\n');
-		const docstr = fmtDoc(fs[0].doc) ?? '';
-		// Collect any parameter docs; prefer first overload having docs
-		let paramDocs = '';
-		for (const f of fs) {
-			const withDocs = (f.params || []).filter(p => p.doc && p.doc.trim().length > 0);
-			if (withDocs.length > 0) {
-				const bullets = withDocs.map(p => `- ${p.name}: ${fmtDoc(p.doc)}`);
-				paramDocs = bullets.join('\n');
-				break;
-			}
-		}
-		const parts = [code];
-		appendFunctionMeta(parts, fs);
-		const wiki = fs.find(f => f.wiki)?.wiki || `https://wiki.secondlife.com/wiki/${encodeURIComponent(fs[0].name)}`;
-		parts.push('', `[Wiki](${wiki})`);
-		if (docstr) parts.push('', docstr);
-		if (paramDocs) parts.push('', 'Parameters:', withParamDocFormatting(paramDocs));
-		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
-	}
-	// User-defined function hover (from analysis)
-	if (analysis && analysis.functions.has(w)) {
-		const d = analysis.functions.get(w)!;
-		const sig = `${d.type ?? 'void'} ${d.name}(${(d.params || []).map(p=>`${p.type ?? 'any'} ${p.name}`).join(', ')})`;
-		const parts = ['```lsl', sig, '```'];
-		// Try to extract a leading JSDoc-style block comment (/** ... */) immediately before the decl
-		// Prefer the start of the full declaration (header) when available to avoid hitting parameter name token
-		const startPos = d.fullRange?.start ?? d.range.start;
-		const declStart = doc.offsetAt(startPos);
-		const jsdoc = extractLeadingJsDoc(doc.getText(), declStart);
-		if (jsdoc) parts.push('', jsdoc);
-		else {
-			// Fallback: search include headers for a preceding comment
-			const incDoc = extractIncludeSymbolDoc(w, 'func', pre);
-			if (incDoc) parts.push('', incDoc);
-		}
-		return { contents: { kind: MarkupKind.Markdown, value: parts.join('\n') } };
 	}
 	// Variables and parameters: show declared type, and if it's an event parameter with docs, include them
 	if (analysis) {

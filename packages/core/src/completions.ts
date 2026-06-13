@@ -316,7 +316,7 @@ export function lslSignatureHelp(doc: TextDocument, params: { textDocument: { ur
 function findCallContextFromAnalysis(analysis: Analysis, pos: Position): { name: string; argIndex: number } | null {
 	let best: { name: string; argIndex: number; area: number } | null = null;
 	for (const c of analysis.calls) {
-		if (!inRange(pos, c.range)) continue;
+		if (!inCallSelectionRange(pos, c.range)) continue;
 		let idx = 0;
 		for (let i = 0; i < c.argRanges.length; i++) {
 			const r = c.argRanges[i];
@@ -470,4 +470,8 @@ function inRange(pos: Position, range: { start: Position; end: Position }): bool
 	if (pos.line === range.start.line && pos.character < range.start.character) return false;
 	if (pos.line === range.end.line && pos.character > range.end.character) return false;
 	return true;
+}
+
+function inCallSelectionRange(pos: Position, range: { start: Position; end: Position }): boolean {
+	return inRange(pos, range) && docPositionCmp(pos, range.start) > 0;
 }
