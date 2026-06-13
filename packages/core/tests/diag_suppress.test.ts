@@ -94,6 +94,29 @@ describe('diagnostic suppression directives', () => {
 		expect(analysis.diagnostics.find(d => d.code === 'LSL041')).toBeFalsy();
 	});
 
+	it('suppresses empty if/else blocks from comments on the if/else keyword lines', async () => {
+		const code = `default {
+	state_entry() {
+		if (TRUE) // lsl-disable-line empty-if-body
+		{
+		}
+
+		integer x;
+		if (TRUE) { x = 1; }
+		else // lsl-disable-line empty-else-body
+		{
+		}
+
+		if (TRUE) { x = 2; }
+		else { // lsl-disable-line empty-else-body
+		}
+	}
+}`;
+		const { analysis } = await analyze(code);
+		expect(analysis.diagnostics.find(d => d.code === 'LSL026')).toBeFalsy();
+		expect(analysis.diagnostics.find(d => d.code === 'LSL027')).toBeFalsy();
+	});
+
 	it('does not treat unknown suppression codes as disable-all', async () => {
 		const code = `integer f(){
 		return x; // lsl-disable-line not-a-real-code

@@ -22,6 +22,13 @@ describe('global diagnostic disable list', () => {
 		expect(disabled.size).toBe(2);
 	});
 
+	it('splits comma/space separated entries inside array settings', () => {
+		const disabled = parseDisabledDiagList(['LSL026, empty-if-body', 'LSL027 empty-else-body']);
+		expect(disabled.has(LSL_DIAGCODES.EMPTY_IF_BODY)).toBe(true);
+		expect(disabled.has(LSL_DIAGCODES.EMPTY_ELSE_BODY)).toBe(true);
+		expect(disabled.size).toBe(2);
+	});
+
 	it('suppresses implicit string-to-key diagnostics by friendly name', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('integer acceptsKey(key id){ return 0; } default { state_entry() { string id = ""; acceptsKey(id); } }');

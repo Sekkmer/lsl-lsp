@@ -1256,11 +1256,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		if (stmt.kind === 'IfStmt') {
 			const thenIsEmptyStmt = stmt.then && stmt.then.kind === 'EmptyStmt';
 			const thenEmptyBlock = stmt.then && stmt.then.kind === 'BlockStmt' && stmt.then.statements.length === 0;
-			if (thenIsEmptyStmt || thenEmptyBlock) diagnostics.push({ code: LSL_DIAGCODES.EMPTY_IF_BODY, message: 'Empty if-body has no effect', range: spanToRange(doc, stmt.then.span), severity: DiagnosticSeverity.Warning });
+			if (thenIsEmptyStmt || thenEmptyBlock) diagnostics.push({ code: LSL_DIAGCODES.EMPTY_IF_BODY, message: 'Empty if-body has no effect', range: spanToRange(doc, stmt.ifKeywordSpan ?? stmt.then.span), severity: DiagnosticSeverity.Warning });
 			if (stmt.else) {
 				const elseIsEmptyStmt = stmt.else && stmt.else.kind === 'EmptyStmt';
 				const elseEmptyBlock = stmt.else && stmt.else.kind === 'BlockStmt' && stmt.else.statements.length === 0;
-				if (elseIsEmptyStmt || elseEmptyBlock) diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body has no effect', range: spanToRange(doc, stmt.else.span), severity: DiagnosticSeverity.Warning });
+				if (elseIsEmptyStmt || elseEmptyBlock) diagnostics.push({ code: LSL_DIAGCODES.EMPTY_ELSE_BODY, message: 'Empty else-body has no effect', range: spanToRange(doc, stmt.elseKeywordSpan ?? stmt.else.span), severity: DiagnosticSeverity.Warning });
 			}
 		}
 	}

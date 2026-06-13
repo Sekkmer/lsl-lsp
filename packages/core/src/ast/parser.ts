@@ -799,12 +799,13 @@ class Parser {
 				if (prevCh === '}' && statements.length > 0) {
 					const prev = statements[statements.length - 1];
 					if (prev && prev.kind === 'IfStmt' && !prev.else) {
-						this.eat('keyword', 'else');
+						const elseTok = this.eat('keyword', 'else');
 						let elseStmt: Stmt;
 						if (this.peek().kind === 'keyword' && this.peek().value === 'if') elseStmt = this.parseIf(inFunctionOrEvent);
 						else if (this.peek().kind === 'punct' && this.peek().value === '{') elseStmt = this.parseBlock(inFunctionOrEvent);
 						else elseStmt = this.parseStmtInner(inFunctionOrEvent);
 						prev.else = elseStmt;
+						prev.elseKeywordSpan = elseTok.span;
 						prev.span = spanFrom(prev.span.start, elseStmt.span.end);
 						continue;
 					}
@@ -1086,8 +1087,13 @@ class Parser {
 		const cond = this.parseExpr(); this.eat('punct', ')');
 		const thenS = this.parseStmtInner(inFunctionOrEvent);
 		let elseS: Stmt | undefined;
-		if (this.maybe('keyword', 'else')) elseS = this.parseStmtInner(inFunctionOrEvent);
-		return { span: spanFrom(kw.span.start, thenS.span.end), kind: 'IfStmt', condition: cond, then: thenS, else: elseS };
+		let elseKeywordSpan: import('./types').Span | undefined;
+		const elseTok = this.maybe('keyword', 'else');
+		if (elseTok) {
+			elseKeywordSpan = elseTok.span;
+			elseS = this.parseStmtInner(inFunctionOrEvent);
+		}
+		return { span: spanFrom(kw.span.start, (elseS ?? thenS).span.end), kind: 'IfStmt', condition: cond, then: thenS, else: elseS, ifKeywordSpan: kw.span, elseKeywordSpan };
 	}
 
 	private parseWhile(inFunctionOrEvent: boolean): Stmt {

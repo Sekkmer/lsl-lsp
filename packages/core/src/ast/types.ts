@@ -54,7 +54,7 @@ export type Stmt =
 	| { span: Span; kind: 'ExprStmt'; expression: Expr; }
 	| { span: Span; kind: 'VarDecl'; varType: Type; name: string; initializer?: Expr; comment?: string; }
 	| { span: Span; kind: 'ReturnStmt'; expression?: Expr; }
-	| { span: Span; kind: 'IfStmt'; condition: Expr; then: Stmt; else?: Stmt; }
+	| { span: Span; kind: 'IfStmt'; condition: Expr; then: Stmt; else?: Stmt; ifKeywordSpan?: Span; elseKeywordSpan?: Span; }
 	| { span: Span; kind: 'WhileStmt'; condition: Expr; body: Stmt; }
 	| { span: Span; kind: 'DoWhileStmt'; body: Stmt; condition: Expr; }
 	| { span: Span; kind: 'ForStmt'; init?: Expr; condition?: Expr; update?: Expr; body: Stmt; }

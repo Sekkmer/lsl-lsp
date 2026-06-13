@@ -5,18 +5,18 @@ export function parseDisabledDiagList(input: unknown): Set<DiagCode> {
 	const out = new Set<DiagCode>();
 	const push = (raw: unknown) => {
 		if (typeof raw !== 'string') return;
-		const norm = normalizeDiagCode(raw);
-		if (norm) out.add(norm);
+		for (const token of raw.split(/[,\s]+/)) {
+			if (!token) continue;
+			const norm = normalizeDiagCode(token);
+			if (norm) out.add(norm);
+		}
 	};
 	if (Array.isArray(input)) {
 		for (const it of input) push(it);
 		return out;
 	}
 	if (typeof input === 'string') {
-		for (const token of input.split(/[,\s]+/)) {
-			if (!token) continue;
-			push(token);
-		}
+		push(input);
 	}
 	return out;
 }
