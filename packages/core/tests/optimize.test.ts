@@ -944,6 +944,25 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toContain('keepGoing=0;');
 	});
 
+	it('keeps SL unary assignment loop conditions parenthesized when emitted', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'default { state_entry() {',
+			'  integer i;',
+			'  list l = ["a", "a", "a", "a"];',
+			'  while(~i = llListFindList(l, ["a"]))',
+			'    l = llListReplaceList(l, ["b"], i, i);',
+			'} }',
+		].join('\n')), {
+			builtinFunctionReturnTypes: new Map([
+				['llListFindList', 'integer'],
+				['llListReplaceList', 'list'],
+			]),
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).toContain('while(~(i=llListFindList(l,["a"])))');
+		expect(result.code).toContain('l=llListReplaceList(l,["b"],i,i);');
+	});
+
 	it('does not propagate dependency-backed values into loops that write dependencies', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'default { state_entry() {',

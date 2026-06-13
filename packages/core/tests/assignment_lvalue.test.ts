@@ -57,6 +57,41 @@ integer a; default { state_entry() { a = 2; } }
 		expect(hasInvalid).toBe(false);
 	});
 
+	it('accepts SL unary assignment conditions while still warning as suspicious', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default {
+	state_entry() {
+		integer i;
+		list l = ["a", "a", "a", "a"];
+		while(~i = llListFindList(l, ["a"]))
+			l = llListReplaceList(l, ["b"], i, i);
+	}
+}
+`;
+		const doc = docFrom(code, 'file:///issue5_unary_assignment_condition.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		expect(analysis.diagnostics.some(d => d.code === 'LSL050')).toBe(false);
+		expect(analysis.diagnostics.some(d => d.code === 'LSL051')).toBe(true);
+	});
+
+	it('parses prefix unary assignment as assignment inside the unary operator', async () => {
+		const defs = await loadDefs(defsPath);
+		const code = `
+default { state_entry() {
+	integer a = 123;
+	integer b = 123;
+	integer c = 123;
+	integer notResult = !a = 0;
+	integer bitResult = ~b = 0;
+	integer negResult = -c = 5;
+} }
+`;
+		const doc = docFrom(code, 'file:///unary_assignment_precedence.lsl');
+		const { analysis } = runPipeline(doc, defs, { macros: {}, includePaths: [] });
+		expect(analysis.diagnostics.some(d => d.code === 'LSL050')).toBe(false);
+	});
+
 	it('accepts vector member assignment', async () => {
 		const defs = await loadDefs(defsPath);
 		const code = `

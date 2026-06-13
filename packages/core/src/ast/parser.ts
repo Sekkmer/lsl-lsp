@@ -1239,6 +1239,10 @@ class Parser {
 		if (this.peek().kind === 'op' && ['=', '+=', '-=', '*=', '/=', '%='].includes(this.peek().value)) {
 			const op = this.next().value as import('./types').BinOp;
 			const right = this.parseAssign(stopOps);
+			if (left.kind === 'Unary' && !left.postfix && ['!', '~', '-'].includes(left.op)) {
+				const assigned: Expr = { span: spanFrom(left.argument.span.start, right.span.end), kind: 'Binary', op, left: left.argument, right };
+				return { ...left, span: spanFrom(left.span.start, assigned.span.end), argument: assigned };
+			}
 			return { span: spanFrom(left.span.start, right.span.end), kind: 'Binary', op, left, right };
 		}
 		return left;
