@@ -2,7 +2,7 @@
 	"name": "vscode-lsl-lsp",
 	"displayName": "LSL LSP",
 	"description": "LSL (Linden Scripting Language) support with #include/#ifdef, semantics, and diagnostics.",
-	"version": "0.1.19",
+	"version": "0.1.20",
 	"license": "MIT",
 	"publisher": "Sekkmer",
 	"author": {
@@ -213,9 +213,9 @@
 		"build": "tsc -p tsconfig.json",
 		"bundle": "esbuild src/extension.ts --bundle --platform=node --target=node18 --external:vscode --outfile=out/extension.js --sourcemap",
 		"bundle:server": "esbuild ../server/src/index.ts --bundle --platform=node --target=node18 --outfile=server/out/index.js --sourcemap",
-		"vscode:prepublish": "pnpm -C ../core build && pnpm -C ../server build && node scripts/copy-server.cjs && pnpm run bundle:server && pnpm run bundle",
-		"package": "pnpm exec vsce package --no-dependencies",
-		"publish": "pnpm exec vsce publish",
+		"vscode:prepublish": "corepack pnpm -C ../core build && corepack pnpm -C ../server build && node scripts/copy-server.cjs && corepack pnpm run bundle:server && corepack pnpm run bundle",
+		"package": "corepack pnpm exec vsce package --no-dependencies",
+		"publish": "corepack pnpm exec vsce publish",
 		"watch": "tsc -w -p tsconfig.json",
 		"lint": "eslint src",
 		"lint:fix": "eslint src --fix"

@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.20
+- Fixed parser recovery so missing commas in list literals, call arguments, and function parameters are reported as syntax errors.
+- Fixed Mono memory inlay hints refreshing after edits so stale estimate overlays are cleared by clients that support inlay hint refresh.
+- Fixed false-positive `LSL050` diagnostics for Second Life-valid prefix unary assignment conditions such as `while(~i = llListFindList(...))`, while keeping the assignment-in-condition warning.
+- Changed GitHub release publishing to use the client changelog entry as the release notes source.
+- Improved VSIX prepublish scripts to invoke pnpm through Corepack when run by npm-based packaging tools.
+
 ## 0.1.19
 - Fixed optimizer list-length handling so numeric `llGetListLength` uses stay numeric instead of becoming boolean list checks.
 - Fixed key constant folding and default initializer handling so `NULL_KEY` remains distinct from the empty key and folded key literals keep their key type.
