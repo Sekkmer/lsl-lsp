@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.21
+- Fixed hover on nested builtin, user-defined, and macro-backed calls so the symbol under the cursor wins over the enclosing call context.
+- Fixed signature help at nested first-argument boundaries so parent calls remain selected where appropriate.
+- Fixed empty `if`/`else` body suppression UX by anchoring those diagnostics to the `if`/`else` keyword lines.
+- Hardened global diagnostic disable settings so comma- or space-separated entries inside VS Code array settings are parsed consistently.
+
 ## 0.1.20
 - Fixed parser recovery so missing commas in list literals, call arguments, and function parameters are reported as syntax errors.
 - Fixed Mono memory inlay hints refreshing after edits so stale estimate overlays are cleared by clients that support inlay hint refresh.
