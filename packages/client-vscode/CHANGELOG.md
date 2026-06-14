@@ -2,6 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.22
+- Fixed global diagnostic disable settings so empty or unrelated LSP configuration-change notifications cannot clear the active disable list.
+
 ## 0.1.21
 - Fixed hover on nested builtin, user-defined, and macro-backed calls so the symbol under the cursor wins over the enclosing call context.
 - Fixed signature help at nested first-argument boundaries so parent calls remain selected where appropriate.
