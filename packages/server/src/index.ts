@@ -111,6 +111,20 @@ const OPTIMIZE_FLAG_NAMES = [
 ] as const;
 type OptimizeFlag = typeof OPTIMIZE_FLAG_NAMES[number];
 type OptimizeSettings = Partial<Record<OptimizeFlag, boolean>>;
+type LslServerSettings = {
+	definitionsPath?: string;
+	includePaths?: string[];
+	macros?: Record<string, string | number | boolean>;
+	dynamicMacros?: unknown;
+	extensions?: unknown;
+	optimize?: unknown;
+	output?: unknown;
+	measure?: unknown;
+	enableSemanticTokens?: boolean;
+	format?: Partial<FormatSettings>;
+	debugLogging?: boolean;
+	diagnostics?: { disable?: unknown };
+};
 const settings = {
 	definitionsPath: '',
 	includePaths: [] as string[],
@@ -128,7 +142,7 @@ const settings = {
 	logFile: '' as string,
 	debug: false,
 	format: {
-		enabled: true,
+		enabled: true as boolean,
 		braceStyle: 'same-line' as 'same-line' | 'next-line',
 	} satisfies FormatSettings,
 	diag: {
@@ -189,6 +203,38 @@ function parseOptimizeSettings(raw: unknown): OptimizeSettings {
 		if (typeof input[name] === 'boolean') out[name] = input[name];
 	}
 	return out;
+}
+
+function asRecord(raw: unknown): Record<string, unknown> | null {
+	return raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
+}
+
+function isLslSettingsObject(raw: Record<string, unknown>): boolean {
+	return [
+		'definitionsPath',
+		'includePaths',
+		'macros',
+		'dynamicMacros',
+		'extensions',
+		'optimize',
+		'output',
+		'measure',
+		'enableSemanticTokens',
+		'format',
+		'debugLogging',
+		'diagnostics',
+	].some(key => Object.prototype.hasOwnProperty.call(raw, key));
+}
+
+function lslSettingsFromConfigPayload(raw: unknown): LslServerSettings | null {
+	const payload = asRecord(raw);
+	if (!payload) return null;
+	if (Object.prototype.hasOwnProperty.call(payload, 'lsl')) {
+		const lsl = asRecord(payload.lsl);
+		return lsl && isLslSettingsObject(lsl) ? lsl as LslServerSettings : null;
+	}
+	if (isLslSettingsObject(payload)) return payload as LslServerSettings;
+	return null;
 }
 
 // -------------------------------------------------
@@ -603,7 +649,8 @@ function toSimpleType(type: string): SimpleType | null {
 
 connection.onDidChangeConfiguration(async change => {
 	// Allow live reconfig
-	const newSettings = change.settings?.lsl || {};
+	const newSettings = lslSettingsFromConfigPayload(change.settings);
+	if (!newSettings) return;
 	const prevIncludePaths = settings.includePaths?.slice() ?? [];
 	const prevMeasureInlayHints = settings.measure.inlayHints;
 	if (newSettings.definitionsPath && newSettings.definitionsPath !== settings.definitionsPath) {
