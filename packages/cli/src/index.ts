@@ -180,7 +180,7 @@ async function runOptimize(opts: CliOptions, defs: Defs): Promise<number> {
 	const optimized = results.map(result => {
 		const out = optimizeScript(result.ast, optimizeOptions);
 		const body = formatLslText(out.code, { enabled: true, braceStyle: opts.braceStyle });
-		const text = maybeWrapFirestormHeader(result.text, body, opts);
+		const text = ensureTrailingNewline(maybeWrapFirestormHeader(result.text, body, opts));
 		return { result, out, text };
 	});
 
@@ -214,8 +214,11 @@ async function runOptimize(opts: CliOptions, defs: Defs): Promise<number> {
 
 	if (optimized.length !== 1) throw new CliError('Optimizing multiple files requires --write, --check, or --json.');
 	process.stdout.write(optimized[0]!.text);
-	if (!optimized[0]!.text.endsWith('\n')) process.stdout.write('\n');
 	return optimized[0]!.out.stable ? 0 : 1;
+}
+
+function ensureTrailingNewline(text: string): string {
+	return text.endsWith('\n') ? text : `${text}\n`;
 }
 
 function cliOptimizeOptions(defs: Defs, opts: CliOptions): OptimizeOptions {
