@@ -170,7 +170,7 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toContain('list b=[returnsList(),"x"];');
 	});
 
-	it('preserves postfix increments when list literals become additions', () => {
+	it('preserves list-literal evaluation order when elements have effects', () => {
 		const source = [
 			'default { state_entry() {',
 			'  integer index = 0;',
@@ -183,7 +183,7 @@ describe('optimizer plumbing', () => {
 			listAdd: true,
 			shrinkNames: true,
 		});
-		expect(result.code).toContain('list A=(list)"content"+_++;');
+		expect(result.code).toContain('list A=["content",_++];');
 		expect(result.code).not.toContain('++"content"');
 		expect(parseScriptFromText(result.code).diagnostics).toHaveLength(0);
 	});
@@ -619,7 +619,7 @@ describe('optimizer plumbing', () => {
 			inlineFunctions: true,
 			removeUnusedFunctions: true,
 		});
-		expect(result.code).toBe('default{state_entry(){integer a=llGetUnixTime();}}');
+		expect(result.code).toBe('default{state_entry(){integer a=(integer)llGetUnixTime();}}');
 	});
 
 	it('can inline statement functions while preserving side-effect argument evaluation', () => {
@@ -636,7 +636,7 @@ describe('optimizer plumbing', () => {
 			builtinFunctionReturnTypes: new Map([['llListen', 'integer']]),
 		});
 		expect(result.code).not.toContain('tell(string value,integer noisy)');
-		expect(result.code).toContain('integer noisy=llListen');
+		expect(result.code).toMatch(/integer [A-Za-z_][A-Za-z0-9_]*=llListen/);
 		expect(result.code).toContain('llOwnerSay("ok");');
 	});
 
@@ -650,6 +650,105 @@ describe('optimizer plumbing', () => {
 			removeUnusedFunctions: true,
 		});
 		expect(result.code).toBe('default{state_entry(){llOwnerSay("a");llOwnerSay("b");}}');
+	});
+
+	it('inlines profitable multi-use statement functions to reduce call frames', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer total;',
+			'bump() { ++total; }',
+			'default { state_entry() { bump(); bump(); bump(); } }',
+		].join('\n')), {
+			inlineFunctions: true,
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).not.toContain('bump');
+		expect(result.code).toContain('++total;++total;++total;');
+		expect(blockingDiagnostics(result.code)).toHaveLength(0);
+	});
+
+	it('hygienically inlines profitable multi-use parameterized helpers', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer total;',
+			'consume(list request) { total += llGetListLength(request); }',
+			'default {',
+			'  state_entry() {',
+			'    list request = [llGetScriptName()];',
+			'    consume([1]); consume([2]); consume([3]);',
+			'    llOwnerSay(llList2String(request, 0));',
+			'  }',
+			'}',
+		].join('\n')), {
+			inlineFunctions: true,
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).not.toMatch(/\bconsume\(/);
+		expect(result.code).toContain('list request=[llGetScriptName()];');
+		expect(result.code).toContain('total+=1;total+=1;total+=1;');
+		expect(result.code).toContain('llOwnerSay(llList2String(request,0));');
+		expect(blockingDiagnostics(result.code)).toHaveLength(0);
+	});
+
+	it('keeps caller locals intact while reusing non-escaping inline slots', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer total;',
+			'consume(integer value) {',
+			'  integer doubled = value * 2;',
+			'  total += doubled;',
+			'}',
+			'default {',
+			'  state_entry() {',
+			'    integer value = 7;',
+			'    integer doubled = 11;',
+			'    consume(llListen(1, "", NULL_KEY, ""));',
+			'    consume(llListen(2, "", NULL_KEY, ""));',
+			'    consume(llListen(3, "", NULL_KEY, ""));',
+			'    consume(llListen(4, "", NULL_KEY, ""));',
+			'    total += value + doubled;',
+			'  }',
+			'}',
+		].join('\n')), {
+			inlineFunctions: true,
+			removeUnusedFunctions: true,
+			maxPasses: 1,
+			builtinConstants: new Map([['NULL_KEY', { kind: 'value', type: 'key', value: '00000000-0000-0000-0000-000000000000' }]]),
+			builtinFunctionReturnTypes: new Map([['llListen', 'integer']]),
+		});
+		expect(result.code).not.toMatch(/\bconsume\(/);
+		expect(result.code.match(/llListen/g)).toHaveLength(4);
+		expect(result.code).toContain('total+=7+11;');
+		expect(blockingDiagnostics(result.code)).toHaveLength(0);
+	});
+
+	it('evaluates side-effecting arguments once per hygienic inline expansion', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'integer total;',
+			'consume(integer value) { total += value; }',
+			'default { state_entry() {',
+			'  consume(llListen(1, "", NULL_KEY, ""));',
+			'  consume(llListen(2, "", NULL_KEY, ""));',
+			'  consume(llListen(3, "", NULL_KEY, ""));',
+			'} }',
+		].join('\n')), {
+			inlineFunctions: true,
+			removeUnusedFunctions: true,
+			builtinConstants: new Map([['NULL_KEY', { kind: 'value', type: 'key', value: '00000000-0000-0000-0000-000000000000' }]]),
+			builtinFunctionReturnTypes: new Map([['llListen', 'integer']]),
+		});
+		expect(result.code).not.toMatch(/\bconsume\(/);
+		expect(result.code.match(/llListen/g)).toHaveLength(3);
+		expect(blockingDiagnostics(result.code)).toHaveLength(0);
+	});
+
+	it('does not inline recursive statement functions', () => {
+		const result = optimizeScript(parseScriptFromText([
+			'recurse(integer value) { if (value) recurse(value - 1); }',
+			'default { state_entry() { recurse(2); } }',
+		].join('\n')), {
+			inlineFunctions: true,
+			removeUnusedFunctions: true,
+		});
+		expect(result.code).toContain('recurse');
+		expect(blockingDiagnostics(result.code)).toHaveLength(0);
 	});
 
 	it('inlines single-use expression functions when the measured Mono cost drops', () => {
@@ -1142,7 +1241,7 @@ describe('optimizer plumbing', () => {
 		expect(result.code).toContain('first+second');
 	});
 
-	it('removes empty events, no-op functions, and pure expression statements', () => {
+	it('removes empty events without removing touch subscriptions', () => {
 		const result = optimizeScript(parseScriptFromText([
 			'empty() {}',
 			'integer pureValue(integer value) { return value + 1; }',
@@ -1153,7 +1252,7 @@ describe('optimizer plumbing', () => {
 		].join('\n')), {
 			removeUnusedFunctions: true,
 		});
-		expect(result.code).toBe('default{state_entry(){llOwnerSay("kept");}}');
+		expect(result.code).toBe('default{touch_start(integer n){}state_entry(){llOwnerSay("kept");}}');
 	});
 
 	it('propagates single-use local declarations only when emitted code shrinks', () => {

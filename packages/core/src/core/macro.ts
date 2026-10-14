@@ -1,8 +1,23 @@
 import { type Token } from './tokens';
 import { tokenize } from './tokenizer';
-import type { DisabledRange, DynamicMacros } from './preproc';
+import type { DisabledRange, DynamicMacros, MissingInclude } from './preproc';
 
 export type MacroDefines = Record<string, string | number | boolean>;
+
+// Object replacements can themselves start with `(identifier) ...`; retain
+// definition kind separately rather than guessing from that replacement text.
+const functionMacroKinds = new WeakMap<MacroDefines, Set<string>>();
+
+export function functionMacroNames(macros: MacroDefines): Set<string> {
+	return new Set(functionMacroKinds.get(macros) ?? Object.entries(macros).filter(([, value]) =>
+		typeof value === 'string' && /^\((?:\s*[A-Za-z_]\w*\s*,)*\s*(?:[A-Za-z_]\w*|\.\.\.)?\s*\)\s+/.test(value)).map(([name]) => name));
+}
+
+export function copyMacroDefines(macros: MacroDefines): MacroDefines {
+	const copy = { ...macros };
+	functionMacroKinds.set(copy, functionMacroNames(macros));
+	return copy;
+}
 
 type DirKind =
 	| { kind: 'if'; expr: string }
@@ -113,7 +128,7 @@ export interface PreprocessResultNew {
 	includes: string[];         // file ids included (unique order of first encounter)
 	macroDefs?: Record<string, { start: number; end: number; file: string }>; // definition span for each macro
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; // each include directive
-	missingIncludes?: { start: number; end: number; file: string }[]; // unresolved include directives
+	missingIncludes?: MissingInclude[]; // unresolved include directives
 	inactiveSpans?: DisabledRange[]; // spans of inactive conditional branches (for disabledRanges)
 }
 
@@ -126,146 +141,27 @@ interface ProcessCtx {
 	diagnostics: { message: string; code?: string; start: number; end: number; file?: string }[];
 }
 
-// Evaluate a conditional directive chain starting at index; returns next index after chain and whether block active
-interface ConditionalChainDebugInfo { branches: Array<{ kind: string; expr?: string; taken: boolean; span: { start: number; end: number } }>; activeSpans: Array<{ start: number; end: number }>; inactiveSpans: Array<{ start: number; end: number }>; }
 function hasMacro(macros: MacroDefines, dynamicMacros: DynamicMacros | undefined, name: string): boolean {
 	return Object.prototype.hasOwnProperty.call(macros, name) || Object.prototype.hasOwnProperty.call(dynamicMacros ?? {}, name);
 }
 
-function evalConditionalChain(segs: Seg[], startIndex: number, macros: MacroDefines, dynamicMacros?: DynamicMacros): { next: number; activeSpans: Array<{ start: number; end: number }>; inactiveSpans: Array<{ start: number; end: number }>; debug?: ConditionalChainDebugInfo } {
-	// We convert the chain (#if/#ifdef/#ifndef ... #elif ... #else ... #endif) to a set of active spans.
-	// For now we do a minimal implementation: walk forward collecting directives until matching endif.
-	const activeSpans: Array<{ start: number; end: number }> = [];
-	const inactiveSpans: Array<{ start: number; end: number }> = [];
-	// For verbose debugging capture each branch decision
-	const debugBranches: Array<{ kind: string; expr?: string; taken: boolean; span: { start: number; end: number } }> = [];
-	let depth = 0;
-	let took = false; // whether a prior branch was taken at depth 1 (the chain we are evaluating)
-	let collecting = false; // currently collecting tokens for the active branch
-	let branchStart: number | null = null;
-	let i = startIndex;
-	// Helper to finish current branch segment
-	const finishBranch = (end: number) => {
-		if (branchStart != null) {
-			if (collecting) activeSpans.push({ start: branchStart, end });
-			else inactiveSpans.push({ start: branchStart, end });
-		}
-		collecting = false; branchStart = null; };
-	while (i < segs.length) {
-		const s = segs[i]!;
-		if (s.type === 'directive') {
-			const k = s.dir.kind;
-			if (k === 'if' || k === 'ifdef' || k === 'ifndef') {
-				// Entering a (possibly nested) conditional. We only treat depth===0 as the head of the chain we were asked to evaluate.
-				if (depth === 0 && i !== startIndex) break; // encountered a sibling conditional before closing ours
-				depth++;
-				if (depth === 1) {
-					let enabled = false;
-					if (k === 'if') enabled = evalExprQuick(s.dir.expr, macros, dynamicMacros);
-					else if (k === 'ifdef') enabled = hasMacro(macros, dynamicMacros, s.dir.name);
-					else if (k === 'ifndef') enabled = !hasMacro(macros, dynamicMacros, s.dir.name);
-					collecting = enabled && !took;
-					if (collecting) took = true;
-					branchStart = s.dir.span.end;
-					debugBranches.push({ kind: k, expr: (k === 'if' ? s.dir.expr : (k === 'ifdef' || k === 'ifndef') ? s.dir.name : undefined), taken: collecting, span: { start: s.dir.span.start, end: s.dir.span.end } });
-				}
-				i++; continue;
-			}
-			if (k === 'elif' && depth === 1) {
-				finishBranch(s.dir.span.start);
-				if (!took) {
-					if (evalExprQuick(s.dir.expr, macros, dynamicMacros)) { collecting = true; took = true; branchStart = s.dir.span.end; }
-					else { collecting = false; branchStart = s.dir.span.end; }
-				}
-				else { collecting = false; branchStart = s.dir.span.end; }
-				debugBranches.push({ kind: 'elif', expr: s.dir.expr, taken: collecting, span: { start: s.dir.span.start, end: s.dir.span.end } });
-				i++; continue;
-			}
-			if (k === 'else' && depth === 1) {
-				finishBranch(s.dir.span.start);
-				if (!took) { collecting = true; took = true; branchStart = s.dir.span.end; }
-				else { collecting = false; branchStart = s.dir.span.end; }
-				debugBranches.push({ kind: 'else', taken: collecting, span: { start: s.dir.span.start, end: s.dir.span.end } });
-				i++; continue;
-			}
-			if (k === 'endif') {
-				if (depth === 1) {
-					finishBranch(s.dir.span.start);
-					i++; // consume endif
-					debugBranches.push({ kind: 'endif', taken: false, span: { start: s.dir.span.start, end: s.dir.span.end } });
-					break;
-				}
-				depth--;
-				i++; continue;
-			}
-			// Other directives inside active branch depth>1 just pass through
-			i++;
-			continue;
-		} else {
-			// raw segment: if at depth 1 and collecting, add its tokens span
-			if (depth === 1 && collecting && s.tokens.length) {
-				if (branchStart == null) branchStart = s.tokens[0]!.span.start;
-				// extend current branch; actual tokens will be emitted by outer loop filtering by spans
-			}
-			i++;
-		}
-	}
-	// Heuristic: if we produced exactly one active span and it stretches over multiple internal conditional directives (#elif occurrences inside),
-	// attempt to refine by scanning inside for a VT_FONT style chain pattern (#if expr ... #elif expr ... etc.) nested inside an include guard.
-	if (activeSpans.length === 1) {
-		const span = activeSpans[0]!;
-		// Count elif directives whose span lies strictly inside this active span
-		let innerElifs = 0; let innerIfAtDepth1 = 0;
-		for (let k = startIndex + 1; k < i; k++) {
-			const sg = segs[k]!;
-			if (sg.type === 'directive') {
-				if (sg.dir.span.start <= span.start || sg.dir.span.end >= span.end) continue;
-				if (sg.dir.kind === 'elif') innerElifs++;
-				if (sg.dir.kind === 'if') innerIfAtDepth1++;
-			}
-		}
-		if (innerElifs > 0 && innerIfAtDepth1 === 0) {
-			// Likely pattern: #ifndef GUARD  ...  #if VT_FONT==.. / #elif ... / ... #endif ... #endif
-			// We want only the taken branch of the inner chain active, not all of them.
-			// Perform a lightweight pass: find the first #if inside the span and re-evaluate that chain separately; replace portions not taken with inactive spans.
-			for (let k = startIndex + 1; k < i; k++) {
-				const sg = segs[k]!; if (sg.type !== 'directive') continue;
-				if (sg.dir.kind === 'if' && sg.dir.span.start > span.start && sg.dir.span.end < span.end) {
-					const inner = evalConditionalChain(segs, k, macros, dynamicMacros);
-					// Remove original wide active span and add refined active spans (mapped inside original)
-					activeSpans.length = 0; for (const a of inner.activeSpans) activeSpans.push(a);
-					for (const ina of inner.inactiveSpans) inactiveSpans.push(ina);
-					break;
-				}
-			}
-		}
-	}
-	const debug = (process.env.LSL_DEBUG_COND_VERBOSE ? { branches: debugBranches, activeSpans: [...activeSpans], inactiveSpans: [...inactiveSpans] } : undefined);
-	return { next: i, activeSpans, inactiveSpans, debug };
-}
-
-function spansContain(spans: Array<{ start: number; end: number }>, start: number, end: number): boolean {
-	return spans.some(sp=> start >= sp.start && end <= sp.end);
-}
-
 export function preprocessFileNew(fileId: string, version: number, tokens: Token[], macrosIn: MacroDefines, ctx: ProcessCtx): PreprocessResultNew {
 	const segs = segmentFileDirectives(fileId, version, tokens);
-	const macros: MacroDefines = { ...macrosIn };
+	const macros: MacroDefines = copyMacroDefines(macrosIn);
+	const functionNames = functionMacroNames(macrosIn);
+	functionMacroKinds.set(macros, functionNames);
 	const out: Token[] = [];
 	const includesLocal: string[] = [];
 	const macroDefs: Record<string,{start:number; end:number; file:string}> = {};
 	const includeTargets: { start: number; end: number; file: string; resolved: string | null }[] = [];
-	const missingIncludes: { start: number; end: number; file: string }[] = [];
+	const missingIncludes: MissingInclude[] = [];
 	const inactiveSpans: DisabledRange[] = [];
 	const pushInclude = (id: string) => { if (!includesLocal.includes(id)) includesLocal.push(id); if (!ctx.includeOrder.includes(id)) ctx.includeOrder.push(id); };
 	const noteDup = (name: string, span: {start:number; end:number}, previous: unknown, next: unknown) => {
 		if (JSON.stringify(previous) !== JSON.stringify(next)) ctx.diagnostics.push({ message: `Duplicate macro ${name}`, code: 'LSL-macro-dup', start: span.start, end: span.end, file: fileId });
 	};
 	const collectIfUndef = (expr: string, span: {start:number; end:number}) => {
-		// naive scan of identifiers; ignore those following defined or part of defined(IDENT)
-		const ids = Array.from(expr.matchAll(/[#$?"'\\]*[A-Za-z_][A-Za-z0-9_]*[#$?"'\\]*/g))
-			.map(m => stripNoise(m[0]!))
-			.filter(Boolean);
+		const ids = tokenize(expr).filter(t => t.kind === 'id').map(t => t.value);
 		for (let i=0;i<ids.length;i++) {
 			const id = ids[i]!;
 			if (id === 'defined') { i++; continue; }
@@ -274,92 +170,75 @@ export function preprocessFileNew(fileId: string, version: number, tokens: Token
 			}
 		}
 	};
-	// Recursive chain processor
-	const processChain = (startIndex: number) => {
-		const head = segs[startIndex]!; if (head.type !== 'directive') return startIndex;
-		const d = head.dir;
-		if (!(d.kind === 'if' || d.kind === 'ifdef' || d.kind === 'ifndef')) return startIndex;
-		if (d.kind === 'if') collectIfUndef(d.expr, d.span);
-		const { next, activeSpans, inactiveSpans: chainInactive, debug: chainDebug } = evalConditionalChain(segs, startIndex, macros, ctx.dynamicMacros);
-		let chainDepth = 1;
-		for (let j=startIndex+1;j<next;j++) {
-			const sj = segs[j]!;
-			if (sj.type !== 'directive') continue;
-			const dk = sj.dir.kind;
-			if (dk === 'if' || dk === 'ifdef' || dk === 'ifndef') { chainDepth++; continue; }
-			if (dk === 'endif') { chainDepth--; continue; }
-			if (dk === 'elif' && chainDepth === 1) collectIfUndef(sj.dir.expr, sj.dir.span);
-		}
-		if (process.env.LSL_DEBUG_COND) {
-			try { console.log('[preproc-if-chain]', { file: fileId, at: d.span.start, kind: d.kind, expr: (d.kind === 'if' ? d.expr : d.kind === 'ifdef' || d.kind === 'ifndef' ? d.name : undefined), activeSpans: [...activeSpans], inactiveSpans: [...chainInactive], debug: chainDebug }); } catch { /* ignore */ }
-		}
-		for (const isp of chainInactive) inactiveSpans.push({ ...isp, file: fileId });
-		for (let j=startIndex+1;j<next;j++) {
-			const sj = segs[j]!;
-			if (sj.type === 'raw') {
-				let anyActive = false;
-				for (const tk of sj.tokens) { if (spansContain(activeSpans, tk.span.start, tk.span.end)) { out.push(tk); anyActive = true; } }
-				if (!anyActive && sj.tokens.length) inactiveSpans.push({ start: sj.tokens[0]!.span.start, end: sj.tokens[sj.tokens.length-1]!.span.end, file: fileId });
-				continue;
-			}
-			// directives inside chain
-			const dk = sj.dir.kind;
-			const activeDir = spansContain(activeSpans, sj.dir.span.start, sj.dir.span.end);
-			if ((dk === 'if' || dk === 'ifdef' || dk === 'ifndef') && activeDir) { j = processChain(j); continue; }
-			if (dk === 'define_obj' && activeDir) { const prev = macros[sj.dir.name]; const nextV = sj.dir.body !== undefined ? parseMacroValue(sj.dir.body) : 1; if (prev !== undefined) noteDup(sj.dir.name, sj.dir.span, prev, nextV); macros[sj.dir.name] = nextV; macroDefs[sj.dir.name] = { start: sj.dir.span.start, end: sj.dir.span.end, file: fileId }; continue; }
-			if (dk === 'define_fn' && activeDir) { const prev = macros[sj.dir.name]; const nextV = `(${sj.dir.params}) ${sj.dir.body}`.trim(); if (prev !== undefined) noteDup(sj.dir.name, sj.dir.span, prev, nextV); macros[sj.dir.name] = nextV; macroDefs[sj.dir.name] = { start: sj.dir.span.start, end: sj.dir.span.end, file: fileId }; continue; }
-			if (dk === 'undef' && activeDir) { delete macros[sj.dir.name]; continue; }
-			if (dk === 'include') {
-				includeTargets.push({ start: sj.dir.span.start, end: sj.dir.span.end, file: sj.dir.target, resolved: null });
-				if (!activeDir || !ctx.includeResolver) continue;
-				const inc = ctx.includeResolver(sj.dir.target, fileId, { system: sj.dir.system });
-				if (!inc) { missingIncludes.push({ start: sj.dir.span.start, end: sj.dir.span.end, file: sj.dir.target }); continue; }
-				// update last include target with resolved id
-				includeTargets[includeTargets.length-1] = { start: sj.dir.span.start, end: sj.dir.span.end, file: sj.dir.target, resolved: inc.id };
-				if (ctx.collecting.includes(inc.id)) continue;
-				ctx.seen.add(inc.id); ctx.collecting.push(inc.id); pushInclude(inc.id);
-				const nested = preprocessFileNew(inc.id, version, inc.tokens, macros, ctx);
-				Object.assign(macros, nested.macros);
-				Object.assign(macroDefs, nested.macroDefs);
-				for (const tk of nested.tokens) out.push(tk);
-				ctx.collecting.pop();
-				continue;
-			}
-		}
-		return next - 1; // index to resume from in outer loop
+	const stack: Array<{ parentActive: boolean; active: boolean; taken: boolean; sawElse: boolean; branchStart: number }> = [];
+	const isActive = () => stack.length === 0 || stack[stack.length - 1]!.active;
+	const finishBranch = (end: number) => {
+		const frame = stack[stack.length - 1];
+		if (frame && !frame.active) inactiveSpans.push({ start: frame.branchStart, end, file: fileId });
 	};
-
 	for (let i=0;i<segs.length;i++) {
 		const s = segs[i]!;
-		if (s.type === 'raw') { for (const tk of s.tokens) out.push(tk); continue; }
+		if (s.type === 'raw') {
+			if (isActive()) out.push(...expandActiveTokens(s.tokens, macros, ctx.dynamicMacros));
+			continue;
+		}
 		const d = s.dir;
-		if (d.kind === 'define_obj') { const prev = macros[d.name]; const next = d.body !== undefined ? parseMacroValue(d.body) : 1; if (prev !== undefined) noteDup(d.name, d.span, prev, next); macros[d.name] = next; macroDefs[d.name] = { start: d.span.start, end: d.span.end, file: fileId }; continue; }
-		if (d.kind === 'define_fn') { const prev = macros[d.name]; const next = `(${d.params}) ${d.body}`.trim(); if (prev !== undefined) noteDup(d.name, d.span, prev, next); macros[d.name] = next; macroDefs[d.name] = { start: d.span.start, end: d.span.end, file: fileId }; continue; }
-		if (d.kind === 'undef') { delete macros[d.name]; continue; }
+		if (d.kind === 'if' || d.kind === 'ifdef' || d.kind === 'ifndef') {
+			const parentActive = isActive();
+			if (parentActive && d.kind === 'if') collectIfUndef(d.expr, d.span);
+			const enabled = parentActive && (d.kind === 'if' ? evalExprQuick(d.expr, macros, ctx.dynamicMacros) :
+				d.kind === 'ifdef' ? hasMacro(macros, ctx.dynamicMacros, d.name) : !hasMacro(macros, ctx.dynamicMacros, d.name));
+			stack.push({ parentActive, active: enabled, taken: enabled, sawElse: false, branchStart: d.span.end });
+			continue;
+		}
+		if (d.kind === 'elif' || d.kind === 'else') {
+			const frame = stack[stack.length - 1];
+			if (!frame) continue;
+			finishBranch(d.span.start);
+			if (d.kind === 'elif' && frame.parentActive && !frame.taken && !frame.sawElse) collectIfUndef(d.expr, d.span);
+			frame.active = frame.parentActive && !frame.taken && !frame.sawElse && (d.kind === 'else' || evalExprQuick(d.expr, macros, ctx.dynamicMacros));
+			frame.taken ||= frame.active;
+			frame.sawElse ||= d.kind === 'else';
+			frame.branchStart = d.span.end;
+			continue;
+		}
+		if (d.kind === 'endif') { finishBranch(d.span.start); stack.pop(); continue; }
+		if (!isActive()) {
+			if (d.kind === 'include') includeTargets.push({ start: d.span.start, end: d.span.end, file: d.target, resolved: null });
+			continue;
+		}
+		if (d.kind === 'define_obj') { const prev = macros[d.name]; const next = d.body !== undefined ? parseMacroValue(d.body) : 1; if (prev !== undefined) noteDup(d.name, d.span, prev, next); macros[d.name] = next; functionNames.delete(d.name); macroDefs[d.name] = { start: d.span.start, end: d.span.end, file: fileId }; continue; }
+		if (d.kind === 'define_fn') { const prev = macros[d.name]; const next = `(${d.params}) ${d.body}`; if (prev !== undefined) noteDup(d.name, d.span, prev, next); macros[d.name] = next; functionNames.add(d.name); macroDefs[d.name] = { start: d.span.start, end: d.span.end, file: fileId }; continue; }
+		if (d.kind === 'undef') { delete macros[d.name]; functionNames.delete(d.name); delete macroDefs[d.name]; continue; }
 		if (d.kind === 'include') {
 			if (!ctx.includeResolver) { includeTargets.push({ start: d.span.start, end: d.span.end, file: d.target, resolved: null }); continue; }
 			const inc = ctx.includeResolver(d.target, fileId, { system: d.system });
-			if (!inc) { includeTargets.push({ start: d.span.start, end: d.span.end, file: d.target, resolved: null }); missingIncludes.push({ start: d.span.start, end: d.span.end, file: d.target }); continue; }
+			if (!inc) { includeTargets.push({ start: d.span.start, end: d.span.end, file: d.target, resolved: null }); missingIncludes.push({ start: d.span.start, end: d.span.end, file: d.target, originFile: fileId }); continue; }
 			includeTargets.push({ start: d.span.start, end: d.span.end, file: d.target, resolved: inc.id });
 			if (ctx.collecting.includes(inc.id)) continue;
 			ctx.seen.add(inc.id); ctx.collecting.push(inc.id); pushInclude(inc.id);
 			const nested = preprocessFileNew(inc.id, version, inc.tokens, macros, ctx);
+			for (const name of Object.keys(macros)) if (!Object.prototype.hasOwnProperty.call(nested.macros, name)) { delete macros[name]; delete macroDefs[name]; }
 			Object.assign(macros, nested.macros);
+			functionNames.clear();
+			for (const name of functionMacroNames(nested.macros)) functionNames.add(name);
 			Object.assign(macroDefs, nested.macroDefs);
+			includeTargets.push(...nested.includeTargets ?? []);
+			missingIncludes.push(...nested.missingIncludes ?? []);
+			inactiveSpans.push(...nested.inactiveSpans ?? []);
 			for (const tk of nested.tokens) out.push(tk);
 			ctx.collecting.pop();
 			continue;
 		}
-		if (d.kind === 'if' || d.kind === 'ifdef' || d.kind === 'ifndef') { i = processChain(i); continue; }
 	}
+	for (const frame of stack) if (!frame.active) inactiveSpans.push({ start: frame.branchStart, end: tokens[tokens.length - 1]?.span.end ?? frame.branchStart, file: fileId });
 	return { tokens: out, macros, diagnostics: ctx.diagnostics, includes: includesLocal, macroDefs, includeTargets, missingIncludes, inactiveSpans };
 }
 
-export function preprocessAndExpandNew(fileId: string, version: number, tokens: Token[], initialMacros: MacroDefines, includeResolver?: IncludeResolver, dynamicMacros?: DynamicMacros): { tokens: Token[]; macros: MacroDefines; diagnostics: { message: string; code?: string; start: number; end: number; file?: string }[]; includes: string[]; macroDefs?: Record<string,{start:number; end:number; file:string}>; includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; missingIncludes?: { start: number; end: number; file: string }[]; inactiveSpans?: DisabledRange[] } {
+export function preprocessAndExpandNew(fileId: string, version: number, tokens: Token[], initialMacros: MacroDefines, includeResolver?: IncludeResolver, dynamicMacros?: DynamicMacros): { tokens: Token[]; macros: MacroDefines; diagnostics: { message: string; code?: string; start: number; end: number; file?: string }[]; includes: string[]; macroDefs?: Record<string,{start:number; end:number; file:string}>; includeTargets?: { start: number; end: number; file: string; resolved: string | null }[]; missingIncludes?: MissingInclude[]; inactiveSpans?: DisabledRange[] } {
 	const ctx: ProcessCtx = { includeResolver, dynamicMacros, seen: new Set<string>([fileId]), collecting: [fileId], includeOrder: [], diagnostics: [] };
 	const pre = preprocessFileNew(fileId, version, tokens, initialMacros, ctx);
-	const expanded = expandActiveTokens(pre.tokens, pre.macros, dynamicMacros);
-	return { tokens: expanded, macros: pre.macros, diagnostics: pre.diagnostics, includes: ctx.includeOrder, macroDefs: pre.macroDefs, includeTargets: pre.includeTargets, missingIncludes: pre.missingIncludes, inactiveSpans: pre.inactiveSpans };
+	return { tokens: pre.tokens, macros: pre.macros, diagnostics: pre.diagnostics, includes: ctx.includeOrder, macroDefs: pre.macroDefs, includeTargets: pre.includeTargets, missingIncludes: pre.missingIncludes, inactiveSpans: pre.inactiveSpans };
 }
 
 function parseDirectiveKind(raw: string): DirKind | null {
@@ -383,7 +262,7 @@ function parseDirectiveKind(raw: string): DirKind | null {
 	if (head === 'define') {
 		const leadingStripped = lstripNoise(rest);
 		if (!leadingStripped) return null;
-		const mm = /^([A-Za-z_]\w*)(\s*\(([^)]*)\))?(?:\s+([\s\S]*))?$/.exec(leadingStripped);
+		const mm = /^([A-Za-z_]\w*)(\(([^)]*)\))?(?:\s+([\s\S]*))?$/.exec(leadingStripped);
 		if (mm) {
 			const name = stripNoise(mm[1]!);
 			if (!name) return null;
@@ -670,7 +549,26 @@ export class MacroConditionalProcessor {
 // binary * / %, + -, < <= > >=, == !=, && ||, and parentheses.
 function evalExprQuick(expr: string, defs: MacroDefines, dynamicMacros?: DynamicMacros): boolean {
 	type Tok = { kind: 'num'; value: number } | { kind: 'ident'; value: string } | { kind: 'op'; value: string } | { kind: 'lparen' } | { kind: 'rparen' };
-	const s = expr.trim();
+	// Resolve defined before ordinary expansion: its operand names a macro,
+	// rather than referring to the macro's replacement tokens.
+	const expressionTokens = tokenize(expr).filter(t => t.kind !== 'eof');
+	const definedTokens: Token[] = [];
+	for (let j = 0; j < expressionTokens.length; j++) {
+		const token = expressionTokens[j]!;
+		if (token.kind === 'id' && token.value === 'defined') {
+			const paren = expressionTokens[j + 1]?.value === '(';
+			const operand = expressionTokens[j + (paren ? 2 : 1)];
+			if (operand?.kind === 'id') {
+				definedTokens.push({ ...token, kind: 'number', value: hasMacro(defs, dynamicMacros, operand.value) ? '1' : '0' });
+				j += paren && expressionTokens[j + 3]?.value === ')' ? 3 : 1;
+				continue;
+			}
+		}
+		definedTokens.push(token);
+	}
+	const conditionDefines = copyMacroDefines(defs);
+	for (const [name, value] of Object.entries(conditionDefines)) if (typeof value === 'boolean') conditionDefines[name] = value ? 1 : 0;
+	const s = expandActiveTokens(definedTokens, conditionDefines, dynamicMacros).map(t => t.value).join(' ').trim();
 	if (!s) return false;
 
 	// Tokenizer
@@ -687,7 +585,8 @@ function evalExprQuick(expr: string, defs: MacroDefines, dynamicMacros?: Dynamic
 		if (ch === ')') { toks.push({ kind: 'rparen' }); i++; continue; }
 		if (/[0-9]/.test(ch)) {
 			let j = i + 1;
-			while (j < s.length && /[0-9]/.test(s[j]!)) j++;
+			if (ch === '0' && /[xX]/.test(s[j] ?? '')) { j++; while (j < s.length && /[0-9a-fA-F]/.test(s[j]!)) j++; }
+			else while (j < s.length && /[0-9]/.test(s[j]!)) j++;
 			const num = Number(s.slice(i, j));
 			toks.push({ kind: 'num', value: num });
 			i = j; continue;
@@ -913,7 +812,12 @@ function validateIfExpr(expr: string): boolean {
 		if ('+-*/%<>!&|^~'.includes(ch)) { toks.push({ kind: 'op', value: ch }); i++; continue; }
 		if (ch === '(') { toks.push({ kind: 'lparen' }); i++; continue; }
 		if (ch === ')') { toks.push({ kind: 'rparen' }); i++; continue; }
-		if (/[0-9]/.test(ch)) { let j = i + 1; while (j < s.length && /[0-9]/.test(s[j]!)) j++; toks.push({ kind: 'num', value: 0 }); i = j; continue; }
+		if (/[0-9]/.test(ch)) {
+			let j = i + 1;
+			if (ch === '0' && /[xX]/.test(s[j] ?? '')) { j++; const digitsStart = j; while (j < s.length && /[0-9a-fA-F]/.test(s[j]!)) j++; if (j === digitsStart) return false; }
+			else while (j < s.length && /[0-9]/.test(s[j]!)) j++;
+			toks.push({ kind: 'num', value: 0 }); i = j; continue;
+		}
 		if (/[A-Za-z_]/.test(ch)) { let j = i + 1; while (j < s.length && /[A-Za-z0-9_]/.test(s[j]!)) j++; toks.push({ kind: 'ident', value: s.slice(i, j) }); i = j; continue; }
 		return false;
 	}
@@ -967,8 +871,9 @@ interface FuncMacroDef { params: string[]; hasVarArgs: boolean; body: string; }
 function splitMacroTables(macros: MacroDefines): { obj: Record<string, string | number | boolean>; fn: Record<string, FuncMacroDef> } {
 	const obj: Record<string, string | number | boolean> = {};
 	const fn: Record<string, FuncMacroDef> = {};
+	const functionNames = functionMacroNames(macros);
 	for (const [k, v] of Object.entries(macros)) {
-		if (typeof v === 'string') {
+		if (typeof v === 'string' && functionNames.has(k)) {
 			// function-like markers are: starts with '(' paramlist ')' space/body
 			const m = /^\(([^)]*)\)\s+([\s\S]*)$/.exec(v);
 			if (m) {
@@ -1013,7 +918,7 @@ export function expandActiveTokens(tokens: Token[], macroTable: MacroDefines, dy
 				if (body.length) changed = true;
 				const dist = distributeSpan(body, t.span.start, t.span.end, t.file);
 				for (const nt of dist) {
-					const set = new Set<string>([name]);
+					const set = new Set<string>([...(hs ?? []), name]);
 					hides.set(nt, set);
 					out.push(nt);
 				}
@@ -1080,10 +985,8 @@ function canUnwrapParenthesizedMacroTokens(toks: Token[]): boolean {
 
 type MacroCall = { args: string[]; nextIndex: number; endSpanEnd: number };
 function parseMacroCall(tokens: Token[], startIndex: number): MacroCall | null {
-	// Collect argument text preserving minimal spacing between tokens so that
-	// stringification (#x) keeps internal spaces. We reconstruct textual form
-	// by inserting a single space when two alphanumeric tokens abut without
-	// original punctuation between them.
+	// Normalize original whitespace for stringification while retaining token
+	// boundaries, including operators that would otherwise merge (e.g. - -).
 	let i = startIndex;
 	const open = tokens[i];
 	if (!open || open.kind !== 'punct' || open.value !== '(') return null;
@@ -1093,65 +996,57 @@ function parseMacroCall(tokens: Token[], startIndex: number): MacroCall | null {
 	let angleDepth = 0;
 	let current = '';
 	const args: string[] = [];
-	let prevWasWord = false;
+	let previous: Token | undefined;
+	let pendingSpace = false;
+	const append = (token: Token) => {
+		if (current && (pendingSpace || (previous && (token.span.start > previous.span.end || macroTokensNeedSpace(previous, token))))) current += ' ';
+		current += token.value;
+		previous = token;
+		pendingSpace = false;
+	};
 	let prevCanStartAngleLiteral = true;
 	let sawTopLevelComma = false;
-	const isWord = (t: Token) => t.kind === 'id' || t.kind === 'number' || t.kind === 'keyword';
 	for (; i < tokens.length; i++) {
 		const tk = tokens[i]!;
 		if (tk.kind === 'comment-line' || tk.kind === 'comment-block' || tk.kind === 'directive') {
-			if (prevWasWord) current += ' ';
-			prevWasWord = false;
+			pendingSpace = true;
 			continue;
 		}
 		if (tk.kind === 'punct') {
-			if (tk.value === '(') { depth++; current += tk.value; prevWasWord = false; prevCanStartAngleLiteral = true; continue; }
+			if (tk.value === '(') { depth++; append(tk); prevCanStartAngleLiteral = true; continue; }
 			if (tk.value === ')') {
 				depth--; if (depth === 0) {
 					const trimmed = current.trim();
 					if (trimmed.length || sawTopLevelComma) args.push(trimmed);
 					return { args, nextIndex: i+1, endSpanEnd: tk.span.end };
 				}
-				current += tk.value; prevWasWord = false; prevCanStartAngleLiteral = false; continue;
+				append(tk); prevCanStartAngleLiteral = false; continue;
 			}
-			if (tk.value === '[') { bracketDepth++; current += tk.value; prevWasWord = false; prevCanStartAngleLiteral = true; continue; }
-			if (tk.value === ']') { if (bracketDepth > 0) bracketDepth--; current += tk.value; prevWasWord = false; prevCanStartAngleLiteral = false; continue; }
-			if (tk.value === ',' && depth === 1 && bracketDepth === 0 && angleDepth === 0) { args.push(current.trim()); current=''; prevWasWord=false; prevCanStartAngleLiteral=true; sawTopLevelComma=true; continue; }
+			if (tk.value === '[') { bracketDepth++; append(tk); prevCanStartAngleLiteral = true; continue; }
+			if (tk.value === ']') { if (bracketDepth > 0) bracketDepth--; append(tk); prevCanStartAngleLiteral = false; continue; }
+			if (tk.value === ',' && depth === 1 && bracketDepth === 0 && angleDepth === 0) { args.push(current.trim()); current=''; previous=undefined; pendingSpace=false; prevCanStartAngleLiteral=true; sawTopLevelComma=true; continue; }
 			// other punctuation is significant
-			current += tk.value; prevWasWord=false; prevCanStartAngleLiteral=true; continue;
+			append(tk); prevCanStartAngleLiteral=true; continue;
 		}
 		if (tk.kind === 'op') {
 			if (tk.value === '<' && prevCanStartAngleLiteral) {
 				angleDepth++;
-				current += tk.value;
-				prevWasWord = false;
+				append(tk);
 				prevCanStartAngleLiteral = true;
 				continue;
 			}
 			if (tk.value === '>' && angleDepth > 0) {
 				angleDepth--;
-				current += tk.value;
-				prevWasWord = false;
+				append(tk);
 				prevCanStartAngleLiteral = false;
 				continue;
 			}
-			current += tk.value;
-			prevWasWord = false;
+			append(tk);
 			prevCanStartAngleLiteral = true;
 			continue;
 		}
-		// For consecutive word tokens (identifier/number/keyword) that were originally
-		// separate tokens, insert a space so stringification preserves separation.
-		if (isWord(tk)) {
-			if (prevWasWord) current += ' ';
-			current += tk.value;
-			prevWasWord = true;
-			prevCanStartAngleLiteral = false;
-		} else {
-			current += tk.value;
-			prevWasWord = false;
-			prevCanStartAngleLiteral = false;
-		}
+		append(tk);
+		prevCanStartAngleLiteral = false;
 	}
 	return null; // unterminated -> treat as not a call; parser will handle
 }
@@ -1168,35 +1063,24 @@ function expandFunctionMacro(name: string, def: FuncMacroDef, callArgs: string[]
 	for (const [p, val] of mapping) expandedMapping.set(p, expandArgs ? expandMacroArgText(val, obj, fn, file) : val);
 	const expandedVaList = expandArgs ? vaList.map(arg => expandMacroArgText(arg, obj, fn, file)) : vaList;
 	let body = def.body;
-	// __VA_OPT__ handling: simple pattern __VA_OPT__( ... )
-	body = body.replace(/__VA_OPT__\s*\(([^)]*)\)/g, (_,inner)=> varProvided? inner: '');
-	// Stringification #param: convert to a bare string literal token content WITHOUT quotes yet;
-	// we'll inject quotes so tokenizer produces a single string token. Preserve inner spacing.
-	body = body.replace(/#\s*([A-Za-z_]\w*)/g, (m,p)=> {
-		if (!mapping.has(p)) return m;
-		// Don't double-quote if already quoted text
-		const raw = mapping.get(p)!;
-		const unq = raw.replace(/^['"]|['"]$/g,'');
-		// Escape embedded quotes/backslashes minimally
-		const esc = unq.replace(/\\/g,'\\\\').replace(/"/g,'\\"');
-		return '"' + esc + '"';
-	});
-	// Replace params (word boundary)
-	for (const [p,val] of expandedMapping) {
-		const re = new RegExp(`\\b${escapeRegExp(p)}\\b`, 'g');
-		body = body.replace(re, val);
-	}
+	body = expandVaOpt(body, varProvided);
+	// Substitute preprocessing tokens, preserving strings/comments and avoiding
+	// a second substitution inside an argument inserted by an earlier parameter.
+	body = mapMacroCode(body, code => code.replace(/(?<!#)#(?!#)\s*([A-Za-z_]\w*)|\b([A-Za-z_]\w*)\b/g, (match, stringify: string | undefined, parameter: string | undefined) => {
+		if (stringify && mapping.has(stringify)) return JSON.stringify(mapping.get(stringify)!);
+		return parameter && expandedMapping.has(parameter) ? expandedMapping.get(parameter)! : match;
+	}));
 	if (hasVar) {
 		const joined = expandedVaList.join(', ');
-		body = body.replace(/__VA_ARGS__/g, joined);
-		if (!varProvided) body = body.replace(/,\s*\)/g, ')');
+		body = mapMacroCode(body, code => code.replace(/\b__VA_ARGS__\b/g, () => joined));
+		if (!varProvided) body = mapMacroCode(body, code => code.replace(/,\s*\)/g, ')'));
 	}
 	// Token pasting: A ## B -> AB. Perform iterative replacement until no more occurrences.
 	// This is done before tokenization so the concatenated identifier is lexed as one token.
 	let prevBody: string | null = null;
-	while (prevBody !== body) { prevBody = body; body = applyTokenPasteSimple(body); }
+	while (prevBody !== body) { prevBody = body; body = mapMacroCode(body, applyTokenPasteSimple); }
 	// Cleanup: remove artifacts from empty __VA_ARGS__/__VA_OPT__ eliminations.
-	body = body
+	body = mapMacroCode(body, code => code
 		// Remove a comma right after opening bracket/paren
 		.replace(/\[(\s*),/g, '[$1')
 		// Remove leading comma before closing bracket or paren: ", ]" or ", )"
@@ -1206,9 +1090,7 @@ function expandFunctionMacro(name: string, def: FuncMacroDef, callArgs: string[]
 		// Trim comma immediately before closing list bracket
 		.replace(/,\s*\]/g, ']')
 		// Trim comma immediately after opening list bracket
-		.replace(/\[\s*,/g, '[')
-		// Collapse duplicate semicolons that can arise when macro body ends with ';' and call site also adds ';'
-		.replace(/;\s*;/g, ';');
+		.replace(/\[\s*,/g, '['));
 	// Turn into tokens (lex body) and distribute span
 	let toks = body.length ? tokenize(body).filter(t=> t.kind !== 'eof' && t.kind !== 'directive') : [];
 	if (file) { for (const tk of toks) { if (!tk.file || tk.file === '<unknown>') (tk as Token).file = file; if (!tk.span.file || tk.span.file === '<unknown>') tk.span.file = file; } }
@@ -1244,6 +1126,7 @@ function expandMacroArgText(text: string, obj: Record<string, string | number | 
 	if (!text.trim()) return text;
 	const macroTable: MacroDefines = { ...obj };
 	for (const [name, def] of Object.entries(fn)) macroTable[name] = `(${def.params.join(',')}${def.hasVarArgs ? `${def.params.length ? ',' : ''}...` : ''}) ${def.body}`;
+	functionMacroKinds.set(macroTable, new Set(Object.keys(fn)));
 	const toks = tokenize(text).filter(t => t.kind !== 'eof' && t.kind !== 'directive');
 	if (file) {
 		for (const tk of toks) {
@@ -1256,22 +1139,70 @@ function expandMacroArgText(text: string, obj: Record<string, string | number | 
 
 function macroTokensToText(tokens: Token[]): string {
 	let out = '';
-	let prevWasWord = false;
-	const isWord = (t: Token) => t.kind === 'id' || t.kind === 'number' || t.kind === 'keyword';
+	let previous: Token | undefined;
 	for (const tk of tokens) {
 		if (tk.kind === 'comment-line' || tk.kind === 'comment-block' || tk.kind === 'directive' || tk.kind === 'eof') continue;
-		const word = isWord(tk);
-		if (out && prevWasWord && word) out += ' ';
+		if (previous && macroTokensNeedSpace(previous, tk)) out += ' ';
 		out += tk.value;
-		prevWasWord = word;
+		previous = tk;
 	}
 	return out;
+}
+
+function macroTokensNeedSpace(left: Token, right: Token): boolean {
+	const joined = tokenize(left.value + right.value).filter(t => t.kind !== 'eof');
+	return joined.length !== 2 || joined[0]!.value !== left.value || joined[1]!.value !== right.value;
 }
 
 function applyTokenPasteSimple(s: string): string {
 	// Accept multi-char left/right (ident/number) not just single char, merge greedily.
 	// We iterate merging longest adjacent identifier/number chunks separated by ##.
 	return s.replace(/([A-Za-z_][A-Za-z0-9_]*|\d+)\s*##\s*([A-Za-z_][A-Za-z0-9_]*|\d+)/g, (_,a,b)=> a + b);
+}
+
+function mapMacroCode(body: string, transform: (code: string) => string): string {
+	const protectedTokens = macroBodyTokens(body).filter(t => t.kind === 'string' || t.kind === 'comment-line' || t.kind === 'comment-block');
+	let out = '';
+	let start = 0;
+	for (const token of protectedTokens) {
+		out += transform(body.slice(start, token.span.start)) + body.slice(token.span.start, token.span.end);
+		start = token.span.end;
+	}
+	return out + transform(body.slice(start));
+}
+
+function macroBodyTokens(body: string): Token[] {
+	// A leading # is an operator in a replacement list, not a directive. A
+	// harmless prefix keeps the source tokenizer from consuming the whole line.
+	return tokenize('(' + body).filter(t => t.span.start > 0 && t.kind !== 'eof').map(t => ({
+		...t, span: { ...t.span, start: t.span.start - 1, end: t.span.end - 1 }
+	}));
+}
+
+function expandVaOpt(body: string, present: boolean): string {
+	const tokens = macroBodyTokens(body).filter(t => t.kind !== 'comment-line' && t.kind !== 'comment-block');
+	let out = '';
+	let start = 0;
+	for (let i = 0; i < tokens.length; i++) {
+		const marker = tokens[i]!;
+		const open = tokens[i + 1];
+		if (marker.kind !== 'id' || marker.value !== '__VA_OPT__' || open?.kind !== 'punct' || open.value !== '(') continue;
+		let depth = 1;
+		let end = i + 2;
+		for (; end < tokens.length; end++) {
+			const token = tokens[end]!;
+			if (token.kind !== 'punct') continue;
+			if (token.value === '(') depth++;
+			else if (token.value === ')' && --depth === 0) break;
+		}
+		if (depth !== 0) continue; // Preserve malformed input for normal diagnostics.
+		const close = tokens[end]!;
+		out += body.slice(start, marker.span.start);
+		if (present) out += body.slice(open.span.end, close.span.start);
+		start = close.span.end;
+		i = end;
+	}
+	return out + body.slice(start);
 }
 
 function distributeSpan(toks: Token[], start: number, end: number, file?: string): Token[] {
@@ -1286,5 +1217,3 @@ function distributeSpan(toks: Token[], start: number, end: number, file?: string
 
 // pushExpanded no longer used after hide-set integration; keep placeholder for future diff stability
 // function pushExpanded(out: Token[], toks: Token[]) { for (const t of toks) out.push(t); }
-
-function escapeRegExp(s: string){ return s.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); }

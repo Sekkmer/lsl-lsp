@@ -2,6 +2,8 @@ import { inlineConstantGlobals } from './constantGlobals';
 import { emitExpr, emitScript, emitStmt } from './emit';
 import { Env, evalExpr, type Value } from './eval';
 import { inferExprTypeFromAst, type SimpleType } from './infer';
+import { keyValueFromString, NULL_KEY_VALUE } from './key';
+import { parseNumberLiteral } from './numberLiteral';
 import { measureAst } from './measure';
 import { parseScriptFromText } from './parser';
 import * as runtime from './runtime';
@@ -310,28 +312,23 @@ function optimizeListCompoundAdd(expr: Expr, scope: TypeScope, functionReturnTyp
 	return {
 		...expr,
 		op: '=',
-		right: prependListAdd(expr.left, expr.right),
+		right: prependListAdd(expr.left, expr.right, scope, functionReturnTypes),
 	};
 }
 
-function prependListAdd(left: Expr, right: Expr): Expr {
-	const stripped = stripLeadingListCast(right);
-	if (stripped.kind === 'Binary' && stripped.op === '+') {
-		return { ...stripped, left: prependListAdd(left, stripped.left) };
+function prependListAdd(left: Expr, right: Expr, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>): Expr {
+	// Only reassociate an existing list concatenation. A cast of a scalar sum
+	// such as (list)(n + 1) must append one element, rather than two elements.
+	if (right.kind === 'Binary' && right.op === '+' && inferExprTypeFromAst(right.left, scope.view(), new Map(functionReturnTypes)) === 'list') {
+		return { ...right, left: prependListAdd(left, right.left, scope, functionReturnTypes) };
 	}
 	return {
 		...right,
 		kind: 'Binary',
 		op: '+',
 		left,
-		right: stripped,
+		right: right.kind === 'Cast' && right.type === 'list' ? right.argument : right,
 	};
-}
-
-function stripLeadingListCast(expr: Expr): Expr {
-	if (expr.kind === 'Cast' && expr.type === 'list') return expr.argument;
-	if (expr.kind === 'Binary' && expr.op === '+') return { ...expr, left: stripLeadingListCast(expr.left) };
-	return expr;
 }
 
 function optimizeBitwiseBooleanOp(expr: Expr, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>): Expr {
@@ -367,8 +364,6 @@ interface LinearIntegerExpr {
 function optimizeLinearIntegerExpr(expr: Expr, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>): Expr | null {
 	const linear = collectLinearIntegerExpr(expr, scope, functionReturnTypes, 1);
 	if (!linear?.term) return null;
-	if (linear.term.coefficient === 1 && linear.constant === 1) return null;
-	if (linear.term.coefficient === 1 && linear.constant === -1) return null;
 	const next = renderLinearIntegerExpr(expr, linear);
 	return emitExpr(next).length < emitExpr(expr).length ? next : null;
 }
@@ -377,7 +372,7 @@ function collectLinearIntegerExpr(expr: Expr, scope: TypeScope, functionReturnTy
 	if (expr.kind === 'Paren') return collectLinearIntegerExpr(expr.expression, scope, functionReturnTypes, sign);
 	if (expr.kind === 'NumberLiteral') {
 		const value = integerLiteralNumber(expr);
-		return value === null ? null : { constant: sign * value };
+		return value === null ? null : { constant: Math.imul(sign, value) };
 	}
 	const incremented = incrementTargetExpr(expr);
 	if (incremented) {
@@ -407,8 +402,8 @@ function collectLinearIntegerExpr(expr: Expr, scope: TypeScope, functionReturnTy
 function collectLinearIntegerProduct(expr: Extract<Expr, { kind: 'Binary' }>, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>, sign: number): LinearIntegerExpr | null {
 	const leftLiteral = integerLiteralNumber(expr.left);
 	const rightLiteral = integerLiteralNumber(expr.right);
-	if (leftLiteral !== null && rightLiteral === null) return scaleLinearIntegerTerm(expr.right, scope, functionReturnTypes, sign * leftLiteral);
-	if (rightLiteral !== null && leftLiteral === null) return scaleLinearIntegerTerm(expr.left, scope, functionReturnTypes, sign * rightLiteral);
+	if (leftLiteral !== null && rightLiteral === null) return scaleLinearIntegerTerm(expr.right, scope, functionReturnTypes, Math.imul(sign, leftLiteral));
+	if (rightLiteral !== null && leftLiteral === null) return scaleLinearIntegerTerm(expr.left, scope, functionReturnTypes, Math.imul(sign, rightLiteral));
 	return null;
 }
 
@@ -417,16 +412,16 @@ function scaleLinearIntegerTerm(expr: Expr, scope: TypeScope, functionReturnType
 	if (!term || term.constant !== 0 || !term.term) return null;
 	return {
 		constant: 0,
-		term: { ...term.term, coefficient: term.term.coefficient * coefficient },
+		term: { ...term.term, coefficient: Math.imul(term.term.coefficient, coefficient) },
 	};
 }
 
 function mergeLinearIntegerExpr(left: LinearIntegerExpr, right: LinearIntegerExpr): LinearIntegerExpr | null {
 	if (left.term && right.term && left.term.identifier.name !== right.term.identifier.name) return null;
 	const term = left.term ?? right.term;
-	const coefficient = (left.term?.coefficient ?? 0) + (right.term?.coefficient ?? 0);
+	const coefficient = ((left.term?.coefficient ?? 0) + (right.term?.coefficient ?? 0)) | 0;
 	return {
-		constant: left.constant + right.constant,
+		constant: (left.constant + right.constant) | 0,
 		term: term && coefficient !== 0 ? { ...term, coefficient } : undefined,
 	};
 }
@@ -463,8 +458,8 @@ function renderLinearTerm(source: Expr, term: LinearIntegerTerm): Expr {
 function integerLiteralNumber(expr: Expr): number | null {
 	if (expr.kind === 'Paren') return integerLiteralNumber(expr.expression);
 	if (expr.kind !== 'NumberLiteral') return null;
-	const value = Number(expr.raw);
-	return Number.isInteger(value) ? value : null;
+	const literal = parseNumberLiteral(expr.raw);
+	return literal?.type === 'integer' ? literal.value | 0 : null;
 }
 
 function numberLiteral(source: Expr, value: number): Expr {
@@ -570,6 +565,9 @@ function isBooleanValueExpr(expr: Expr, scope: TypeScope, functionReturnTypes: R
 function listLiteralToAdd(expr: Expr, scope: TypeScope, functionReturnTypes: ReadonlyMap<string, SimpleType>): Expr {
 	if (expr.kind !== 'ListLiteral' || expr.elements.length === 0) return expr;
 	if (expr.elements.some(element => inferExprTypeFromAst(element, scope.view(), new Map(functionReturnTypes)) === 'list')) return expr;
+	// List literal elements are evaluated left to right, while + evaluates its
+	// operands right to left. Do not change observable evaluation order.
+	if (!expr.elements.every(isSideEffectFreeInlineArg)) return expr;
 	let out: Expr = { ...expr, kind: 'Cast', type: 'list', argument: expr.elements[0]! };
 	for (const element of expr.elements.slice(1)) {
 		out = { ...expr, kind: 'Binary', op: '+', left: out, right: element };
@@ -696,14 +694,14 @@ function isAssignmentOp(op: string): boolean {
 	return op === '=' || op === '+=' || op === '-=' || op === '*=' || op === '/=' || op === '%=';
 }
 
-function collectPureFunctions(script: Script): Set<string> {
+function collectPureFunctions(script: Script, requireTotal = false): Set<string> {
 	const pure = new Set<string>();
 	let changed = true;
 	while (changed) {
 		changed = false;
 		for (const [name, fn] of script.functions) {
 			if (pure.has(name) || !fn.returnType || fn.returnType === 'void') continue;
-			if (isPureFunction(fn, pure)) {
+			if (isPureFunction(fn, pure, requireTotal)) {
 				pure.add(name);
 				changed = true;
 			}
@@ -712,40 +710,40 @@ function collectPureFunctions(script: Script): Set<string> {
 	return pure;
 }
 
-function isPureFunction(fn: FnNode, pureFunctions: ReadonlySet<string>): boolean {
+function isPureFunction(fn: FnNode, pureFunctions: ReadonlySet<string>, requireTotal: boolean): boolean {
 	const locals = new Set(fn.parameters.keys());
-	return isPureStmt(fn.body, pureFunctions, locals);
+	return isPureStmt(fn.body, pureFunctions, locals, requireTotal);
 }
 
-function isPureStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, locals: Set<string>): boolean {
+function isPureStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, locals: Set<string>, requireTotal = false): boolean {
 	switch (stmt.kind) {
 		case 'EmptyStmt':
 		case 'LabelStmt':
 			return true;
 		case 'ExprStmt':
-			return isPureFunctionExpr(stmt.expression, pureFunctions, locals);
+			return isPureFunctionExpr(stmt.expression, pureFunctions, locals, requireTotal);
 		case 'VarDecl':
-			if (stmt.initializer && !isPureFunctionExpr(stmt.initializer, pureFunctions, locals)) return false;
+			if (stmt.initializer && !isPureFunctionExpr(stmt.initializer, pureFunctions, locals, requireTotal)) return false;
 			locals.add(stmt.name);
 			return true;
 		case 'ReturnStmt':
-			return !stmt.expression || isPureFunctionExpr(stmt.expression, pureFunctions, locals);
+			return !stmt.expression || isPureFunctionExpr(stmt.expression, pureFunctions, locals, requireTotal);
 		case 'IfStmt':
-			return isPureFunctionExpr(stmt.condition, pureFunctions, locals)
-				&& isPureStmt(stmt.then, pureFunctions, new Set(locals))
-				&& (!stmt.else || isPureStmt(stmt.else, pureFunctions, new Set(locals)));
+			return isPureFunctionExpr(stmt.condition, pureFunctions, locals, requireTotal)
+				&& isPureStmt(stmt.then, pureFunctions, new Set(locals), requireTotal)
+				&& (!stmt.else || isPureStmt(stmt.else, pureFunctions, new Set(locals), requireTotal));
 		case 'WhileStmt':
-			return isPureFunctionExpr(stmt.condition, pureFunctions, locals) && isPureStmt(stmt.body, pureFunctions, new Set(locals));
+			return !requireTotal && isPureFunctionExpr(stmt.condition, pureFunctions, locals) && isPureStmt(stmt.body, pureFunctions, new Set(locals));
 		case 'DoWhileStmt':
-			return isPureStmt(stmt.body, pureFunctions, new Set(locals)) && isPureFunctionExpr(stmt.condition, pureFunctions, locals);
+			return !requireTotal && isPureStmt(stmt.body, pureFunctions, new Set(locals)) && isPureFunctionExpr(stmt.condition, pureFunctions, locals);
 		case 'ForStmt':
-			return (!stmt.init || isPureFunctionExpr(stmt.init, pureFunctions, locals))
+			return !requireTotal && (!stmt.init || isPureFunctionExpr(stmt.init, pureFunctions, locals))
 				&& (!stmt.condition || isPureFunctionExpr(stmt.condition, pureFunctions, locals))
 				&& (!stmt.update || isPureFunctionExpr(stmt.update, pureFunctions, locals))
 				&& isPureStmt(stmt.body, pureFunctions, new Set(locals));
 		case 'BlockStmt': {
 			const blockLocals = new Set(locals);
-			return stmt.statements.every(child => isPureStmt(child, pureFunctions, blockLocals));
+			return stmt.statements.every(child => isPureStmt(child, pureFunctions, blockLocals, requireTotal));
 		}
 		case 'ErrorStmt':
 		case 'JumpStmt':
@@ -757,7 +755,7 @@ function isPureStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, locals: Set<
 	}
 }
 
-function isPureFunctionExpr(expr: Expr, pureFunctions: ReadonlySet<string>, locals: ReadonlySet<string>): boolean {
+function isPureFunctionExpr(expr: Expr, pureFunctions: ReadonlySet<string>, locals: ReadonlySet<string>, requireTotal = false): boolean {
 	switch (expr.kind) {
 		case 'ErrorExpr':
 			return false;
@@ -766,23 +764,24 @@ function isPureFunctionExpr(expr: Expr, pureFunctions: ReadonlySet<string>, loca
 		case 'Identifier':
 			return true;
 		case 'Member':
-			return isPureFunctionExpr(expr.object, pureFunctions, locals);
+			return isPureFunctionExpr(expr.object, pureFunctions, locals, requireTotal);
 		case 'Unary':
-			return expr.op !== '++' && expr.op !== '--' && isPureFunctionExpr(expr.argument, pureFunctions, locals);
+			return expr.op !== '++' && expr.op !== '--' && isPureFunctionExpr(expr.argument, pureFunctions, locals, requireTotal);
 		case 'Binary':
-			if (expr.op === '=') return expr.left.kind === 'Identifier' && locals.has(expr.left.name) && isPureFunctionExpr(expr.right, pureFunctions, locals);
-			return !isAssignmentOp(expr.op) && isPureFunctionExpr(expr.left, pureFunctions, locals) && isPureFunctionExpr(expr.right, pureFunctions, locals);
+			if (requireTotal && (expr.op === '/' || expr.op === '%')) return false;
+			if (expr.op === '=') return expr.left.kind === 'Identifier' && locals.has(expr.left.name) && isPureFunctionExpr(expr.right, pureFunctions, locals, requireTotal);
+			return !isAssignmentOp(expr.op) && isPureFunctionExpr(expr.left, pureFunctions, locals, requireTotal) && isPureFunctionExpr(expr.right, pureFunctions, locals, requireTotal);
 		case 'Cast':
 		case 'Paren':
-			return isPureFunctionExpr(expr.kind === 'Cast' ? expr.argument : expr.expression, pureFunctions, locals);
+			return isPureFunctionExpr(expr.kind === 'Cast' ? expr.argument : expr.expression, pureFunctions, locals, requireTotal);
 		case 'ListLiteral':
-			return expr.elements.every(element => isPureFunctionExpr(element, pureFunctions, locals));
+			return expr.elements.every(element => isPureFunctionExpr(element, pureFunctions, locals, requireTotal));
 		case 'VectorLiteral':
-			return expr.elements.every(element => isPureFunctionExpr(element, pureFunctions, locals));
+			return expr.elements.every(element => isPureFunctionExpr(element, pureFunctions, locals, requireTotal));
 		case 'Call':
 			return expr.callee.kind === 'Identifier'
-				&& (isImplementedRuntimeFunction(expr.callee.name) || pureFunctions.has(expr.callee.name))
-				&& expr.args.every(arg => isPureFunctionExpr(arg, pureFunctions, locals));
+				&& ((isImplementedRuntimeFunction(expr.callee.name) && (!requireTotal || isDiscardableRuntimeCall(expr))) || pureFunctions.has(expr.callee.name))
+				&& expr.args.every(arg => isPureFunctionExpr(arg, pureFunctions, locals, requireTotal));
 		default:
 			AssertNever(expr);
 			return false;
@@ -793,11 +792,31 @@ function isImplementedRuntimeFunction(name: string): boolean {
 	return name.startsWith('ll') && typeof (runtime as Record<string, unknown>)[name] === 'function';
 }
 
+function isDiscardableRuntimeCall(expr: Extract<Expr, { kind: 'Call' }>): boolean {
+	// Runtime models return unknown for invalid inputs. An unknown call may
+	// trap in SL, so only discard it when its successful result is established.
+	return isFiniteKnownValue(evalExpr(expr, new Env(), { allowRuntimeCalls: true }));
+}
+
+function isFiniteKnownValue(value: Value): boolean {
+	if (value.kind !== 'value') return false;
+	if (value.type === 'integer' || value.type === 'float') return Number.isFinite(value.value);
+	if (value.type === 'vector' || value.type === 'rotation') return value.value.every(Number.isFinite);
+	if (value.type === 'list') return value.value.every(isFiniteKnownValue);
+	return true;
+}
+
 type InlineCandidate = {
 	name: string;
-	params: string[];
+	params: Array<[string, Type]>;
+	returnType: Type;
 	expression: Expr;
 };
+
+function typedInlineValue(type: Type, expression: Expr): Expr {
+	if (inferExprTypeFromAst(expression, new Map(), new Map()) === type) return expression;
+	return { ...expression, kind: 'Cast', type, argument: expression };
+}
 
 function inlineExpressionFunctionsByMeasure(script: Script): Script {
 	let current = script;
@@ -805,10 +824,10 @@ function inlineExpressionFunctionsByMeasure(script: Script): Script {
 	while (changed) {
 		changed = false;
 		for (const candidate of collectInlineCandidates(current)) {
-			const beforeUsed = estimateMonoUsed(current);
+			const beforeMeasure = measureAst(current);
 			const inlined = removeUnusedFunctions(inlineSingleFunction(current, candidate));
-			const afterUsed = estimateMonoUsed(inlined);
-			if (afterUsed < beforeUsed) {
+			const afterMeasure = measureAst(inlined);
+			if (isProfitableInline(beforeMeasure, afterMeasure)) {
 				current = inlined;
 				changed = true;
 				break;
@@ -824,10 +843,10 @@ function inlineSingleUseStatementFunctionsByMeasure(script: Script): Script {
 	while (changed) {
 		changed = false;
 		for (const candidate of collectStatementInlineCandidates(current)) {
-			const beforeUsed = estimateMonoUsed(current);
+			const beforeMeasure = measureAst(current);
 			const inlined = removeUnusedFunctions(inlineSingleStatementFunction(current, candidate));
-			const afterUsed = estimateMonoUsed(inlined);
-			if (afterUsed < beforeUsed) {
+			const afterMeasure = measureAst(inlined);
+			if (isProfitableInline(beforeMeasure, afterMeasure)) {
 				current = inlined;
 				changed = true;
 				break;
@@ -835,6 +854,19 @@ function inlineSingleUseStatementFunctionsByMeasure(script: Script): Script {
 		}
 	}
 	return current;
+}
+
+function isProfitableInline(
+	before: ReturnType<typeof measureAst>,
+	after: ReturnType<typeof measureAst>,
+): boolean {
+	if (after.estimatedMonoUsedMemory < before.estimatedMonoUsedMemory) return true;
+	if (after.estimatedMonoUsedMemory > before.estimatedMonoUsedMemory) return false;
+	if (after.compactCharacters < before.compactCharacters) return true;
+	return after.compactCharacters === before.compactCharacters
+		&& !before.callGraph.staticDepthIsUpperBound
+		&& !after.callGraph.staticDepthIsUpperBound
+		&& after.callGraph.maxStaticUserCallDepth < before.callGraph.maxStaticUserCallDepth;
 }
 
 interface SpecializationCandidate {
@@ -873,33 +905,71 @@ function collectInlineCandidates(script: Script): InlineCandidate[] {
 		if ((callCounts.get(name) ?? 0) < 1) continue;
 		const expression = singleReturnExpression(fn);
 		if (!expression || exprCallsFunction(expression, name)) continue;
-		const params = [...fn.parameters.keys()];
-		const paramSet = new Set(params);
+		const params = [...fn.parameters];
+		const paramSet = new Set(fn.parameters.keys());
 		if (!identifiersAreOnlyParams(expression, paramSet)) continue;
 		if (maxParamUseCount(expression, paramSet) > 1) continue;
-		candidates.push({ name, params, expression });
+		const written = new Set<string>();
+		collectWrittenNamesFromExpr(expression, written);
+		if (intersects(written, paramSet)) continue;
+		// Substitution delays reading arguments until the function body uses them.
+		// Unknown calls can change globals that those arguments originally captured.
+		if (paramSet.size && exprContainsUnknownInlineCall(expression)) continue;
+		candidates.push({ name, params, returnType: fn.returnType as Type, expression });
 	}
 	return candidates;
+}
+
+function exprContainsUnknownInlineCall(expr: Expr): boolean {
+	let found = false;
+	visitExprCalls(expr, name => {
+		if (!isImplementedRuntimeFunction(name)) found = true;
+	});
+	return found;
 }
 
 type StatementInlineCandidate = {
 	name: string;
 	fn: FnNode;
-	endLabel: string;
+	usedNames: Set<string>;
 };
 
 function collectStatementInlineCandidates(script: Script): StatementInlineCandidate[] {
 	const callCounts = collectFunctionCallCounts(script);
-	const labels = collectLabelNames(script);
+	const declaredNames = collectDeclaredNames(script);
+	const shadowedGlobals = collectShadowedGlobals(script);
 	const candidates: StatementInlineCandidate[] = [];
 	for (const [name, fn] of script.functions) {
-		if (callCounts.get(name) !== 1) continue;
+		const callCount = callCounts.get(name) ?? 0;
+		if (callCount < 1) continue;
 		if (fn.returnType && fn.returnType !== 'void') continue;
 		if (hasInlineHostileFlow(fn.body)) continue;
-		if (countDirectStatementCalls(script, name) !== 1) continue;
-		candidates.push({ name, fn, endLabel: uniqueGeneratedName(labels, `J_inline_${name}`) });
+		if (stmtCallsFunction(fn.body, name)) continue;
+		const referenced = new Set<string>();
+		collectMentionedInStmt(fn.body, referenced);
+		if (intersects(referenced, shadowedGlobals)) continue;
+		if (countDirectStatementCalls(script, name) !== callCount) continue;
+		candidates.push({ name, fn, usedNames: new Set(declaredNames) });
 	}
 	return candidates;
+}
+
+function collectShadowedGlobals(script: Script): Set<string> {
+	const shadowed = new Set<string>();
+	const collect = (name: string) => {
+		if (script.globals.has(name)) shadowed.add(name);
+	};
+	for (const fn of script.functions.values()) {
+		for (const name of fn.parameters.keys()) collect(name);
+		visitDeclaredNamesInStmt(fn.body, collect);
+	}
+	for (const state of script.states.values()) {
+		for (const event of state.events) {
+			for (const name of event.parameters.keys()) collect(name);
+			visitDeclaredNamesInStmt(event.body, collect);
+		}
+	}
+	return shadowed;
 }
 
 function collectSpecializationCandidates(script: Script): SpecializationCandidate[] {
@@ -1000,7 +1070,7 @@ function specializeFunction(fn: FnNode, candidate: SpecializationCandidate): FnN
 	let index = 0;
 	for (const [name, type] of fn.parameters) {
 		const fixed = candidate.fixed.get(index);
-		if (fixed) replacements.set(name, fixed);
+		if (fixed) replacements.set(name, typedInlineValue(type, fixed));
 		else parameters.set(name, type);
 		index++;
 	}
@@ -1201,19 +1271,22 @@ function removeUnreachableFunctions(script: Script): Script {
 }
 
 function removeDeadStatements(script: Script): Script {
-	const pureFunctions = collectPureFunctions(script);
+	// Lack of side effects is insufficient: discarded calls must also return
+	// without a runtime error. Keep loops and potentially trapping arithmetic.
+	const pureFunctions = collectPureFunctions(script, true);
 	const noOpFunctions = collectNoOpVoidFunctions(script, pureFunctions);
+	const mutatingFunctions = new Set([...script.functions.keys()].filter(name => !pureFunctions.has(name) && !noOpFunctions.has(name)));
 	return {
 		...script,
 		functions: mapValues(script.functions, fn => ({
 			...fn,
-			body: cleanupBody(cleanupStmt(fn.body, pureFunctions, noOpFunctions), fn.returnType),
+			body: cleanupBody(cleanupStmt(fn.body, pureFunctions, noOpFunctions, mutatingFunctions), fn.returnType),
 		})),
 		states: mapValues(script.states, state => ({
 			...state,
 			events: state.events.map(event => ({
 				...event,
-				body: cleanupBody(cleanupStmt(event.body, pureFunctions, noOpFunctions), 'void'),
+				body: cleanupBody(cleanupStmt(event.body, pureFunctions, noOpFunctions, mutatingFunctions), 'void'),
 			})),
 		})),
 	};
@@ -1230,7 +1303,9 @@ function removeEmptyEvents(script: Script): Script {
 }
 
 function removeEmptyEventsFromState(events: Event[]): Event[] {
-	const nonEmpty = events.filter(event => !isEmptyStmt(event.body));
+	// Empty touch/collision handlers still determine whether child-prim events
+	// propagate to another script in the linkset.
+	const nonEmpty = events.filter(event => !isEmptyStmt(event.body) || /^(touch|collision|land_collision)(_|$)/.test(event.name));
 	if (nonEmpty.length > 0) return nonEmpty;
 	return events.length > 0 ? [events[0]!] : events;
 }
@@ -1257,7 +1332,7 @@ function removeUnusedGlobals(script: Script): Script {
 }
 
 function removeUnusedParameters(script: Script): Script {
-	const pureFunctions = collectPureFunctions(script);
+	const pureFunctions = collectPureFunctions(script, true);
 	const noOpFunctions = collectNoOpVoidFunctions(script, pureFunctions);
 	let current = script;
 	let changed = true;
@@ -1432,7 +1507,7 @@ function collectNoOpVoidFunctions(script: Script, pureFunctions: ReadonlySet<str
 	return noOp;
 }
 
-function cleanupStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): Stmt {
+function cleanupStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>, mutatingFunctions: ReadonlySet<string>): Stmt {
 	switch (stmt.kind) {
 		case 'EmptyStmt':
 		case 'ErrorStmt':
@@ -1446,25 +1521,25 @@ function cleanupStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, noOpFunctio
 		case 'ReturnStmt':
 			return stmt;
 		case 'IfStmt': {
-			const thenStmt = cleanupStmt(stmt.then, pureFunctions, noOpFunctions);
-			const elseStmt = stmt.else ? cleanupStmt(stmt.else, pureFunctions, noOpFunctions) : undefined;
+			const thenStmt = cleanupStmt(stmt.then, pureFunctions, noOpFunctions, mutatingFunctions);
+			const elseStmt = stmt.else ? cleanupStmt(stmt.else, pureFunctions, noOpFunctions, mutatingFunctions) : undefined;
 			if (isEmptyStmt(thenStmt) && (!elseStmt || isEmptyStmt(elseStmt)) && isSideEffectFreeExpr(stmt.condition, pureFunctions, noOpFunctions)) {
 				return { ...stmt, kind: 'EmptyStmt' };
 			}
 			return { ...stmt, then: thenStmt, else: elseStmt };
 		}
 		case 'WhileStmt': {
-			const body = cleanupStmt(stmt.body, pureFunctions, noOpFunctions);
+			const body = cleanupStmt(stmt.body, pureFunctions, noOpFunctions, mutatingFunctions);
 			if (isEmptyStmt(body) && isLiteralFalse(stmt.condition) && isSideEffectFreeExpr(stmt.condition, pureFunctions, noOpFunctions)) return { ...stmt, kind: 'EmptyStmt' };
 			return { ...stmt, body };
 		}
 		case 'DoWhileStmt': {
-			const body = cleanupStmt(stmt.body, pureFunctions, noOpFunctions);
+			const body = cleanupStmt(stmt.body, pureFunctions, noOpFunctions, mutatingFunctions);
 			if (isEmptyStmt(body) && isLiteralFalse(stmt.condition) && isSideEffectFreeExpr(stmt.condition, pureFunctions, noOpFunctions)) return { ...stmt, kind: 'EmptyStmt' };
 			return { ...stmt, body };
 		}
 		case 'ForStmt': {
-			const body = cleanupStmt(stmt.body, pureFunctions, noOpFunctions);
+			const body = cleanupStmt(stmt.body, pureFunctions, noOpFunctions, mutatingFunctions);
 			if (
 				isEmptyStmt(body)
 				&& stmt.condition
@@ -1476,14 +1551,14 @@ function cleanupStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, noOpFunctio
 		}
 		case 'BlockStmt': {
 			const statements = stmt.statements
-				.map(child => cleanupStmt(child, pureFunctions, noOpFunctions))
+				.map(child => cleanupStmt(child, pureFunctions, noOpFunctions, mutatingFunctions))
 				.filter(child => !isEmptyStmt(child));
 			const reachable = dropStatementsAfterTerminal(statements);
 			const flattened = flattenRedundantBlocks(reachable);
 			const withoutUnused = removeUnusedLocalDecls(flattened, pureFunctions, noOpFunctions);
 			const withValueFlow = propagateLocalValueFlow(withoutUnused, pureFunctions, noOpFunctions);
 			const withoutDeadAssignments = removeDeadLocalAssignments(withValueFlow, pureFunctions, noOpFunctions);
-			const propagated = inlineLocalDeclsBySize(withoutDeadAssignments, pureFunctions, noOpFunctions);
+			const propagated = inlineLocalDeclsBySize(withoutDeadAssignments, pureFunctions, noOpFunctions, mutatingFunctions);
 			const reusedLocals = reuseNonEscapingLocalSlots(propagated);
 			const withoutDeadInitializers = dropDeadLocalInitializers(reusedLocals, pureFunctions, noOpFunctions);
 			const withoutFlowUnused = removeUnusedLocalDecls(withoutDeadInitializers, pureFunctions, noOpFunctions);
@@ -1498,12 +1573,6 @@ function cleanupStmt(stmt: Stmt, pureFunctions: ReadonlySet<string>, noOpFunctio
 }
 
 function flattenRedundantBlocks(statements: Stmt[]): Stmt[] {
-	const topLevelNames = new Set<string>();
-	for (const stmt of statements) {
-		if (stmt.kind === 'VarDecl') topLevelNames.add(stmt.name);
-	}
-
-	const declared = new Set(topLevelNames);
 	const out: Stmt[] = [];
 	let changed = false;
 	for (const stmt of statements) {
@@ -1512,12 +1581,12 @@ function flattenRedundantBlocks(statements: Stmt[]): Stmt[] {
 			continue;
 		}
 		const blockNames = collectDirectBlockLocalNames(stmt.statements);
-		const seenBlockNames = new Set<string>();
-		if (blockNames.some(name => declared.has(name) || topLevelNames.has(name) || seenBlockNames.size === seenBlockNames.add(name).size)) {
+		// Expanding the scope of any local can capture a reference that previously
+		// resolved to an outer variable, including one declared outside this body.
+		if (blockNames.length) {
 			out.push(stmt);
 			continue;
 		}
-		for (const name of blockNames) declared.add(name);
 		out.push(...stmt.statements);
 		changed = true;
 	}
@@ -1708,14 +1777,20 @@ function propagateLocalValueFlow(statements: Stmt[], pureFunctions: ReadonlySet<
 
 function propagateLocalValueFlowSegment(statements: Stmt[], locals: ReadonlySet<string>, pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): Stmt[] {
 	const facts = new Map<string, LocalValueFact>();
+	const availableLocals = new Set<string>();
+	const localTypes = new Map(statements.filter((stmt): stmt is Extract<Stmt, { kind: 'VarDecl' }> => stmt.kind === 'VarDecl').map(stmt => [stmt.name, stmt.varType]));
 	const out: Stmt[] = [];
 	let changed = false;
 	for (const stmt of statements) {
+		// A write anywhere inside this statement may precede another read under
+		// LSL's expression evaluation order. Keep the entire statement conservative.
+		invalidateLocalValueFacts(facts, collectWrittenNamesInStmt(stmt));
 		const rewritten = replaceLocalValueFactsInStmt(stmt, facts);
 		if (rewritten !== stmt) changed = true;
 		const written = collectWrittenNamesInStmt(rewritten);
 		invalidateLocalValueFacts(facts, written);
-		updateLocalValueFacts(rewritten, locals, facts, pureFunctions, noOpFunctions);
+		if (rewritten.kind === 'VarDecl' && locals.has(rewritten.name)) availableLocals.add(rewritten.name);
+		updateLocalValueFacts(rewritten, availableLocals, localTypes, facts, pureFunctions, noOpFunctions);
 		out.push(rewritten);
 	}
 	return changed ? out : statements;
@@ -1728,17 +1803,18 @@ function invalidateLocalValueFacts(facts: Map<string, LocalValueFact>, written: 
 	}
 }
 
-function updateLocalValueFacts(stmt: Stmt, locals: ReadonlySet<string>, facts: Map<string, LocalValueFact>, pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): void {
+function updateLocalValueFacts(stmt: Stmt, locals: ReadonlySet<string>, localTypes: ReadonlyMap<string, Type>, facts: Map<string, LocalValueFact>, pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): void {
 	if (stmt.kind === 'VarDecl') {
 		facts.delete(stmt.name);
-		if (locals.has(stmt.name) && stmt.initializer) addLocalValueFact(stmt.name, stmt.initializer, locals, facts, pureFunctions, noOpFunctions);
+		if (locals.has(stmt.name) && stmt.initializer) addLocalValueFact(stmt.name, typedInlineValue(stmt.varType, stmt.initializer), locals, facts, pureFunctions, noOpFunctions);
 		return;
 	}
 	if (stmt.kind !== 'ExprStmt') return;
 	const assignment = simpleIdentifierAssignment(stmt.expression);
 	if (!assignment || !locals.has(assignment.name)) return;
 	facts.delete(assignment.name);
-	addLocalValueFact(assignment.name, assignment.value, locals, facts, pureFunctions, noOpFunctions);
+	const type = localTypes.get(assignment.name);
+	if (type) addLocalValueFact(assignment.name, typedInlineValue(type, assignment.value), locals, facts, pureFunctions, noOpFunctions);
 }
 
 function addLocalValueFact(name: string, expr: Expr, locals: ReadonlySet<string>, facts: Map<string, LocalValueFact>, pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): void {
@@ -1904,14 +1980,15 @@ function replaceLocalValueFactsAssignment(expr: Extract<Expr, { kind: 'Binary' }
 }
 
 function removeDeadLocalAssignments(statements: Stmt[], pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): Stmt[] {
-	if (statements.some(stmt => stmt.kind === 'LabelStmt' || stmt.kind === 'JumpStmt')) return statements;
+	if (statements.some(stmtContainsLabelOrJump)) return statements;
 	const locals = collectDirectLocalDeclarations(statements);
 	if (!locals.size) return statements;
+	const declarationPositions = new Map(statements.flatMap((stmt, index) => stmt.kind === 'VarDecl' ? [[stmt.name, index] as const] : []));
 	const live = new Set<string>();
 	const out: Stmt[] = [];
 	for (let index = statements.length - 1; index >= 0; index--) {
 		const stmt = statements[index]!;
-		if (isDeadLocalAssignment(stmt, locals, live, pureFunctions, noOpFunctions)) continue;
+		if (isDeadLocalAssignment(stmt, declarationPositions, index, live, pureFunctions, noOpFunctions)) continue;
 		removeDefiniteLocalWritesFromLive(stmt, locals, live);
 		collectReadNamesFromStmt(stmt, live);
 		out.push(stmt);
@@ -1921,7 +1998,7 @@ function removeDeadLocalAssignments(statements: Stmt[], pureFunctions: ReadonlyS
 }
 
 function dropDeadLocalInitializers(statements: Stmt[], pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): Stmt[] {
-	if (statements.some(stmt => stmt.kind === 'LabelStmt' || stmt.kind === 'JumpStmt')) return statements;
+	if (statements.some(stmtContainsLabelOrJump)) return statements;
 	const locals = collectDirectLocalDeclarations(statements);
 	if (!locals.size) return statements;
 	const live = new Set<string>();
@@ -1957,10 +2034,12 @@ function collectDirectLocalDeclarations(statements: readonly Stmt[]): Set<string
 	return locals;
 }
 
-function isDeadLocalAssignment(stmt: Stmt, locals: ReadonlySet<string>, live: ReadonlySet<string>, pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): boolean {
+function isDeadLocalAssignment(stmt: Stmt, declarationPositions: ReadonlyMap<string, number>, statementIndex: number, live: ReadonlySet<string>, pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): boolean {
 	if (stmt.kind !== 'ExprStmt') return false;
 	const assignment = simpleIdentifierAssignment(stmt.expression);
-	if (!assignment || !locals.has(assignment.name) || live.has(assignment.name)) return false;
+	if (!assignment || live.has(assignment.name)) return false;
+	const declarationIndex = declarationPositions.get(assignment.name);
+	if (declarationIndex === undefined || declarationIndex >= statementIndex) return false;
 	return isSideEffectFreeExpr(assignment.value, pureFunctions, noOpFunctions);
 }
 
@@ -2089,7 +2168,7 @@ function collectReadNamesFromExpr(expr: Expr, out: Set<string>): void {
 	}
 }
 
-function inlineLocalDeclsBySize(statements: Stmt[], pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>): Stmt[] {
+function inlineLocalDeclsBySize(statements: Stmt[], pureFunctions: ReadonlySet<string>, noOpFunctions: ReadonlySet<string>, mutatingFunctions: ReadonlySet<string>): Stmt[] {
 	let current = statements;
 	let changed = true;
 	while (changed) {
@@ -2098,7 +2177,7 @@ function inlineLocalDeclsBySize(statements: Stmt[], pureFunctions: ReadonlySet<s
 			const stmt = current[index]!;
 			if (stmt.kind !== 'VarDecl' || !stmt.initializer) continue;
 			if (!isSideEffectFreeExpr(stmt.initializer, pureFunctions, noOpFunctions)) continue;
-			const next = inlineLocalDeclCandidate(current, index, stmt);
+			const next = inlineLocalDeclCandidate(current, index, stmt, mutatingFunctions);
 			if (!next) continue;
 			const beforeBytes = emitBlockStatements(current);
 			const afterBytes = emitBlockStatements(next);
@@ -2216,7 +2295,7 @@ function stmtContainsLabelOrJump(stmt: Stmt): boolean {
 	return found;
 }
 
-function inlineLocalDeclCandidate(statements: Stmt[], declarationIndex: number, declaration: Extract<Stmt, { kind: 'VarDecl' }>): Stmt[] | null {
+function inlineLocalDeclCandidate(statements: Stmt[], declarationIndex: number, declaration: Extract<Stmt, { kind: 'VarDecl' }>, mutatingFunctions: ReadonlySet<string>): Stmt[] | null {
 	const dependencies = new Set<string>();
 	visitVariableIdentifiers(declaration.initializer!, name => {
 		if (name !== declaration.name) dependencies.add(name);
@@ -2226,6 +2305,11 @@ function inlineLocalDeclCandidate(statements: Stmt[], declarationIndex: number, 
 
 	for (let index = declarationIndex + 1; index < statements.length; index++) {
 		const stmt = statements[index]!;
+		let hasMutatingCall = false;
+		visitStmtCalls(stmt, name => {
+			if (mutatingFunctions.has(name)) hasMutatingCall = true;
+		});
+		if (hasMutatingCall && (dependencies.size || exprContainsUnknownInlineCall(declaration.initializer!))) return null;
 		const written = collectWrittenNamesInStmt(stmt);
 		if (written.has(declaration.name)) return null;
 		if (intersects(written, dependencies)) return null;
@@ -2235,8 +2319,9 @@ function inlineLocalDeclCandidate(statements: Stmt[], declarationIndex: number, 
 	if (directRefs !== totalRefs) return null;
 
 	const next = [...statements.slice(0, declarationIndex)];
+	const replacement = typedInlineValue(declaration.varType, declaration.initializer!);
 	for (const stmt of statements.slice(declarationIndex + 1)) {
-		next.push(countReplaceableDirectRefs(stmt, declaration.name) ? replaceDirectRefs(stmt, declaration.name, declaration.initializer!) : stmt);
+		next.push(countReplaceableDirectRefs(stmt, declaration.name) ? replaceDirectRefs(stmt, declaration.name, replacement) : stmt);
 	}
 	return next;
 }
@@ -2506,7 +2591,7 @@ function collectWrittenNamesFromExpr(expr: Expr, out: Set<string>): void {
 			collectWrittenNamesFromExpr(expr.object, out);
 			return;
 		case 'Unary':
-			if ((expr.op === '++' || expr.op === '--') && expr.argument.kind === 'Identifier') out.add(expr.argument.name);
+			if (expr.op === '++' || expr.op === '--') collectAssignmentTarget(expr.argument, out);
 			collectWrittenNamesFromExpr(expr.argument, out);
 			return;
 		case 'Binary':
@@ -2697,24 +2782,232 @@ function inlineStatementFunctionStmt(stmt: Stmt, candidate: StatementInlineCandi
 
 function statementInlineBlock(candidate: StatementInlineCandidate, args: Expr[]): Stmt {
 	const statements: Stmt[] = [];
+	const parameterScope = new Map<string, string>();
 	let index = 0;
 	for (const [name, type] of candidate.fn.parameters) {
+		const inlinedName = uniqueGeneratedName(
+			candidate.usedNames,
+			`I_${candidate.name}_${name}`,
+		);
+		parameterScope.set(name, inlinedName);
 		statements.push({
 			kind: 'VarDecl',
 			varType: type,
-			name,
+			name: inlinedName,
 			initializer: args[index] ? cloneExpr(args[index]!) : undefined,
 			span: candidate.fn.span,
 		});
 		index++;
 	}
-	const body = rewriteInlineReturns(candidate.fn.body, candidate.endLabel);
+	const renamedBody = renameInlineLocals(
+		candidate.fn.body,
+		[parameterScope],
+		candidate.usedNames,
+		candidate.name,
+	);
+	const endLabel = uniqueGeneratedName(
+		candidate.usedNames,
+		`J_inline_${candidate.name}`,
+	);
+	const body = rewriteInlineReturns(renamedBody, endLabel);
 	const bodyStatements = body.kind === 'BlockStmt' ? body.statements : [body];
 	statements.push(...bodyStatements);
 	if (stmtContainsBareReturn(candidate.fn.body)) {
-		statements.push({ kind: 'LabelStmt', name: candidate.endLabel, span: candidate.fn.span });
+		statements.push({ kind: 'LabelStmt', name: endLabel, span: candidate.fn.span });
 	}
 	return { kind: 'BlockStmt', statements, span: candidate.fn.span };
+}
+
+function renameInlineLocals(
+	stmt: Stmt,
+	scopes: Array<Map<string, string>>,
+	usedNames: Set<string>,
+	functionName: string,
+): Stmt {
+	switch (stmt.kind) {
+		case 'EmptyStmt':
+		case 'ErrorStmt':
+		case 'LabelStmt':
+		case 'StateChangeStmt':
+			return stmt;
+		case 'ExprStmt':
+			return { ...stmt, expression: renameInlineExpr(stmt.expression, scopes) };
+		case 'VarDecl': {
+			const initializer = stmt.initializer
+				? renameInlineExpr(stmt.initializer, scopes)
+				: undefined;
+			const name = uniqueGeneratedName(
+				usedNames,
+				`I_${functionName}_${stmt.name}`,
+			);
+			scopes[scopes.length - 1]!.set(stmt.name, name);
+			return { ...stmt, name, initializer };
+		}
+		case 'ReturnStmt':
+			return {
+				...stmt,
+				expression: stmt.expression
+					? renameInlineExpr(stmt.expression, scopes)
+					: undefined,
+			};
+		case 'IfStmt':
+			return {
+				...stmt,
+				condition: renameInlineExpr(stmt.condition, scopes),
+				then: renameInlineLocals(
+					stmt.then,
+					scopes,
+					usedNames,
+					functionName,
+				),
+				else: stmt.else
+					? renameInlineLocals(
+						stmt.else,
+						scopes,
+						usedNames,
+						functionName,
+					)
+					: undefined,
+			};
+		case 'WhileStmt':
+			return {
+				...stmt,
+				condition: renameInlineExpr(stmt.condition, scopes),
+				body: renameInlineLocals(
+					stmt.body,
+					scopes,
+					usedNames,
+					functionName,
+				),
+			};
+		case 'DoWhileStmt':
+			return {
+				...stmt,
+				body: renameInlineLocals(
+					stmt.body,
+					scopes,
+					usedNames,
+					functionName,
+				),
+				condition: renameInlineExpr(stmt.condition, scopes),
+			};
+		case 'ForStmt':
+			return {
+				...stmt,
+				init: stmt.init ? renameInlineExpr(stmt.init, scopes) : undefined,
+				condition: stmt.condition
+					? renameInlineExpr(stmt.condition, scopes)
+					: undefined,
+				update: stmt.update
+					? renameInlineExpr(stmt.update, scopes)
+					: undefined,
+				body: renameInlineLocals(
+					stmt.body,
+					scopes,
+					usedNames,
+					functionName,
+				),
+			};
+		case 'BlockStmt': {
+			const blockScope = new Map<string, string>();
+			const nextScopes = [...scopes, blockScope];
+			return {
+				...stmt,
+				statements: stmt.statements.map(child =>
+					renameInlineLocals(
+						child,
+						nextScopes,
+						usedNames,
+						functionName,
+					)),
+			};
+		}
+		case 'JumpStmt':
+			return {
+				...stmt,
+				target: renameInlineExpr(stmt.target, scopes),
+			};
+		default:
+			AssertNever(stmt);
+			return stmt;
+	}
+}
+
+function renameInlineExpr(
+	expr: Expr,
+	scopes: Array<Map<string, string>>,
+): Expr {
+	switch (expr.kind) {
+		case 'ErrorExpr':
+		case 'StringLiteral':
+		case 'NumberLiteral':
+			return expr;
+		case 'Identifier':
+			return {
+				...expr,
+				name: lookupInlineName(expr.name, scopes) ?? expr.name,
+			};
+		case 'Call':
+			return {
+				...expr,
+				callee: expr.callee.kind === 'Identifier'
+					? expr.callee
+					: renameInlineExpr(expr.callee, scopes),
+				args: expr.args.map(arg => renameInlineExpr(arg, scopes)),
+			};
+		case 'Member':
+			return {
+				...expr,
+				object: renameInlineExpr(expr.object, scopes),
+			};
+		case 'Unary':
+			return {
+				...expr,
+				argument: renameInlineExpr(expr.argument, scopes),
+			};
+		case 'Binary':
+			return {
+				...expr,
+				left: renameInlineExpr(expr.left, scopes),
+				right: renameInlineExpr(expr.right, scopes),
+			};
+		case 'Cast':
+			return {
+				...expr,
+				argument: renameInlineExpr(expr.argument, scopes),
+			};
+		case 'Paren':
+			return {
+				...expr,
+				expression: renameInlineExpr(expr.expression, scopes),
+			};
+		case 'ListLiteral':
+			return {
+				...expr,
+				elements: expr.elements.map(element =>
+					renameInlineExpr(element, scopes)),
+			};
+		case 'VectorLiteral':
+			return {
+				...expr,
+				elements: expr.elements.map(element =>
+					renameInlineExpr(element, scopes)) as Expr[] as ExprTuple<typeof expr.elements>,
+			};
+		default:
+			AssertNever(expr);
+			return expr;
+	}
+}
+
+function lookupInlineName(
+	name: string,
+	scopes: Array<Map<string, string>>,
+): string | undefined {
+	for (let index = scopes.length - 1; index >= 0; index--) {
+		const renamed = scopes[index]!.get(name);
+		if (renamed) return renamed;
+	}
+	return undefined;
 }
 
 function rewriteInlineReturns(stmt: Stmt, endLabel: string): Stmt {
@@ -2771,7 +3064,11 @@ function inlineExpr(expr: Expr, candidate: InlineCandidate): Expr {
 		case 'Call': {
 			const args = expr.args.map(arg => inlineExpr(arg, candidate));
 			if (expr.callee.kind === 'Identifier' && expr.callee.name === candidate.name && args.length === candidate.params.length && args.every(isSideEffectFreeInlineArg)) {
-				return substituteParams(candidate.expression, new Map(candidate.params.map((name, index) => [name, args[index]!])));
+				const replacements = new Map(candidate.params.map(([name, type], index) => [
+					name,
+					typedInlineValue(type, args[index]!),
+				]));
+				return typedInlineValue(candidate.returnType, substituteParams(candidate.expression, replacements));
 			}
 			return { ...expr, callee: expr.callee, args };
 		}
@@ -2790,15 +3087,25 @@ function collectFunctionCallCounts(script: Script): Map<string, number> {
 	return out;
 }
 
-function collectLabelNames(script: Script): Set<string> {
+function collectDeclaredNames(script: Script): Set<string> {
 	const out = new Set<string>();
 	const collect = (stmt: Stmt): void => {
+		if (stmt.kind === 'VarDecl') out.add(stmt.name);
 		if (stmt.kind === 'LabelStmt') out.add(stmt.name);
 		visitChildStatements(stmt, collect);
 	};
-	for (const fn of script.functions.values()) collect(fn.body);
-	for (const state of script.states.values()) {
-		for (const event of state.events) collect(event.body);
+	for (const name of script.globals.keys()) out.add(name);
+	for (const [name, fn] of script.functions) {
+		out.add(name);
+		for (const parameter of fn.parameters.keys()) out.add(parameter);
+		collect(fn.body);
+	}
+	for (const [name, state] of script.states) {
+		out.add(name);
+		for (const event of state.events) {
+			for (const parameter of event.parameters.keys()) out.add(parameter);
+			collect(event.body);
+		}
 	}
 	return out;
 }
@@ -3157,7 +3464,7 @@ function isSideEffectFreeInlineArg(expr: Expr): boolean {
 		case 'Unary':
 			return expr.op !== '++' && expr.op !== '--' && isSideEffectFreeInlineArg(expr.argument);
 		case 'Binary':
-			return !isAssignmentOp(expr.op) && isSideEffectFreeInlineArg(expr.left) && isSideEffectFreeInlineArg(expr.right);
+			return expr.op !== '/' && expr.op !== '%' && !isAssignmentOp(expr.op) && isSideEffectFreeInlineArg(expr.left) && isSideEffectFreeInlineArg(expr.right);
 		case 'Cast':
 			return isSideEffectFreeInlineArg(expr.argument);
 		case 'Paren':
@@ -3167,7 +3474,7 @@ function isSideEffectFreeInlineArg(expr: Expr): boolean {
 		case 'VectorLiteral':
 			return expr.elements.every(isSideEffectFreeInlineArg);
 		case 'Call':
-			return expr.callee.kind === 'Identifier' && isImplementedRuntimeFunction(expr.callee.name) && expr.args.every(isSideEffectFreeInlineArg);
+			return expr.callee.kind === 'Identifier' && isImplementedRuntimeFunction(expr.callee.name) && expr.args.every(isSideEffectFreeInlineArg) && isDiscardableRuntimeCall(expr);
 		default:
 			AssertNever(expr);
 			return false;
@@ -3364,7 +3671,7 @@ function isSideEffectFreeExpr(expr: Expr, pureFunctions: ReadonlySet<string>, no
 		case 'Unary':
 			return expr.op !== '++' && expr.op !== '--' && isSideEffectFreeExpr(expr.argument, pureFunctions, noOpFunctions);
 		case 'Binary':
-			return !isAssignmentOp(expr.op) && isSideEffectFreeExpr(expr.left, pureFunctions, noOpFunctions) && isSideEffectFreeExpr(expr.right, pureFunctions, noOpFunctions);
+			return expr.op !== '/' && expr.op !== '%' && !isAssignmentOp(expr.op) && isSideEffectFreeExpr(expr.left, pureFunctions, noOpFunctions) && isSideEffectFreeExpr(expr.right, pureFunctions, noOpFunctions);
 		case 'Cast':
 			return isSideEffectFreeExpr(expr.argument, pureFunctions, noOpFunctions);
 		case 'Paren':
@@ -3375,7 +3682,7 @@ function isSideEffectFreeExpr(expr: Expr, pureFunctions: ReadonlySet<string>, no
 			return expr.elements.every(element => isSideEffectFreeExpr(element, pureFunctions, noOpFunctions));
 		case 'Call':
 			return expr.callee.kind === 'Identifier'
-				&& (isImplementedRuntimeFunction(expr.callee.name) || pureFunctions.has(expr.callee.name) || noOpFunctions.has(expr.callee.name))
+				&& ((isImplementedRuntimeFunction(expr.callee.name) && isDiscardableRuntimeCall(expr)) || pureFunctions.has(expr.callee.name) || noOpFunctions.has(expr.callee.name))
 				&& expr.args.every(arg => isSideEffectFreeExpr(arg, pureFunctions, noOpFunctions));
 		default:
 			AssertNever(expr);
@@ -3437,11 +3744,13 @@ function constantTruth(expr: Expr, constantEnv: Env): boolean | null {
 	switch (value.type) {
 		case 'integer':
 		case 'float':
-			return Math.trunc(value.value) !== 0;
+			return value.value !== 0;
 		case 'string':
 			return value.value.length !== 0;
-		case 'key':
-			return value.value !== '' && value.value !== '00000000-0000-0000-0000-000000000000';
+		case 'key': {
+			const key = keyValueFromString(value.value);
+			return key !== null && key !== '' && key !== NULL_KEY_VALUE;
+		}
 		case 'vector':
 		case 'rotation':
 			return value.value.some(component => component !== 0);

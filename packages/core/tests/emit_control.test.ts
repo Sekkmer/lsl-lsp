@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseScriptFromText } from '../src';
-import { emitStmt } from '../src/ast/emit';
+import { emitScript, emitStmt } from '../src/ast/emit';
 import type { Expr, Stmt } from '../src/ast/types';
 
 const valueExpr: Expr = { kind: 'Identifier', name: 'value', span: { start: 0, end: 0 } };
@@ -42,6 +42,23 @@ function parseEmittedStateEntry(stmt: Stmt) {
 }
 
 describe('control statement emission', () => {
+	it('separates do from a non-block statement', () => {
+		const source = 'default { state_entry() { do llOwnerSay("once"); while (0); } }';
+		const code = emitScript(parseScriptFromText(source));
+		expect(code).toContain('do llOwnerSay("once");while(0);');
+		expect(parseScriptFromText(code).diagnostics).toEqual([]);
+	});
+
+	it('does not merge binary operators with following prefix increments', () => {
+		for (const expression of ['a + ++b', 'a - --b', 'a + +b', 'a - -b']) {
+			const original = parseScriptFromText(`default { touch_start(integer a) { integer b=a; llOwnerSay((string)(${expression})); } }`);
+			const code = emitScript(original);
+			const reparsed = parseScriptFromText(code);
+			expect(reparsed.diagnostics).toEqual([]);
+			expect(emitScript(reparsed)).toEqual(code);
+			expect(code).toContain(expression.includes('+') ? 'a+(' : 'a-(');
+		}
+	});
 	it('braces while bodies that could capture an outer else', () => {
 		const emitted = emitStmt(outerIfWithThen({
 			kind: 'WhileStmt',

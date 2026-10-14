@@ -57,6 +57,40 @@ describe('AST measure', () => {
 		expect(global.cost.declarations).toBeGreaterThan(local.cost.declarations);
 	});
 
+	it('subtracts a declared reserve for bounded runtime growth', () => {
+		const plainSource = 'list sessions; default { state_entry() { } }';
+		const reservedSource = [
+			'// lsl-memory-reserve: 8192 bytes',
+			plainSource,
+		].join('\n');
+		const plain = measureAst(
+			parseScriptFromText(plainSource),
+			{ sourceText: plainSource },
+		);
+		const reserved = measureAst(
+			parseScriptFromText(reservedSource),
+			{ sourceText: reservedSource },
+		);
+		expect(reserved.runtimeReserveBytes).toBe(8192);
+		expect(reserved.cost.runtimeReserve).toBe(8192);
+		expect(reserved.estimatedMonoUsedMemory - plain.estimatedMonoUsedMemory)
+			.toBe(8192);
+		expect(reserved.estimatedMonoFreeMemory)
+			.toBe(plain.estimatedMonoFreeMemory - 8192);
+		expect(reserved.notes.some(note => note.includes('runtime growth')))
+			.toBe(true);
+	});
+
+	it('normalizes invalid runtime reserve options to finite nonnegative bytes', () => {
+		const ast = parseScriptFromText('default { state_entry() {} }');
+		for (const runtimeReserveBytes of [NaN, Infinity, -Infinity, -20]) {
+			const result = measureAst(ast, { runtimeReserveBytes });
+			expect(result.runtimeReserveBytes).toBe(0);
+			expect(Number.isFinite(result.estimatedMonoFreeMemory)).toBe(true);
+		}
+		expect(measureAst(ast, { runtimeReserveBytes: 12.9 }).runtimeReserveBytes).toBe(12);
+	});
+
 	it('models SL-backed value-call placement steps', () => {
 		const helper = 'integer F(integer A) { return A + 1; }';
 		const base = measureAst(parseScriptFromText(`${helper} default { state_entry() { } }`));
@@ -68,5 +102,77 @@ describe('AST measure', () => {
 		expect(touchOne.cost.calls - base.cost.calls).toBe(512);
 		expect(touchThree.cost.calls - base.cost.calls).toBe(1024);
 		expect(listenTwo.cost.calls - base.cost.calls).toBe(1024);
+	});
+
+	it('reports the deepest reachable user-call chain', () => {
+		const source = [
+			'C() { llOwnerSay("done"); }',
+			'B() { C(); }',
+			'A() { B(); }',
+			'Unused() { C(); }',
+			'default { state_entry() { A(); } }',
+		].join('\n');
+		const result = measureAst(parseScriptFromText(source));
+		expect(result.callGraph.maxStaticUserCallDepth).toBe(3);
+		expect(result.callGraph.staticDepthIsUpperBound).toBe(false);
+		expect(result.callGraph.deepestStaticUserCallChain)
+			.toEqual(['default.state_entry', 'A', 'B', 'C']);
+		expect(result.callGraph.recursiveFunctions).toEqual([]);
+		expect(result.callGraph.reachableRecursiveFunctions).toEqual([]);
+	});
+
+	it('marks reachable recursion without claiming a finite runtime depth', () => {
+		const source = [
+			'A(integer value) { if (value) B(value - 1); }',
+			'B(integer value) { if (value) A(value - 1); }',
+			'Unused() { Unused(); }',
+			'default { state_entry() { A(2); } }',
+		].join('\n');
+		const result = measureAst(parseScriptFromText(source));
+		expect(result.callGraph.maxStaticUserCallDepth).toBe(2);
+		expect(result.callGraph.staticDepthIsUpperBound).toBe(true);
+		expect(result.callGraph.deepestStaticUserCallChain)
+			.toEqual(['default.state_entry', '<recursive:A,B>']);
+		expect(result.callGraph.recursiveFunctions).toEqual(['A', 'B', 'Unused']);
+		expect(result.callGraph.reachableRecursiveFunctions).toEqual(['A', 'B']);
+		expect(result.notes.some(note => note.includes('runtime depth depends on input')))
+			.toBe(true);
+	});
+
+	it('measures shared helper graphs without enumerating exponentially many paths', () => {
+		const source = ['F0() {}', 'F1() { F0(); }'];
+		for (let i = 2; i < 80; i++) source.push(`F${i}() { F${i - 1}(); F${i - 2}(); }`);
+		source.push('default { state_entry() { F79(); } }');
+		const result = measureAst(parseScriptFromText(source.join('\n')));
+		expect(result.callGraph.maxStaticUserCallDepth).toBe(80);
+		expect(result.callGraph.deepestStaticUserCallChain).toHaveLength(81);
+		expect(result.callGraph.staticDepthIsUpperBound).toBe(false);
+	});
+
+	it('bounds recursive components with multiple exits and excludes unreachable cycles', () => {
+		const source = [
+			'Leaf() {}',
+			'Tail() { Leaf(); }',
+			'A() { B(); Tail(); }',
+			'B() { A(); C(); }',
+			'C() { B(); Leaf(); }',
+			'Unused() { Unused(); }',
+			'Root() { A(); }',
+			'default { state_entry() { Root(); } }',
+		].join('\n');
+		const result = measureAst(parseScriptFromText(source));
+		expect(result.callGraph.maxStaticUserCallDepth).toBe(6);
+		expect(result.callGraph.deepestStaticUserCallChain)
+			.toEqual(['default.state_entry', 'Root', '<recursive:A,B,C>', 'Tail', 'Leaf']);
+		expect(result.callGraph.reachableRecursiveFunctions).toEqual(['A', 'B', 'C']);
+		expect(result.callGraph.recursiveFunctions).toEqual(['A', 'B', 'C', 'Unused']);
+	});
+
+	it('does not mark an acyclic reachable chain as approximate for unreachable recursion', () => {
+		const source = 'A() {} Unused() { Unused(); } default { state_entry() { A(); } }';
+		const result = measureAst(parseScriptFromText(source));
+		expect(result.callGraph.maxStaticUserCallDepth).toBe(1);
+		expect(result.callGraph.staticDepthIsUpperBound).toBe(false);
+		expect(result.callGraph.reachableRecursiveFunctions).toEqual([]);
 	});
 });

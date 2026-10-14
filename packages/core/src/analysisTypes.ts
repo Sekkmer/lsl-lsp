@@ -94,6 +94,8 @@ export interface Decl {
 	headerRange?: Range;
 	// bodyRange covers only the body block between '{' and the matching '}'
 	bodyRange?: Range;
+	// Lexical scope of a local or parameter; absent for globals.
+	scopeRange?: Range;
 }
 export interface Analysis {
 	diagnostics: Diag[];

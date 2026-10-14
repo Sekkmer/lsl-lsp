@@ -5,6 +5,7 @@ import { AssertNever } from '../utils';
 export interface AstMeasureOptions {
 	monoMemoryLimit?: number;
 	monoBaselineUsed?: number;
+	runtimeReserveBytes?: number;
 	sourceText?: string;
 }
 
@@ -56,16 +57,28 @@ export interface AstMeasureCostBuckets {
 	controlFlow: number;
 	calls: number;
 	symbols: number;
+	runtimeReserve: number;
+}
+
+export interface AstMeasureCallGraph {
+	maxStaticUserCallDepth: number;
+	/** Cyclic components contribute all members; their distinct-function depth is conservative. */
+	staticDepthIsUpperBound: boolean;
+	deepestStaticUserCallChain: string[];
+	recursiveFunctions: string[];
+	reachableRecursiveFunctions: string[];
 }
 
 export interface AstMeasureResult {
 	monoMemoryLimit: number;
 	estimatedMonoUsedMemory: number;
 	estimatedMonoFreeMemory: number;
+	runtimeReserveBytes: number;
 	compactCharacters: number;
 	sourceCharacters?: number;
 	counts: AstMeasureCounts;
 	cost: AstMeasureCostBuckets;
+	callGraph: AstMeasureCallGraph;
 	notes: string[];
 }
 
@@ -74,6 +87,10 @@ const DEFAULT_BASELINE_USED = 3884;
 
 export function measureAst(script: Script, options: AstMeasureOptions = {}): AstMeasureResult {
 	const monoMemoryLimit = options.monoMemoryLimit ?? DEFAULT_MONO_LIMIT;
+	const requestedReserve = options.runtimeReserveBytes ?? detectLslMemoryReserve(options.sourceText ?? '');
+	const runtimeReserveBytes = Number.isFinite(requestedReserve)
+		? Math.max(0, Math.floor(requestedReserve))
+		: 0;
 	const counts = emptyCounts();
 	const globalTypes = new Map<string, Type>();
 	const functionReturnTypes = new Map<string, Type | 'void'>();
@@ -83,6 +100,7 @@ export function measureAst(script: Script, options: AstMeasureOptions = {}): Ast
 	for (const global of script.globals.values()) measureGlobal(global, counts, baseContext);
 	for (const fn of script.functions.values()) measureFunction(fn, counts, baseContext);
 	for (const state of script.states.values()) measureState(state, counts, baseContext);
+	const callGraph = measureCallGraph(script);
 
 	const baseline = options.monoBaselineUsed ?? DEFAULT_BASELINE_USED;
 	const cost: AstMeasureCostBuckets = {
@@ -94,22 +112,46 @@ export function measureAst(script: Script, options: AstMeasureOptions = {}): Ast
 		controlFlow: controlFlowCost(counts),
 		calls: callCost(counts),
 		symbols: symbolCost(counts),
+		runtimeReserve: 0,
 	};
 	cost.compiledBody = Math.max(0, compiledBodyFloor(counts, baseline) - sumCost(cost));
+	cost.runtimeReserve = runtimeReserveBytes;
 	const estimatedMonoUsedMemory = Math.min(monoMemoryLimit, sumCost(cost));
 	const notes = [
 		'Static AST estimate calibrated from local SL Mono probes; use SL measurements for release-critical memory margins.',
 	];
+	if (runtimeReserveBytes > 0) {
+		notes.push(
+			`Includes ${runtimeReserveBytes} bytes reserved for bounded runtime growth declared by lsl-memory-reserve.`,
+		);
+	}
+	if (callGraph.reachableRecursiveFunctions.length > 0) {
+		notes.push(
+			`Reachable recursion detected in ${callGraph.reachableRecursiveFunctions.join(', ')}; static depth conservatively counts each function once per recursive component and runtime depth depends on input.`,
+		);
+	}
 	return {
 		monoMemoryLimit,
 		estimatedMonoUsedMemory,
 		estimatedMonoFreeMemory: Math.max(0, monoMemoryLimit - estimatedMonoUsedMemory),
+		runtimeReserveBytes,
 		compactCharacters: emitScript(script, { compact: true }).length,
 		sourceCharacters: options.sourceText?.length,
 		counts,
 		cost,
+		callGraph,
 		notes,
 	};
+}
+
+export function detectLslMemoryReserve(sourceText: string): number {
+	let reserve = 0;
+	const directive = /^\s*\/\/\s*lsl-memory-reserve\s*:\s*(\d+)(?:\s+bytes?)?\s*$/gim;
+	for (const match of sourceText.matchAll(directive)) {
+		const value = Number(match[1]);
+		if (Number.isSafeInteger(value)) reserve = Math.max(reserve, value);
+	}
+	return reserve;
 }
 
 function emptyCounts(): AstMeasureCounts {
@@ -536,4 +578,240 @@ function compiledBodyFloor(counts: AstMeasureCounts, baseline: number): number {
 
 function sumCost(cost: AstMeasureCostBuckets): number {
 	return Object.values(cost).reduce((sum, value) => sum + value, 0);
+}
+
+function measureCallGraph(script: Script): AstMeasureCallGraph {
+	const functionNames = new Set(script.functions.keys());
+	const graph = new Map<string, Set<string>>();
+	for (const [name, fn] of script.functions) {
+		graph.set(name, collectUserCallsInStmt(fn.body, functionNames));
+	}
+
+	const roots: Array<{ name: string; callees: Set<string> }> = [];
+	const globalCallees = new Set<string>();
+	for (const global of script.globals.values()) {
+		if (global.initializer) collectUserCallsInExpr(global.initializer, functionNames, globalCallees);
+	}
+	if (globalCallees.size > 0) roots.push({ name: '<global>', callees: globalCallees });
+	for (const [stateName, state] of script.states) {
+		for (const event of state.events) {
+			roots.push({
+				name: `${stateName}.${event.name}`,
+				callees: collectUserCallsInStmt(event.body, functionNames),
+			});
+		}
+	}
+
+	// Condense recursion before finding depth. Enumerating simple paths is exponential
+	// even in an acyclic graph of helpers with shared callees.
+	const { components, componentOf } = callGraphComponents(graph);
+	const recursiveComponents = new Set<number>();
+	const edges = components.map(() => new Set<number>());
+	for (const [name, callees] of graph) {
+		const from = componentOf.get(name)!;
+		for (const callee of callees) {
+			const to = componentOf.get(callee)!;
+			if (from === to) recursiveComponents.add(from);
+			else edges[from]!.add(to);
+		}
+	}
+	const recursiveFunctions = [...recursiveComponents]
+		.flatMap(component => components[component]!)
+		.sort();
+	const reachableFunctions = new Set<string>();
+	const pending: string[] = [];
+	for (const root of roots) {
+		pending.push(...root.callees);
+	}
+	while (pending.length > 0) {
+		const name = pending.pop()!;
+		if (reachableFunctions.has(name)) continue;
+		reachableFunctions.add(name);
+		pending.push(...graph.get(name) ?? []);
+	}
+
+	// Kosaraju returns components in topological order, so successors have already
+	// been measured when traversing backwards. A recursive component's member count
+	// bounds distinct-function depth; it does not bound repeated runtime frames.
+	const depths = components.map(component => component.length);
+	const successors: Array<number | undefined> = components.map(() => undefined);
+	for (let component = components.length - 1; component >= 0; component--) {
+		for (const next of edges[component]!) {
+			const depth = components[component]!.length + depths[next]!;
+			if (depth > depths[component]!) {
+				depths[component] = depth;
+				successors[component] = next;
+			}
+		}
+	}
+	let maxStaticUserCallDepth = 0;
+	let deepestStaticUserCallChain: string[] = [];
+	for (const root of roots) {
+		for (const callee of root.callees) {
+			let component: number | undefined = componentOf.get(callee)!;
+			if (depths[component]! <= maxStaticUserCallDepth) continue;
+			maxStaticUserCallDepth = depths[component]!;
+			deepestStaticUserCallChain = [root.name];
+			while (component !== undefined) {
+				const members = components[component]!;
+				deepestStaticUserCallChain.push(recursiveComponents.has(component)
+					? `<recursive:${members.join(',')}>`
+					: members[0]!);
+				component = successors[component];
+			}
+		}
+	}
+	const reachableRecursiveFunctions = recursiveFunctions.filter(name => reachableFunctions.has(name));
+
+	return {
+		maxStaticUserCallDepth,
+		staticDepthIsUpperBound: reachableRecursiveFunctions.length > 0,
+		deepestStaticUserCallChain,
+		recursiveFunctions,
+		reachableRecursiveFunctions,
+	};
+}
+
+function callGraphComponents(graph: ReadonlyMap<string, ReadonlySet<string>>): {
+	components: string[][];
+	componentOf: Map<string, number>;
+} {
+	const reverse = new Map<string, Set<string>>([...graph.keys()].map(name => [name, new Set()]));
+	for (const [name, callees] of graph) {
+		for (const callee of callees) reverse.get(callee)!.add(name);
+	}
+	const visited = new Set<string>();
+	const finished: string[] = [];
+	for (const name of graph.keys()) {
+		if (visited.has(name)) continue;
+		// Use iterator frames rather than JS recursion, including for very deep graphs.
+		visited.add(name);
+		const stack = [{ name, callees: graph.get(name)![Symbol.iterator]() }];
+		while (stack.length > 0) {
+			const frame = stack[stack.length - 1]!;
+			const next = frame.callees.next();
+			if (next.done) {
+				finished.push(frame.name);
+				stack.pop();
+			} else if (!visited.has(next.value)) {
+				visited.add(next.value);
+				stack.push({ name: next.value, callees: graph.get(next.value)![Symbol.iterator]() });
+			}
+		}
+	}
+	const componentOf = new Map<string, number>();
+	const components: string[][] = [];
+	for (let i = finished.length - 1; i >= 0; i--) {
+		const name = finished[i]!;
+		if (componentOf.has(name)) continue;
+		const component = components.length;
+		const members: string[] = [];
+		const pending = [name];
+		componentOf.set(name, component);
+		while (pending.length > 0) {
+			const member = pending.pop()!;
+			members.push(member);
+			for (const predecessor of reverse.get(member)!) {
+				if (componentOf.has(predecessor)) continue;
+				componentOf.set(predecessor, component);
+				pending.push(predecessor);
+			}
+		}
+		components.push(members.sort());
+	}
+	return { components, componentOf };
+}
+
+function collectUserCallsInStmt(stmt: Stmt, functionNames: ReadonlySet<string>): Set<string> {
+	const out = new Set<string>();
+	const visit = (child: Stmt): void => {
+		switch (child.kind) {
+			case 'EmptyStmt':
+			case 'ErrorStmt':
+			case 'LabelStmt':
+			case 'StateChangeStmt':
+				return;
+			case 'ExprStmt':
+				collectUserCallsInExpr(child.expression, functionNames, out);
+				return;
+			case 'VarDecl':
+				if (child.initializer) collectUserCallsInExpr(child.initializer, functionNames, out);
+				return;
+			case 'ReturnStmt':
+				if (child.expression) collectUserCallsInExpr(child.expression, functionNames, out);
+				return;
+			case 'IfStmt':
+				collectUserCallsInExpr(child.condition, functionNames, out);
+				visit(child.then);
+				if (child.else) visit(child.else);
+				return;
+			case 'WhileStmt':
+				collectUserCallsInExpr(child.condition, functionNames, out);
+				visit(child.body);
+				return;
+			case 'DoWhileStmt':
+				visit(child.body);
+				collectUserCallsInExpr(child.condition, functionNames, out);
+				return;
+			case 'ForStmt':
+				if (child.init) collectUserCallsInExpr(child.init, functionNames, out);
+				if (child.condition) collectUserCallsInExpr(child.condition, functionNames, out);
+				if (child.update) collectUserCallsInExpr(child.update, functionNames, out);
+				visit(child.body);
+				return;
+			case 'BlockStmt':
+				for (const nested of child.statements) visit(nested);
+				return;
+			case 'JumpStmt':
+				collectUserCallsInExpr(child.target, functionNames, out);
+				return;
+			default:
+				AssertNever(child);
+		}
+	};
+	visit(stmt);
+	return out;
+}
+
+function collectUserCallsInExpr(
+	expr: Expr,
+	functionNames: ReadonlySet<string>,
+	out: Set<string>,
+): void {
+	switch (expr.kind) {
+		case 'ErrorExpr':
+		case 'StringLiteral':
+		case 'NumberLiteral':
+		case 'Identifier':
+			return;
+		case 'Call':
+			if (expr.callee.kind === 'Identifier' && functionNames.has(expr.callee.name)) {
+				out.add(expr.callee.name);
+			}
+			collectUserCallsInExpr(expr.callee, functionNames, out);
+			for (const arg of expr.args) collectUserCallsInExpr(arg, functionNames, out);
+			return;
+		case 'Member':
+			collectUserCallsInExpr(expr.object, functionNames, out);
+			return;
+		case 'Unary':
+			collectUserCallsInExpr(expr.argument, functionNames, out);
+			return;
+		case 'Binary':
+			collectUserCallsInExpr(expr.left, functionNames, out);
+			collectUserCallsInExpr(expr.right, functionNames, out);
+			return;
+		case 'Cast':
+			collectUserCallsInExpr(expr.argument, functionNames, out);
+			return;
+		case 'Paren':
+			collectUserCallsInExpr(expr.expression, functionNames, out);
+			return;
+		case 'ListLiteral':
+		case 'VectorLiteral':
+			for (const element of expr.elements) collectUserCallsInExpr(element, functionNames, out);
+			return;
+		default:
+			AssertNever(expr);
+	}
 }

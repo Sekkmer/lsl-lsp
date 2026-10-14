@@ -233,7 +233,8 @@ export function validateOperatorsFromAst(
 						break;
 				}
 				if (op === '+=' || op === '-=' || op === '*=' || op === '/=' || op === '%=') {
-					const resultType = inferExprTypeFromAst(e, symbolTypes, functionReturnTypes);
+					const arithmeticOp = op.slice(0, -1) as '+' | '-' | '*' | '/' | '%';
+					const resultType = inferExprTypeFromAst({ ...e, op: arithmeticOp }, symbolTypes, functionReturnTypes);
 					if (!isAssignmentCompatible(lt, resultType)) {
 						diagnostics.push({
 							code: LSL_DIAGCODES.WRONG_TYPE,

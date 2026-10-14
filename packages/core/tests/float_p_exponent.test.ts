@@ -19,11 +19,18 @@ describe('float literals with exponents', () => {
 		expect(analysis.diagnostics.some(d => String(d.code).startsWith('LSL0'))).toBe(true);
 	});
 
-	it('parses hex float with p-exponent like 0x1.fp3', async () => {
+	it('rejects direct hex floats as confirmed by the native SL compiler', async () => {
 		const defs = await loadTestDefs();
 		const doc = docFrom('default { state_entry(){ float f = 0x1.fp3; string s = (string)0x1.fp3; } }');
 		const { analysis } = runPipeline(doc, defs);
 		const syntaxErr = analysis.diagnostics.find(d => String(d.code).startsWith('LSL0'));
-		expect(syntaxErr).toBeFalsy();
+		expect(syntaxErr).toBeTruthy();
+	});
+
+	it('preserves hexadecimal floats inside string casts', async () => {
+		const defs = await loadTestDefs();
+		const doc = docFrom('default { state_entry(){ float f = (float)"0x1.fp3"; } }');
+		const { analysis } = runPipeline(doc, defs);
+		expect(analysis.diagnostics.filter(d => d.severity === 1)).toEqual([]);
 	});
 });

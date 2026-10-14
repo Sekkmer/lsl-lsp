@@ -150,8 +150,8 @@ export function lslCompletions(
 
 	// Locals/params visible before this position
 	const seenNames = new Set<string>();
-	for (const d of analysis.decls) {
-		if ((d.kind === 'var' || d.kind === 'param') && doc.offsetAt(d.range.start) <= offset) {
+	for (const d of visibleVariables(analysis, doc, offset)) {
+		if (d.kind === 'var' || d.kind === 'param') {
 			if (!seenNames.has(d.name)) {
 				// If inside a call arg with expectedType, add extra weight when types match
 				const boost = (expectedType && expectedType !== 'any' && d.type && typeMatches(expectedType, d.type)) ? 15 : 5;
@@ -455,14 +455,15 @@ function findMemberBaseName(text: string, offset: number): string | null {
 }
 
 function resolveIdentifierTypeAt(name: string, analysis: Analysis, doc: TextDocument, offset: number): string | undefined {
-	let best: { type?: string; start: number } | null = null;
-	for (const d of analysis.decls) {
-		if ((d.kind === 'var' || d.kind === 'param') && d.name === name) {
-			const s = doc.offsetAt(d.range.start);
-			if (s <= offset && (!best || s > best.start)) best = { type: d.type, start: s };
-		}
-	}
-	return best?.type;
+	return visibleVariables(analysis, doc, offset).find(d => d.name === name)?.type;
+}
+
+function visibleVariables(analysis: Analysis, doc: TextDocument, offset: number): Decl[] {
+	const pos = doc.positionAt(offset);
+	return analysis.decls.filter(d => (d.kind === 'var' || d.kind === 'param')
+		&& doc.offsetAt(d.range.start) <= offset
+		&& (!d.scopeRange || inRange(pos, d.scopeRange)))
+		.sort((a, b) => doc.offsetAt(b.range.start) - doc.offsetAt(a.range.start));
 }
 
 function inRange(pos: Position, range: { start: Position; end: Position }): boolean {

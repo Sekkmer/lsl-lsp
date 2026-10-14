@@ -19,7 +19,7 @@ import { isAssignmentCompatible } from './compat';
 import { keyValueFromString, NULL_KEY_VALUE } from './key';
 
 // Scope now carries a lightweight kind tag to distinguish event/function contexts
-type Scope = { parent?: Scope; vars: Map<string, Decl>; kind?: 'event' | 'func' | 'state' | 'global' | 'block' };
+type Scope = { parent?: Scope; vars: Map<string, Decl>; kind?: 'event' | 'func' | 'state' | 'global' | 'block'; range?: Range };
 
 function maskCommentsAndStrings(text: string): string {
 	let out = '';
@@ -315,9 +315,12 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	};
 	const truthyValue = (v: Value): boolean | null => {
 		if (v.kind !== 'value') return null;
-		if (v.type === 'integer' || v.type === 'float') return Math.trunc(v.value) !== 0;
+		if (v.type === 'integer' || v.type === 'float') return v.value !== 0;
 		if (v.type === 'string') return v.value.length !== 0;
-		if (v.type === 'key') return v.value !== '' && v.value !== NULL_KEY_VALUE;
+		if (v.type === 'key') {
+			const key = keyValueFromString(v.value);
+			return key !== null && key !== '' && key !== NULL_KEY_VALUE;
+		}
 		if (v.type === 'list') return v.value.length !== 0;
 		if (v.type === 'vector' || v.type === 'rotation') return v.value.some(component => component !== 0);
 		return null;
@@ -333,6 +336,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	type UsageContext = { usedParamNames: Set<string>; usedLocalNames: Set<string>; paramDecls: Decl[]; localDecls: Decl[] };
 	const usageStack: UsageContext[] = [];
 	type ReturnInfo = { expr?: Expr; span: { start: number; end: number } };
+	const returnExpressionTypes = new Map<Expr, SimpleType>();
 	function collectReturns(stmt: Stmt, out: ReturnInfo[]) {
 		if (!stmt) return;
 		switch (stmt.kind) {
@@ -584,11 +588,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		}
 	}
 
-	function pushScope(s: Scope, kind?: Scope['kind']): Scope { return { parent: s, vars: new Map(), kind }; }
+	function pushScope(s: Scope, kind?: Scope['kind'], range?: Range): Scope { return { parent: s, vars: new Map(), kind, range }; }
 
 	function visitFunction(fn: AstFunction) {
 		valueEnvStack.push(currentValueEnv().clone().child());
-		const scope = pushScope(globalScope, 'func');
+		const scope = pushScope(globalScope, 'func', spanToRange(doc, fn.span));
 		const ts = pushTypeScope(globalTypeScope);
 		const returnType = (fn.returnType ?? 'void') as string;
 		// Collect all labels in this function body so jump targets can be validated without unknown-identifier noise
@@ -615,10 +619,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			const headerOnly = (() => { const b = full.indexOf('{'); return b >= 0 ? full.slice(0, b) : full; })();
 			const m = new RegExp(`\\b${pname}\\b`).exec(headerOnly);
 			const startOff = m ? (doc.offsetAt(span.start) + (m.index as number)) : doc.offsetAt(span.start);
-			const d: Decl = { name: pname, range: { start: doc.positionAt(startOff), end: doc.positionAt(startOff + pname.length) }, kind: 'param', type: ptype };
+			const d: Decl = { name: pname, range: { start: doc.positionAt(startOff), end: doc.positionAt(startOff + pname.length) }, kind: 'param', type: ptype, scopeRange: scope.range };
 			decls.push(d);
 			scope.vars.set(pname, d);
 			addType(ts, pname, ptype);
+			currentValueEnv().setVar(pname, { kind: 'unknown', type: ptype });
 			ctx.paramDecls.push(d);
 		}
 		// Collect returns and compute simple all-paths-return for top-level body
@@ -657,7 +662,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			}
 		} else {
 			for (const r of returns) {
-				const t = r.expr ? normalizeType(inferTypeOf(r.expr, ts)) : 'void';
+				const t = r.expr ? normalizeType(returnExpressionTypes.get(r.expr) ?? inferTypeOf(r.expr, ts)) : 'void';
 				if (r.expr && !typesCompatible(returnType, t)) {
 					diagnostics.push({ code: LSL_DIAGCODES.RETURN_WRONG_TYPE, message: `Function ${fn.name} returns ${returnType} but returning ${t}`, range: spanToRange(doc, r.span), severity: DiagnosticSeverity.Error });
 				}
@@ -708,7 +713,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 	function inferTypeOf(e: Expr, typeScope: TypeScopeView): string {
 		// Use direct import to work in both test and build environments
 		const v = typeScope.view as Map<string, SimpleType>;
-		return inferExprTypeFromAst(e, v) as string;
+		return inferExprTypeFromAst(e, v, functionReturnTypes) as string;
 	}
 
 	function typesCompatible(expected: string, got: string): boolean {
@@ -725,7 +730,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			if (evNames.has(ev.name)) {
 				diagnostics.push({ code: LSL_DIAGCODES.DUPLICATE_DECL, message: `Duplicate declaration of event ${ev.name}`, range: spanToRange(doc, ev.span), severity: DiagnosticSeverity.Error });
 			} else evNames.add(ev.name);
-			const evScope = pushScope(scope, 'event');
+			const evScope = pushScope(scope, 'event', spanToRange(doc, ev.span));
 			const tsEvent = pushTypeScope(tsState);
 			const ctx: UsageContext = { usedParamNames: new Set(), usedLocalNames: new Set(), paramDecls: [], localDecls: [] };
 			usageStack.push(ctx);
@@ -780,10 +785,11 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				const headerOnly = (() => { const b = full.indexOf('{'); return b >= 0 ? full.slice(0, b) : full; })();
 				const m = new RegExp(`\\b${pname}\\b`).exec(headerOnly);
 				const startOff = m ? (doc.offsetAt(span.start) + (m.index as number)) : doc.offsetAt(span.start);
-				const d: Decl = { name: pname, range: { start: doc.positionAt(startOff), end: doc.positionAt(startOff + pname.length) }, kind: 'param', type: ptype };
+				const d: Decl = { name: pname, range: { start: doc.positionAt(startOff), end: doc.positionAt(startOff + pname.length) }, kind: 'param', type: ptype, scopeRange: evScope.range };
 				evScope.vars.set(pname, d);
 				decls.push(d);
 				addType(tsEvent, pname, ptype);
+				currentValueEnv().setVar(pname, { kind: 'unknown', type: ptype });
 				ctx.paramDecls.push(d);
 			}
 			// Collect labels for this event body
@@ -1063,7 +1069,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 		switch (stmt.kind) {
 			case 'BlockStmt': {
 				// Also detect duplicate local declarations in the same block
-				const blockScope = pushScope(scope, 'block');
+				const blockScope = pushScope(scope, 'block', spanToRange(doc, stmt.span));
 				const blockTypeScope = pushTypeScope(typeScope);
 				valueEnvStack.push(currentValueEnv().child());
 				const localNames = new Set<string>();
@@ -1092,7 +1098,12 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 			case 'ExprStmt': walkExpr(stmt.expression, scope, typeScope, false); validateExpr(stmt.expression, typeScope); updateValueEnvFromExpr(stmt.expression, typeScope); break;
 			case 'EmptyStmt': break;
 			case 'ErrorStmt': break;
-			case 'LabelStmt': break;
+			case 'LabelStmt': {
+				// A jump may arrive with values different from the preceding linear
+				// path. Without a control-flow merge, retain types but forget values.
+				if (currentJumpTargets?.has(stmt.name)) markMutatedValuesUnknown(typeScope.view.keys(), typeScope);
+				break;
+			}
 			case 'JumpStmt': {
 				// Validate jump target against collected labels within the same function/event body.
 				const t = stmt.target;
@@ -1117,7 +1128,7 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 						severity: DiagnosticSeverity.Error,
 					});
 				}
-				const d: Decl = { name, range: findNameRangeInSpan(name, stmt.span, false), kind: 'var', type };
+				const d: Decl = { name, range: findNameRangeInSpan(name, stmt.span, false), kind: 'var', type, scopeRange: scope.range };
 				if (stmt.initializer) {
 					walkExpr(stmt.initializer, scope, typeScope);
 					validateExpr(stmt.initializer, typeScope);
@@ -1135,7 +1146,12 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 				addType(typeScope, name, type);
 				break;
 			}
-			case 'ReturnStmt': walkExpr(stmt.expression || null, scope, typeScope); validateExpr(stmt.expression || null, typeScope); break;
+			case 'ReturnStmt': {
+				walkExpr(stmt.expression || null, scope, typeScope);
+				validateExpr(stmt.expression || null, typeScope);
+				if (stmt.expression) returnExpressionTypes.set(stmt.expression, inferExprTypeFromAst(stmt.expression, typeScope.view, functionReturnTypes));
+				break;
+			}
 			case 'IfStmt': {
 				walkExpr(stmt.condition, scope, typeScope);
 				// Validate condition with suspicious-assignment flag; other expressions validated normally
@@ -1213,7 +1229,8 @@ export function analyzeAst(doc: TextDocument, script: Script, defs: Defs, pre: P
 					const mutatedInit = collectMutatedIdentifiers(stmt.init ?? null);
 					const mutatedUpdate = collectMutatedIdentifiers(stmt.update ?? null);
 					const mutatedCondition = collectMutatedIdentifiers(stmt.condition ?? null);
-					const mutatesLoop = [...condIds].some(n => mutatedInit.has(n) || mutatedUpdate.has(n) || mutatedCondition.has(n));
+					const mutatedBody = collectMutatedIdentifiersInStmt(stmt.body);
+					const mutatesLoop = [...condIds].some(n => mutatedInit.has(n) || mutatedUpdate.has(n) || mutatedCondition.has(n) || mutatedBody.has(n));
 					if (!mutatesLoop) {
 						truth = evalCondition(stmt.condition);
 						if (truth === true) diagnostics.push({ code: LSL_DIAGCODES.ALWAYS_TRUE_CONDITION, message: 'Loop condition is always true', range: spanToRange(doc, stmt.condition.span), severity: DiagnosticSeverity.Warning });

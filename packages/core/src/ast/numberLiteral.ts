@@ -1,13 +1,27 @@
 export type NumberLiteralType = 'integer' | 'float';
 
+const DECIMAL_INTEGER = /^[+-]?\d+$/;
+// SL accepts f/F only when a decimal point is present: 1.e3F is valid,
+// but 1e3f and 1f are not (native compiler probes in .local).
+const DECIMAL_FLOAT = /^[+-]?(?:(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?[fF]?|\d+[eE][+-]?\d+)$/;
+const HEX_INTEGER = /^[+-]?0x[0-9a-f]+$/i;
+
+// Literal parsing must consume the entire token. String casts intentionally
+// accept numeric prefixes, but source literals such as 1e+ must not become 1.
+export function isNumberLiteral(raw: string): boolean {
+	const text = raw.trim();
+	return DECIMAL_INTEGER.test(text) || DECIMAL_FLOAT.test(text) || HEX_INTEGER.test(text);
+}
+
 export function numberLiteralType(rawIn: string): NumberLiteralType {
 	const raw = rawIn.trim().replace(/^[+-]/, '');
 	if (/^0x/i.test(raw)) return /[.pP]/.test(raw) ? 'float' : 'integer';
-	return /[.eE]/.test(raw) ? 'float' : 'integer';
+	return /[.eEfF]/.test(raw) ? 'float' : 'integer';
 }
 
 export function parseNumberLiteral(rawIn: string): { type: NumberLiteralType; value: number } | null {
 	let raw = rawIn.trim();
+	if (!isNumberLiteral(raw)) return null;
 
 	if (/^[+-]?0x[0-9a-f]+$/i.test(raw)) {
 		const sign = raw.startsWith('-') ? -1 : 1;
@@ -16,19 +30,8 @@ export function parseNumberLiteral(rawIn: string): { type: NumberLiteralType; va
 		return Number.isFinite(value) ? { type: 'integer', value } : null;
 	}
 
-	if (/^[+-]?0x[0-9a-f]+(?:\.[0-9a-f]*)?(?:p[+-]?\d+)?$/i.test(raw)) {
-		const value = parseHexFloat(raw);
-		return Number.isFinite(value) ? { type: 'float', value: value! } : null;
-	}
-
-	if (/[pP]/.test(raw)) return null;
-	if (/[.eE]/.test(raw)) {
-		const value = Number.parseFloat(raw);
-		return Number.isFinite(value) ? { type: 'float', value } : null;
-	}
-
-	const value = Number.parseInt(raw, 10);
-	return Number.isFinite(value) ? { type: 'integer', value } : null;
+	const value = Number(raw.replace(/[fF]$/, ''));
+	return Number.isFinite(value) ? { type: numberLiteralType(raw), value } : null;
 }
 
 export function parseHexFloat(s: string): number | null {

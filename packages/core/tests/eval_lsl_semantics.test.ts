@@ -147,7 +147,7 @@ describe('evaluator LSL semantic fixtures', () => {
 		expect(evalSourceWithRuntime('string', 'llDumpList2String(llJson2List("[1,1.5,\\"two\\",true,false,null]"), "|")', jsonEnv)).toEqual({ kind: 'value', type: 'string', value: '1|1.500000|two|\uFDD6|\uFDD7|\uFDD5' });
 		expect(evalSourceWithRuntime('string', 'llJsonGetValue("[1,\\"two\\",true,null]", [2])', jsonEnv)).toEqual({ kind: 'value', type: 'string', value: '\uFDD6' });
 		expect(evalSourceWithRuntime('string', 'llJsonValueType("[1,\\"two\\",true,null]", [3])', jsonEnv)).toEqual({ kind: 'value', type: 'string', value: '\uFDD5' });
-		expect(evalSourceWithRuntime('string', 'llJsonSetValue("{\\"a\\":1,\\"b\\":true}", ["c"], "3")', jsonEnv)).toEqual({ kind: 'value', type: 'string', value: '{"a":1,"b":true,"c":3}' });
+		expect(evalSourceWithRuntime('string', 'llJsonSetValue("{\\"a\\":1,\\"b\\":true}", ["c"], "3")', jsonEnv)).toEqual({ kind: 'unknown', type: 'string' });
 	});
 
 	it('folds vector and rotation equality when all components are known', () => {

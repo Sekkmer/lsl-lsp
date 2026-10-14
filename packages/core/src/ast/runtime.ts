@@ -152,24 +152,27 @@ const toInt = (v: Value): number | null => v.kind === 'value' && v.type === 'int
 
 export function llStringLength(s: Value): Value {
 	const str = toStringVal(s);
-	return str === null ? unknown('integer') : { kind: 'value', type: 'integer', value: str.length };
+	return str === null ? unknown('integer') : asIntVal(Array.from(str).length);
 }
 
 export function llToLower(s: Value): Value {
 	const str = toStringVal(s);
-	return str === null ? unknown('string') : { kind: 'value', type: 'string', value: str.toLowerCase() };
+	// Mono uses an older invariant Unicode case table. JavaScript mappings can
+	// expand characters or differ by Unicode version; only ASCII is verified.
+	return str === null || /[\u0080-\uFFFF]/.test(str) ? unknown('string') : asStrVal(str.toLowerCase());
 }
 
 export function llToUpper(s: Value): Value {
 	const str = toStringVal(s);
-	return str === null ? unknown('string') : { kind: 'value', type: 'string', value: str.toUpperCase() };
+	return str === null || /[\u0080-\uFFFF]/.test(str) ? unknown('string') : asStrVal(str.toUpperCase());
 }
 
 export function llSubStringIndex(haystack: Value, needle: Value): Value {
 	const h = toStringVal(haystack);
 	const n = toStringVal(needle);
 	if (h === null || n === null) return unknown('integer');
-	return { kind: 'value', type: 'integer', value: h.indexOf(n) };
+	const index = h.indexOf(n);
+	return asIntVal(index < 0 ? -1 : Array.from(h.slice(0, index)).length);
 }
 
 // LSL semantics: start/end inclusive; negative indexes count from end ( -1 => last char )
@@ -177,9 +180,23 @@ function normIndex(len: number, i: number): number {
 	if (!Number.isFinite(i)) return 0;
 	let idx = i;
 	if (idx < 0) idx = len + idx; // e.g., -1 => len-1
-	if (idx < 0) idx = 0;
-	if (idx >= len) idx = len - 1;
 	return idx;
+}
+
+function rangeSlice<T>(items: T[], start: number, end: number): T[] {
+	const length = items.length;
+	const a = normIndex(length, start);
+	const b = normIndex(length, end);
+	const slice = (from: number, to: number) => items.slice(Math.max(0, Math.min(length, from)), Math.max(0, Math.min(length, to)));
+	return a <= b ? slice(a, b + 1) : [...slice(0, b + 1), ...slice(a, length)];
+}
+
+function rangeDelete<T>(items: T[], start: number, end: number): T[] {
+	const length = items.length;
+	const a = normIndex(length, start);
+	const b = normIndex(length, end);
+	const slice = (from: number, to: number) => items.slice(Math.max(0, Math.min(length, from)), Math.max(0, Math.min(length, to)));
+	return a <= b ? [...slice(0, a), ...slice(b + 1, length)] : slice(b + 1, a);
 }
 
 export function llGetSubString(src: Value, start: Value, end: Value): Value {
@@ -188,11 +205,7 @@ export function llGetSubString(src: Value, start: Value, end: Value): Value {
 	const b = toInt(end);
 	if (s === null || a === null || b === null) return unknown('string');
 	if (s.length === 0) return { kind: 'value', type: 'string', value: '' };
-	const i = normIndex(s.length, a);
-	const j = normIndex(s.length, b);
-	if (i > j) return { kind: 'value', type: 'string', value: '' };
-	// end inclusive
-	return { kind: 'value', type: 'string', value: s.substring(i, j + 1) };
+	return asStrVal(rangeSlice(Array.from(s), a, b).join(''));
 }
 
 export function llInsertString(dst: Value, pos: Value, src: Value): Value {
@@ -200,11 +213,12 @@ export function llInsertString(dst: Value, pos: Value, src: Value): Value {
 	const p = toInt(pos);
 	const s = toStringVal(src);
 	if (d === null || p === null || s === null) return unknown('string');
+	const chars = Array.from(d);
 	let idx = p;
-	if (idx < 0) idx = d.length + idx;
+	if (idx < 0) idx = chars.length + idx;
 	if (idx < 0) idx = 0;
-	if (idx > d.length) idx = d.length;
-	return { kind: 'value', type: 'string', value: d.slice(0, idx) + s + d.slice(idx) };
+	if (idx > chars.length) idx = chars.length;
+	return asStrVal(chars.slice(0, idx).join('') + s + chars.slice(idx).join(''));
 }
 
 export function llDeleteSubString(src: Value, start: Value, end: Value): Value {
@@ -213,10 +227,7 @@ export function llDeleteSubString(src: Value, start: Value, end: Value): Value {
 	const b = toInt(end);
 	if (s === null || a === null || b === null) return unknown('string');
 	if (s.length === 0) return { kind: 'value', type: 'string', value: '' };
-	const i = normIndex(s.length, a);
-	const j = normIndex(s.length, b);
-	if (i > j) return { kind: 'value', type: 'string', value: s };
-	return { kind: 'value', type: 'string', value: s.slice(0, i) + s.slice(j + 1) };
+	return asStrVal(rangeDelete(Array.from(s), a, b).join(''));
 }
 
 export function llEscapeURL(src: Value): Value {
@@ -323,7 +334,8 @@ function valueAsFloat(value: Value | undefined): number {
 	if (!value || value.kind !== 'value') return 0;
 	if (value.type === 'integer' || value.type === 'float') return value.value;
 	if (value.type === 'string' || value.type === 'key') {
-		const parsed = Number(value.value);
+		const prefix = /^[+-]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][+-]?\d+)?/.exec(value.value.trimStart());
+		const parsed = prefix ? Number(prefix[0]) : 0;
 		return Number.isFinite(parsed) ? parsed : 0;
 	}
 	return 0;
@@ -336,19 +348,11 @@ function valueAsString(value: Value | undefined): string {
 
 function valueAsVector(value: Value | undefined): [number, number, number] {
 	if (value?.kind === 'value' && value.type === 'vector') return value.value;
-	if (value?.kind === 'value' && value.type === 'string') {
-		const match = /^\s*<\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,>]+)\s*>\s*$/.exec(value.value);
-		if (match) return [Number(match[1]), Number(match[2]), Number(match[3])];
-	}
 	return [0, 0, 0];
 }
 
 function valueAsRotation(value: Value | undefined): [number, number, number, number] {
 	if (value?.kind === 'value' && value.type === 'rotation') return value.value;
-	if (value?.kind === 'value' && value.type === 'string') {
-		const match = /^\s*<\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,]+)\s*,\s*([^,>]+)\s*>\s*$/.exec(value.value);
-		if (match) return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])];
-	}
 	return [0, 0, 0, 1];
 }
 
@@ -387,10 +391,7 @@ export function llList2List(list: Value, start: Value, end: Value): Value {
 	const b = toInt(end);
 	if (arr === null || a === null || b === null) return unknown('list');
 	if (arr.length === 0) return { kind: 'value', type: 'list', value: [] };
-	const i = normIndex(arr.length, a);
-	const j = normIndex(arr.length, b);
-	if (i > j) return { kind: 'value', type: 'list', value: [] };
-	return { kind: 'value', type: 'list', value: arr.slice(i, j + 1) };
+	return { kind: 'value', type: 'list', value: rangeSlice(arr, a, b) };
 }
 
 export function llDeleteSubList(list: Value, start: Value, end: Value): Value {
@@ -399,10 +400,7 @@ export function llDeleteSubList(list: Value, start: Value, end: Value): Value {
 	const b = toInt(end);
 	if (arr === null || a === null || b === null) return unknown('list');
 	if (arr.length === 0) return { kind: 'value', type: 'list', value: [] };
-	const i = normIndex(arr.length, a);
-	const j = normIndex(arr.length, b);
-	if (i > j) return { kind: 'value', type: 'list', value: arr.slice() };
-	return { kind: 'value', type: 'list', value: [...arr.slice(0, i), ...arr.slice(j + 1)] };
+	return { kind: 'value', type: 'list', value: rangeDelete(arr, a, b) };
 }
 
 export function llListInsertList(dest: Value, src: Value, index: Value): Value {
@@ -426,8 +424,9 @@ export function llListReplaceList(dest: Value, src: Value, start: Value, end: Va
 	if (d.length === 0) return { kind: 'value', type: 'list', value: s.slice() };
 	const i = normIndex(d.length, a);
 	const j = normIndex(d.length, b);
-	if (i > j) return { kind: 'value', type: 'list', value: d.slice() };
-	return { kind: 'value', type: 'list', value: [...d.slice(0, i), ...s, ...d.slice(j + 1)] };
+	if (i > j) return { kind: 'value', type: 'list', value: [...rangeDelete(d, a, b), ...s] };
+	if (j < 0) return { kind: 'value', type: 'list', value: d.slice() };
+	return { kind: 'value', type: 'list', value: [...d.slice(0, Math.max(0, i)), ...s, ...d.slice(Math.min(d.length, j + 1))] };
 }
 
 export function llListFindList(list: Value, sub: Value): Value {
@@ -539,6 +538,9 @@ function jsonValueFromLsl(value: Value): JsonValue | undefined {
 			if (value.value === JSON_TRUE) return true;
 			if (value.value === JSON_FALSE) return false;
 			if (value.value === JSON_NULL) return null;
+			// SL embeds JSON containers and boolean spellings from strings. Keep
+			// these calls intact until source-preserving JSON conversion exists.
+			if (/^\s*(?:\[|\{)/.test(value.value) || /^(true|false|null)$/.test(value.value)) return undefined;
 			return value.value;
 		case 'vector':
 		case 'rotation':
@@ -553,14 +555,14 @@ function lslValueFromJson(value: JsonValue): Value {
 	if (typeof value === 'boolean') return asStrVal(value ? JSON_TRUE : JSON_FALSE);
 	if (typeof value === 'number') return Number.isInteger(value) ? asIntVal(value) : asFloat(value);
 	if (typeof value === 'string') return asStrVal(value);
-	return asStrVal(jsonStringify(value));
+	return unknown('string');
 }
 
-function parseJsonValue(value: string): JsonValue | null {
+function parseJsonValue(value: string): JsonValue | undefined {
 	try {
 		return JSON.parse(value) as JsonValue;
 	} catch {
-		return null;
+		return undefined;
 	}
 }
 
@@ -590,20 +592,12 @@ function getJsonPath(root: JsonValue, specifiers: Value[]): JsonValue | undefine
 			if (typeof key !== 'number') return undefined;
 			current = current[key];
 		} else if (isJsonObject(current)) {
-			current = (current as Record<string, JsonValue>)[String(key)];
+			current = Object.prototype.hasOwnProperty.call(current, String(key)) ? (current as Record<string, JsonValue>)[String(key)] : undefined;
 		} else {
 			return undefined;
 		}
 	}
 	return current;
-}
-
-function parseJsonSetInput(value: string): JsonValue {
-	if (value === JSON_TRUE) return true;
-	if (value === JSON_FALSE) return false;
-	if (value === JSON_NULL) return null;
-	const parsed = parseJsonValue(value);
-	return parsed ?? value;
 }
 
 export function llList2Json(jsonTypeValue: Value, values: Value): Value {
@@ -616,7 +610,8 @@ export function llList2Json(jsonTypeValue: Value, values: Value): Value {
 		return asStrVal(jsonStringify(jsonValues as JsonValue[]));
 	}
 	if (jsonTypeValue.value === JSON_OBJECT) {
-		const out: { [key: string]: JsonValue } = {};
+		if (arr.length % 2 !== 0) return asStrVal(JSON_INVALID);
+		const out: { [key: string]: JsonValue } = Object.create(null) as { [key: string]: JsonValue };
 		for (let i = 0; i + 1 < arr.length; i += 2) {
 			const key = lslValueString(arr[i]!);
 			const value = jsonValueFromLsl(arr[i + 1]!);
@@ -631,9 +626,9 @@ export function llList2Json(jsonTypeValue: Value, values: Value): Value {
 export function llJson2List(json: Value): Value {
 	if (!isStr(json)) return unknown('list');
 	const parsed = parseJsonValue(json.value);
-	if (parsed === null) return unknown('list');
+	if (parsed === undefined) return unknown('list');
 	if (Array.isArray(parsed)) return { kind: 'value', type: 'list', value: parsed.map(lslValueFromJson) };
-	if (typeof parsed === 'object') {
+	if (parsed !== null && typeof parsed === 'object') {
 		const out: Value[] = [];
 		for (const [key, value] of Object.entries(parsed)) {
 			out.push(asStrVal(key), lslValueFromJson(value));
@@ -648,14 +643,16 @@ export function llJsonGetValue(json: Value, specifiers: Value): Value {
 	const specs = toList(specifiers);
 	if (specs === null) return unknown('string');
 	const parsed = parseJsonValue(json.value);
-	if (parsed === null) return asStrVal(JSON_INVALID);
+	if (parsed === undefined) return asStrVal(JSON_INVALID);
 	const value = getJsonPath(parsed, specs);
 	if (value === undefined) return asStrVal(JSON_INVALID);
 	if (value === null) return asStrVal(JSON_NULL);
 	if (typeof value === 'boolean') return asStrVal(value ? JSON_TRUE : JSON_FALSE);
-	if (typeof value === 'number') return asStrVal(lslNumberString(value));
+	// SL preserves the source spelling of numeric tokens (1.250, 1e3).
+	// JSON.parse discards it, so keep these calls for execution in SL.
+	if (typeof value === 'number') return unknown('string');
 	if (typeof value === 'string') return asStrVal(value);
-	return asStrVal(jsonStringify(value));
+	return unknown('string');
 }
 
 export function llJsonValueType(json: Value, specifiers: Value): Value {
@@ -663,44 +660,15 @@ export function llJsonValueType(json: Value, specifiers: Value): Value {
 	const specs = toList(specifiers);
 	if (specs === null) return unknown('string');
 	const parsed = parseJsonValue(json.value);
-	if (parsed === null) return asStrVal(JSON_INVALID);
+	if (parsed === undefined) return asStrVal(JSON_INVALID);
 	return asStrVal(jsonType(getJsonPath(parsed, specs)));
 }
 
 export function llJsonSetValue(json: Value, specifiers: Value, value: Value): Value {
-	if (!isStr(json) || !isStr(value)) return unknown('string');
-	const specs = toList(specifiers);
-	if (specs === null || specs.length === 0) return unknown('string');
-	const parsed = parseJsonValue(json.value);
-	if (parsed === null) return asStrVal(JSON_INVALID);
-	const replacement = parseJsonSetInput(value.value);
-	let current: JsonValue = parsed;
-	for (let i = 0; i < specs.length - 1; i++) {
-		const key = jsonSpecifierValue(specs[i]!);
-		if (key === null || current === null || typeof current !== 'object') return asStrVal(JSON_INVALID);
-		let next: JsonValue | undefined;
-		if (Array.isArray(current)) {
-			if (typeof key !== 'number') return asStrVal(JSON_INVALID);
-			next = current[key];
-		} else if (isJsonObject(current)) {
-			next = (current as Record<string, JsonValue>)[String(key)];
-		} else {
-			return asStrVal(JSON_INVALID);
-		}
-		if (next === undefined) return asStrVal(JSON_INVALID);
-		current = next;
-	}
-	const last = jsonSpecifierValue(specs[specs.length - 1]!);
-	if (last === null || current === null || typeof current !== 'object') return asStrVal(JSON_INVALID);
-	if (Array.isArray(current)) {
-		if (typeof last !== 'number') return asStrVal(JSON_INVALID);
-		current[last] = replacement;
-	} else if (isJsonObject(current)) {
-		(current as Record<string, JsonValue>)[String(last)] = replacement;
-	} else {
-		return asStrVal(JSON_INVALID);
-	}
-	return asStrVal(jsonStringify(parsed));
+	// Source token preservation, path creation, deletion and append require a
+	// lossless JSON implementation; JSON.parse/stringify is not equivalent.
+	void json; void specifiers; void value;
+	return unknown('string');
 }
 
 // ===== Vector math helpers (when actual values are present) =====
@@ -793,7 +761,7 @@ export function llBase64ToInteger(str: Value): Value {
 		if (raw.length > 4) return asIntVal(0);
 		// big-endian assemble; missing low bytes are 0 per spec
 		let v = 0;
-		for (let i = 0; i < raw.length; i++) v = (v << 8) | (raw[i] & 0xff);
+		for (let i = 0; i < 4; i++) v = (v << 8) | ((raw[i] ?? 0) & 0xff);
 		// sign-extend if full 4 bytes
 		if (raw.length === 4) v = (v << 0) >> 0;
 		return asIntVal(v);
@@ -813,26 +781,25 @@ export function llStringTrim(src: Value, type: Value): Value {
 
 export function llReplaceSubString(src: Value, pattern: Value, repl: Value, count: Value): Value {
 	if (!isStr(src) || !isStr(pattern) || !isStr(repl) || !isNum(count)) return unknown('string');
-	const pat = pattern.value; const rep = repl.value; let c = i32(count.value);
-	if (pat.length === 0 || c === 0) {
-		// replace all when count==0
-		if (c === 0 && pat.length > 0) return asStrVal(src.value.split(pat).join(rep));
-		return asStrVal(src.value);
+	const pat = pattern.value; const rep = repl.value; const c = i32(count.value);
+	if (!pat.length) return asStrVal(src.value);
+	// Right-to-left overlapping match selection has not been verified in SL.
+	if (c < 0) return unknown('string');
+	const matches: number[] = [];
+	let next = 0;
+	while (next <= src.value.length - pat.length) {
+		const index = src.value.indexOf(pat, next);
+		if (index < 0) break;
+		matches.push(index);
+		next = index + pat.length;
 	}
-	let s = src.value;
-	if (c > 0) {
-		while (c-- > 0) {
-			const i = s.indexOf(pat); if (i < 0) break;
-			s = s.slice(0, i) + rep + s.slice(i + pat.length);
-		}
-	} else { // negative => from right
-		c = -c;
-		while (c-- > 0) {
-			const i = s.lastIndexOf(pat); if (i < 0) break;
-			s = s.slice(0, i) + rep + s.slice(i + pat.length);
-		}
+	const selected = c === 0 ? matches : matches.slice(0, c);
+	let result = ''; let cursor = 0;
+	for (const index of selected) {
+		result += src.value.slice(cursor, index) + rep;
+		cursor = index + pat.length;
 	}
-	return asStrVal(s);
+	return asStrVal(result + src.value.slice(cursor));
 }
 
 export function llChar(code: Value): Value {
@@ -876,10 +843,6 @@ export function llCSV2List(src: Value): Value {
 }
 
 // ===== List conversions / slices / sort / stats =====
-const toIndex = (len: number, idx: number) => {
-	let i = i32(idx); if (i < 0) i = len + i;
-	return clamp(i, 0, Math.max(0, len - 1));
-};
 const fromList = (v: Value) => v.kind === 'value' && v.type === 'list' ? v.value : null;
 
 function listValueAt(list: Value, index: Value): Value | 'out-of-range' | null {
@@ -941,35 +904,20 @@ export function llList2Rot(list: Value, index: Value): Value {
 
 export function llList2ListStrided(list: Value, start: Value, end: Value, stride: Value): Value {
 	const arr = fromList(list); if (!arr || !isNum(start) || !isNum(end) || !isNum(stride)) return unknown('list');
-	const st = Math.max(1, i32(stride.value));
+	const st = Math.max(1, Math.abs(i32(stride.value)));
 	if (!arr.length) return { kind: 'value', type: 'list', value: [] };
-	const i0 = toIndex(arr.length, start.value);
-	const j0 = toIndex(arr.length, end.value);
-	const range: Value[] = [];
-	if (i0 <= j0) {
-		for (let i = i0; i <= j0; i += st) range.push(arr[i]);
-	} else {
-		for (let i = 0; i <= j0; i += st) range.push(arr[i]);
-		for (let i = i0; i < arr.length; i += st) range.push(arr[i]);
-	}
+	const a = normIndex(arr.length, i32(start.value));
+	const b = normIndex(arr.length, i32(end.value));
+	const range = arr.filter((_value, index) => index % st === 0 && (a > b || index >= a && index <= b));
 	return { kind: 'value', type: 'list', value: range };
 }
 
 export function llList2ListSlice(list: Value, start: Value, end: Value, stride: Value, sliceIdx: Value): Value {
 	const arr = fromList(list); if (!arr || !isNum(start) || !isNum(end) || !isNum(stride) || !isNum(sliceIdx)) return unknown('list');
-	const st = Math.max(1, i32(stride.value)); let si = i32(sliceIdx.value);
+	const st = Math.max(1, Math.abs(i32(stride.value))); let si = i32(sliceIdx.value);
 	if (si < 0) si = st + si;
-	const i0 = toIndex(arr.length, start.value);
-	const j0 = toIndex(arr.length, end.value);
-	const out: Value[] = [];
-	const collect = (from: number, to: number) => {
-		for (let i = from; i <= to; i += st) {
-			const base = i - (i % st);
-			const k = base + si;
-			if (k >= 0 && k < arr.length) out.push(arr[k]);
-		}
-	};
-	if (i0 <= j0) collect(i0, j0); else { collect(0, j0); collect(i0, arr.length - 1); }
+	if (si < 0 || si >= st) return { kind: 'value', type: 'list', value: [] };
+	const out = rangeSlice(arr, i32(start.value), i32(end.value)).filter((_value, index) => index % st === si);
 	return { kind: 'value', type: 'list', value: out };
 }
 
@@ -978,15 +926,31 @@ export function llListSort(list: Value, stride: Value, ascending: Value): Value 
 	const st = Math.max(1, i32(stride.value));
 	const asc = i32(ascending.value) !== 0;
 	if (arr.length === 0) return { kind: 'value', type: 'list', value: [] };
+	if (arr.length % st !== 0) return { kind: 'value', type: 'list', value: arr.slice() };
 	const chunks: Value[][] = [];
 	for (let i = 0; i < arr.length; i += st) chunks.push(arr.slice(i, Math.min(arr.length, i + st)));
-	const key = (x: Value) => (x.kind === 'value' && typeof x.value === 'number') ? x.value : String(x);
-	chunks.sort((a, b) => {
-		const ka = key(a[0]), kb = key(b[0]);
-		if (ka < kb) return asc ? -1 : 1;
-		if (ka > kb) return asc ? 1 : -1;
-		return 0;
-	});
+	// SL sorts each key type only within the positions occupied by that type.
+	// Stride payloads travel with their first item.
+	const groups = new Map<LSLType, number[]>();
+	for (let index = 0; index < chunks.length; index++) {
+		const value = chunks[index]![0]!;
+		if (value.kind === 'unknown' || value.type === 'rotation' || value.type === 'list') return unknown('list');
+		const positions = groups.get(value.type) ?? [];
+		positions.push(index);
+		groups.set(value.type, positions);
+	}
+	const sortKey = (value: Value): number | string => {
+		if (value.kind !== 'value') return 0;
+		if (value.type === 'vector') return value.value.reduce((sum, component) => sum + component * component, 0);
+		return typeof value.value === 'number' || typeof value.value === 'string' ? value.value : 0;
+	};
+	for (const positions of groups.values()) {
+		const sorted = positions.map(index => chunks[index]!).sort((a, b) => {
+			const left = sortKey(a[0]!); const right = sortKey(b[0]!);
+			return left < right ? (asc ? -1 : 1) : left > right ? (asc ? 1 : -1) : 0;
+		});
+		positions.forEach((index, offset) => { chunks[index] = sorted[offset]!; });
+	}
 	return { kind: 'value', type: 'list', value: chunks.flat() };
 }
 

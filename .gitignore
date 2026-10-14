@@ -1,5 +1,6 @@
 /.github/prompts/
 node_modules/
+.local/
 out/
 /packages/core/tests/tmp_includes/
 

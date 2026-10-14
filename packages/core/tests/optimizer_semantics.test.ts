@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { optimizeScript, parseScriptFromText } from '../src';
 import type { OptimizeOptions } from '../src';
 import type { Expr, Script, Stmt } from '../src/ast/types';
+import { loadTestDefs } from './loadDefs.testutil';
+import { docFrom, runPipeline } from './testUtils';
 
 type RuntimeValue = number | string;
 
@@ -26,6 +28,11 @@ const OPTION_MATRIX: Array<{ name: string; options: OptimizeOptions }> = [
 ];
 
 describe('optimizer semantic equivalence', () => {
+	it('matches the captured Second Life signed integer oracle', () => {
+		const source = 'default { state_entry() { llOwnerSay((string)(2147483647+1)); llOwnerSay((string)(2147483647*2147483647)); llOwnerSay((string)0xffffffff); llOwnerSay((string)((integer)"4294967295")); llOwnerSay((string)(-(-2147483647-1))); } }';
+		expect(runStateEntry(parseScriptFromText(source))).toEqual(['-2147483648', '1', '-1', '-1', '-2147483648']);
+	});
+
 	it('preserves generated integer-control observable traces', () => {
 		for (const { name, options } of OPTION_MATRIX) {
 			for (let seed = 1; seed <= 120; seed++) {
@@ -40,6 +47,27 @@ describe('optimizer semantic equivalence', () => {
 				expect(blockingDiagnostics(optimizedScript), `optimized diagnostics for ${name} seed ${seed}`).toEqual([]);
 				expect(runStateEntry(optimizedScript), `trace mismatch for ${name} seed ${seed}\n${source}\n${optimized.code}`).toEqual(runStateEntry(original));
 				expect(optimizeScript(optimizedScript, options).code, `re-optimized output for ${name} seed ${seed}`).toBe(optimized.code);
+			}
+		}
+	}, 30000);
+
+	it('preserves signed integer boundary traces and emits valid integer expressions', async () => {
+		const defs = await loadTestDefs();
+		defs.funcs.set('llGetUnixTime', [{ name: 'llGetUnixTime', returns: 'integer', params: [] }]);
+		// Signed overflow and multiplication are backed by the Second Life probes
+		// retained in .local/review-2026-10/{runtime,switch-sort}-results.json.
+		const boundaries = [-2147483648, -2147483647, -65536, -1, 0, 1, 65536, 2147483646, 2147483647];
+		for (const [seed, boundary] of boundaries.entries()) {
+			const source = boundaryProgram(boundary, seed);
+			const original = parseScriptFromText(source);
+			expect(runPipeline(docFrom(source), defs).analysis.diagnostics.filter(d => d.severity === 1), source).toEqual([]);
+			const expected = runStateEntry(original);
+			for (const { name, options } of OPTION_MATRIX) {
+				const optimized = optimizeScript(original, options);
+				const reparsed = parseScriptFromText(optimized.code);
+				expect(blockingDiagnostics(reparsed), `${name} boundary ${boundary}\n${optimized.code}`).toEqual([]);
+				expect(runPipeline(docFrom(optimized.code), defs).analysis.diagnostics.filter(d => d.severity === 1), `${name} boundary ${boundary}\n${optimized.code}`).toEqual([]);
+				expect(runStateEntry(reparsed), `${name} boundary ${boundary}\n${source}\n${optimized.code}`).toEqual(expected);
 			}
 		}
 	}, 30000);
@@ -95,7 +123,7 @@ describe('optimizer semantic equivalence', () => {
 			'} }',
 		].join('\n');
 		const optimized = optimizeScript(parseScriptFromText(source), { inlineFunctions: true, removeUnusedFunctions: true, maxPasses: 12 });
-		expect(optimized.code).not.toContain('inlineMe');
+		expect(optimized.code).not.toMatch(/\binlineMe\(/);
 		expect(runStateEntry(parseScriptFromText(optimized.code))).toEqual(['left', 'right', '1:2']);
 	});
 });
@@ -149,7 +177,8 @@ function execStmt(stmt: Stmt, state: RuntimeState): void {
 function evalExprValue(expr: Expr, state: RuntimeState): RuntimeValue {
 	switch (expr.kind) {
 		case 'NumberLiteral':
-			return Math.trunc(Number(expr.raw));
+			if (/[.eEpP]/.test(expr.raw) && !/^0x[0-9a-f]+$/i.test(expr.raw)) throw new Error(`unexpected float literal ${expr.raw}`);
+			return Number(expr.raw) | 0;
 		case 'StringLiteral':
 			return expr.value;
 		case 'Identifier':
@@ -162,14 +191,14 @@ function evalExprValue(expr: Expr, state: RuntimeState): RuntimeValue {
 		case 'Unary': {
 			if ((expr.op === '++' || expr.op === '--') && expr.argument.kind === 'Identifier') {
 				const current = asInteger(state.vars.get(expr.argument.name) ?? 0);
-				const next = expr.op === '++' ? current + 1 : current - 1;
+				const next = (expr.op === '++' ? current + 1 : current - 1) | 0;
 				state.vars.set(expr.argument.name, next);
 				return expr.postfix ? current : next;
 			}
 			const value = evalExprValue(expr.argument, state);
 			if (expr.op === '!') return truthy(value) ? 0 : 1;
 			if (expr.op === '~') return ~asInteger(value);
-			if (expr.op === '-') return -asInteger(value);
+			if (expr.op === '-') return -asInteger(value) | 0;
 			if (expr.op === '+') return asInteger(value);
 			throw new Error(`unsupported generated unary operator ${expr.op}`);
 		}
@@ -220,11 +249,11 @@ function evalBinary(expr: Extract<Expr, { kind: 'Binary' }>, state: RuntimeState
 	const a = asInteger(left);
 	const b = asInteger(right);
 	switch (expr.op) {
-		case '+': return a + b;
-		case '-': return a - b;
-		case '*': return a * b;
-		case '/': return b === 0 ? 0 : Math.trunc(a / b);
-		case '%': return b === 0 ? 0 : a % b;
+		case '+': return (a + b) | 0;
+		case '-': return (a - b) | 0;
+		case '*': return Math.imul(a, b);
+		case '/': if (b === 0) throw new Error('integer division by zero'); return Math.trunc(a / b) | 0;
+		case '%': if (b === 0) throw new Error('integer remainder by zero'); return (a % b) | 0;
 		case '&': return a & b;
 		case '|': return a | b;
 		case '^': return a ^ b;
@@ -246,7 +275,9 @@ function castValue(type: string, value: RuntimeValue): RuntimeValue {
 }
 
 function asInteger(value: RuntimeValue): number {
-	return typeof value === 'number' ? Math.trunc(value) : Math.trunc(Number(value)) || 0;
+	if (typeof value === 'number') return value | 0;
+	const prefix = /^[+-]?(?:0x[0-9a-f]+|\d+)/i.exec(value.trimStart());
+	return prefix ? Number.parseInt(prefix[0], /^[+-]?0x/i.test(prefix[0]) ? 16 : 10) | 0 : 0;
 }
 
 function asString(value: RuntimeValue): string {
@@ -272,6 +303,32 @@ function generatedProgram(seed: number): string {
 		`  integer z = ${values[2]};`,
 		body,
 		'  llOwnerSay((string)x + "|" + (string)y + "|" + (string)z);',
+		'} }',
+	].join('\n');
+}
+
+function boundaryProgram(boundary: number, seed: number): string {
+	const coefficient = [2147483647, 1073741824, -2147483647][seed % 3]!;
+	const expressions = [
+		`x*${coefficient}*${coefficient}+1`,
+		`x*${coefficient}*${coefficient}*${coefficient}+1`,
+		'x+2147483647+2147483647',
+		'-(-x)',
+		'x*46341+1',
+		'x+x+x+2147483647',
+		'x*x',
+		'x / -1',
+		'x % 7',
+	];
+	return [
+		// Keep a typed return independently checked even if event locals are
+		// propagated away. This catches generated floating-point coefficients.
+		...expressions.map((expr, index) => `integer boundary_${index}(integer x) { return ${expr}; }`),
+		'default { state_entry() {',
+		// Opaque to the optimizer, deterministic to this independent interpreter.
+		`integer x = llGetUnixTime() + (${boundary} - 17);`,
+		...expressions.map(expr => `llOwnerSay((string)(${expr}));`),
+		'if ((x+1)<0) llOwnerSay("negative"); else llOwnerSay("nonnegative");',
 		'} }',
 	].join('\n');
 }

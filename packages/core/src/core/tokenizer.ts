@@ -91,7 +91,8 @@ export class Tokenizer {
 			const t = this.mk('string', this.text.slice(s, j), s, j); this.i = j; return t;
 		}
 
-		// numbers (hex, decimal, float, exponents)
+		// Hex literals are integers. Consume unsupported fractional/exponent forms
+		// together too, so the parser can report one invalid-literal diagnostic.
 		if (c === '0' && (this.text[this.i + 1] === 'x' || this.text[this.i + 1] === 'X')) {
 			const s = this.i; let j = this.i + 2;
 			while (j < this.n && /[0-9A-Fa-f]/.test(this.text[j]!)) j++;
@@ -103,6 +104,7 @@ export class Tokenizer {
 			const s = this.i; let j = this.i; let sawDot = false;
 			while (j < this.n) { const ch = this.text[j]!; if (/[0-9]/.test(ch)) { j++; continue; } if (ch === '.' && !sawDot) { sawDot = true; j++; continue; } break; }
 			if (j < this.n && /[eE]/.test(this.text[j]!)) { j++; if (this.text[j] === '+' || this.text[j] === '-') j++; while (j < this.n && /[0-9]/.test(this.text[j]!)) j++; }
+			if (sawDot && (this.text[j] === 'f' || this.text[j] === 'F')) j++;
 			const t = this.mk('number', this.text.slice(s, j), s, j); this.i = j; return t;
 		}
 

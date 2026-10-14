@@ -2,8 +2,8 @@ import path from 'node:path';
 // fs will be provided via opts.fs or required dynamically to allow testing
 import type { Token } from './tokens';
 import { Tokenizer } from './tokenizer';
-import { type MacroDefines, type IncludeResolver, preprocessAndExpandNew, MacroConditionalProcessor } from './macro';
-import type { ConditionalGroup, DisabledRange, DynamicMacros, PreprocDiagnostic } from './preproc';
+import { type MacroDefines, type IncludeResolver, preprocessAndExpandNew, MacroConditionalProcessor, functionMacroNames, copyMacroDefines } from './macro';
+import type { ConditionalGroup, DisabledRange, DynamicMacros, MissingInclude, PreprocDiagnostic } from './preproc';
 import { normalizeDiagCode } from '../analysisTypes';
 import { type LslExtensionSettings, resolveLslExtensions, type ResolvedLslExtensions } from '../extensions';
 
@@ -62,7 +62,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	disabledRanges: DisabledRange[];
 	inactiveRanges: DisabledRange[];
 	includeTargets?: { start: number; end: number; file: string; resolved: string | null }[];
-	missingIncludes?: { start: number; end: number; file: string }[];
+	missingIncludes?: MissingInclude[];
 	preprocDiagnostics?: PreprocDiagnostic[];
 	diagDirectives?: import('./preproc').DiagDirectives;
 	conditionalGroups?: ConditionalGroup[];
@@ -77,7 +77,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	for (;;) { const t = tz.next(); attachFile(t, opts.fromPath ? opts.fromPath : '<unknown>'); rootTokens.push(t); if (t.kind === 'eof') break; }
 	// Run new unified preprocessor (includes + macro expansion)
 	const resolver = buildIncludeResolver(opts);
-	const initialDefines: MacroDefines = opts.defines ? { ...opts.defines } : {};
+	const initialDefines: MacroDefines = opts.defines ? copyMacroDefines(opts.defines) : {};
 	// Inject __FILE__ early so conditional branches can test it (#if defined(__FILE__) or comparisons)
 	if (opts.fromPath) {
 		const base = path.basename(opts.fromPath);
@@ -186,7 +186,7 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 		end: mi.end,
 		message: `Cannot resolve include "${mi.file}"`,
 		code: 'LSL-include-missing',
-		file: opts.fromPath,
+		file: mi.originFile ?? opts.fromPath,
 	}));
 	const diagDirectives: import('./preproc').DiagDirectives = { disableLine, disableNextLine, blocks };
 	const lineSuppression = (map: Map<number, Set<string> | null>, line: number) => {
@@ -204,11 +204,12 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	};
 	const preprocDiagnostics = (pre.diagnostics || [])
 		.concat(structuralDiags, missingIncludeDiags)
-		.filter(d => !isSuppressed(d.start, d.code));
+		.filter(d => (d.file && d.file !== (opts.fromPath ?? '<memory>')) || !isSuppressed(d.start, d.code));
 	// Build funcMacros map: function-like macro definitions body string as stored in macros table ("(params) body")
 	const funcMacros: Record<string,string> = {};
-	for (const [name, val] of Object.entries(pre.macros)) {
-		if (typeof val === 'string' && /^\([^)]*\)\s+/.test(val)) funcMacros[name] = val;
+	for (const name of functionMacroNames(pre.macros)) {
+		const val = pre.macros[name];
+		if (typeof val === 'string') funcMacros[name] = val;
 	}
 	// Build legacy-style macro delta info (for core_pipeline_cache tests)
 	// Semantics required by tests:
@@ -238,26 +239,11 @@ export function preprocessForAst(text: string, opts: IncludeResolverOptions & { 
 	const macrosChanged = changedKeys.length > 0;
 	// Update snapshot to final table for subsequent call when no explicit defines provided
 	_prevMacroSnapshot.macros = { ...pre.macros };
-	// Build inactive span index for fast filtering
-	const inactive: DisabledRange[] = pre.inactiveSpans ? [...pre.inactiveSpans] : [];
-	if (inactive.length) inactive.sort((a,b)=> a.start-b.start);
-	function isInactive(t: Token): boolean {
-		if (!inactive.length) return false;
-		const tokenFile = t.file || t.span.file;
-		const pos = t.span.start;
-		// binary search last span with start<=pos
-		let lo=0, hi=inactive.length-1, cand=-1;
-		while(lo<=hi){const mid=(lo+hi)>>1; const s=inactive[mid]!.start; if(s<=pos){cand=mid; lo=mid+1;} else hi=mid-1; }
-		for (let i = cand; i >= 0; i--) {
-			const span = inactive[i]!;
-			if (span.end < pos) break;
-			if (span.file && tokenFile && span.file !== tokenFile) continue;
-			if (pos >= span.start && pos <= span.end) return true;
-		}
-		return false;
-	}
 	const allCodeTokens = pre.tokens.filter(t=> t.kind !== 'directive' && t.kind !== 'comment-line' && t.kind !== 'comment-block');
-	const activeTokens = allCodeTokens.filter(t=> !isInactive(t));
+	// The preprocessor has already removed inactive tokens at each inclusion.
+	// Filtering again by file/span would erase an earlier active inclusion when
+	// the same guarded file is included a second time and becomes inactive.
+	const activeTokens = allCodeTokens;
 	return {
 		macros: pre.macros,
 		dynamicMacros: opts.dynamicMacros,

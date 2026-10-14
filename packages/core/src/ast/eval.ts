@@ -112,6 +112,10 @@ export class Env {
 	child(): Env {
 		return new Env(new Map(), this._functionReturnTypes, this._functions, this._pureFunctions, this);
 	}
+
+	functionChild(): Env {
+		return this._parent ? this._parent.functionChild() : this.child();
+	}
 }
 
 const isNumberValue = (v: Value): v is Extract<Value, { kind: 'value', type: 'integer' | 'float', value: number }> =>
@@ -140,9 +144,9 @@ const numberToLSLString = (t: 'integer' | 'float', n: number): string =>
 function castStringToInteger(s: string): number {
 	const t = s.trimStart();
 	const mHex = /^([+-]?0x[0-9a-f]+)/i.exec(t);
-	if (mHex) return int(parseInt(mHex[1]!, 16));
+	if (mHex) return int(parseInt(mHex[1]!, 16)) | 0;
 	const mDec = /^([+-]?\d+)/.exec(t);
-	if (mDec) return int(parseInt(mDec[1]!, 10));
+	if (mDec) return int(parseInt(mDec[1]!, 10)) | 0;
 	return 0;
 }
 
@@ -174,20 +178,6 @@ function stringValue(v: Value): string | null {
 	if (isNumberValue(v)) return numberToLSLString(v.type, v.value);
 	if (v.kind === 'value' && (v.type === 'vector' || v.type === 'rotation')) return `<${v.value.map(component => component.toFixed(5)).join(', ')}>`;
 	return null;
-}
-
-// Try to extract a numeric vector from a VectorLiteral/Rotation-literal Expr
-function extractNumericVectorOrRotation(env: Env, e: Expr | null, ctx: EvalContext): { comps: number[]; isRotation: boolean } | null {
-	if (!e || e.kind !== 'VectorLiteral') return null;
-	const want4 = e.elements.length === 4;
-	const nums: number[] = [];
-	for (const comp of e.elements) {
-		const cv = evalExprInner(comp, env, ctx);
-		const n = num(cv);
-		if (n === null) return null;
-		nums.push(n);
-	}
-	return { comps: nums, isRotation: want4 };
 }
 
 function componentAtValue(v: Value, prop: 'x' | 'y' | 'z' | 's'): number | null {
@@ -294,15 +284,36 @@ function coerceParameterValue(value: Value | undefined, type: Type): Value {
 	return runtime.unknown(type);
 }
 
+function defaultValue(type: Type): Value {
+	switch (type) {
+		case 'integer': return { kind: 'value', type, value: 0 };
+		case 'float': return { kind: 'value', type, value: 0 };
+		case 'string': return { kind: 'value', type, value: '' };
+		case 'key': return { kind: 'value', type, value: '' };
+		case 'list': return { kind: 'value', type, value: [] };
+		case 'vector': return { kind: 'value', type, value: [0, 0, 0] };
+		case 'rotation': return { kind: 'value', type, value: [0, 0, 0, 1] };
+	}
+}
+
 export function evalExpr(expr: Expr | null, env: Env = new Env(), options?: EvalOptions): Value {
-	return evalExprInner(expr, env, new EvalContext(options));
+	try {
+		return evalExprInner(expr, env, new EvalContext(options));
+	} catch (signal: unknown) {
+		if (!(signal instanceof UnknownFlowSignal)) throw signal;
+		if (expr?.kind === 'Call' && expr.callee.kind === 'Identifier') {
+			const type = env.functionReturnTypes.get(expr.callee.name) ?? env.getFunction(expr.callee.name)?.returnType;
+			if (type && type !== 'void') return runtime.unknown(type);
+		}
+		return runtime.unknown('integer');
+	}
 }
 
 function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 	if (!expr) return runtime.unknown('integer');
 	if (!ctx.enter()) {
 		ctx.leave();
-		return runtime.unknown('integer');
+		throw new UnknownFlowSignal();
 	}
 
 	try {
@@ -319,7 +330,7 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 			case 'NumberLiteral': {
 				const parsed = parseNumberLiteral(expr.raw);
 				return parsed
-					? { kind: 'value', type: parsed.type, value: parsed.value }
+					? { kind: 'value', type: parsed.type, value: parsed.type === 'integer' ? parsed.value | 0 : parsed.value }
 					: runtime.unknown('integer');
 			}
 
@@ -410,7 +421,7 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 					case '+':
 						return n === null ? runtime.unknown('integer') : { kind: 'value', type: v.type, value: n } as Value;
 					case '-':
-						if (n !== null) return { kind: 'value', type: v.type, value: -n } as Value;
+						if (n !== null) return { kind: 'value', type: v.type, value: v.type === 'integer' ? -n | 0 : -n } as Value;
 						if (v.type === 'vector' || v.type === 'rotation') return runtime.unknown(v.type);
 						return runtime.unknown('integer');
 					case '++':
@@ -441,30 +452,9 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 					return assigned;
 				}
 
-				// Some operations are easier to fold directly from the AST (vectors).
-				// Vector dot / cross when both sides are literal vectors.
-				if (expr.op === '*' || expr.op === '%') {
-					const L = extractNumericVectorOrRotation(env, expr.left, ctx);
-					const R = extractNumericVectorOrRotation(env, expr.right, ctx);
-					if (L && R && !L.isRotation && !R.isRotation) {
-						if (expr.op === '*') {
-						// dot product -> float
-							const v = L.comps[0] * R.comps[0] + L.comps[1] * R.comps[1] + L.comps[2] * R.comps[2];
-							return { kind: 'value', type: 'float', value: v };
-						} else {
-							const [lx, ly, lz] = L.comps;
-							const [rx, ry, rz] = R.comps;
-							if (lx !== undefined && ly !== undefined && lz !== undefined && rx !== undefined && ry !== undefined && rz !== undefined) {
-								return vectorVal([ly * rz - lz * ry, lz * rx - lx * rz, lx * ry - ly * rx]);
-							}
-							return runtime.unknown('vector');
-						}
-					}
-				}
-
-				// Evaluate both sides (LSL logical operators always evaluate both operands).
-				const l = evalExprInner(expr.left, env, ctx);
+				// SL evaluates binary operands right-to-left, including eager logic.
 				const r = evalExprInner(expr.right, env, ctx);
+				const l = evalExprInner(expr.left, env, ctx);
 				const ln = num(l);
 				const rn = num(r);
 
@@ -558,7 +548,7 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 							const a = isFloat ? ln : int(ln);
 							const b = isFloat ? rn : int(rn);
 							const v = a + b;
-							return { kind: 'value', type: t, value: v };
+							return { kind: 'value', type: t, value: t === 'integer' ? v | 0 : v };
 						}
 						if (l.type === 'list' || r.type === 'list') return runtime.unknown('list');
 						if (l.type === 'vector' && r.type === 'vector') return runtime.unknown('vector');
@@ -614,7 +604,7 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 						let v: number;
 						switch (expr.op) {
 							case '-': v = (t === 'integer') ? (int(ln) - int(rn)) : (ln - rn); break;
-							case '*': v = (t === 'integer') ? (int(ln) * int(rn)) : (ln * rn); break;
+							case '*': v = (t === 'integer') ? Math.imul(int(ln), int(rn)) : (ln * rn); break;
 							case '/': {
 								if (rn === 0) return runtime.unknown(t); // Math Error at runtime.
 								if (bothInt) { v = int(ai / bi); t = 'integer'; }
@@ -623,7 +613,7 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 							}
 						}
 						if (!Number.isFinite(v)) return runtime.unknown(t);
-						return { kind: 'value', type: t, value: v } as Value;
+						return { kind: 'value', type: t, value: t === 'integer' ? v | 0 : v } as Value;
 					}
 
 					case '%': {
@@ -633,16 +623,6 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 							if (rn === 0) return runtime.unknown('integer'); // Math Error at runtime.
 							const a = int(ln), b = int(rn);
 							return { kind: 'value', type: 'integer', value: a % b };
-						}
-						// vector%vector (cross) when both sides are literal vectors — return unknown vector
-						const L = extractNumericVectorOrRotation(env, expr.left, ctx);
-						const R = extractNumericVectorOrRotation(env, expr.right, ctx);
-						if (L && R && !L.isRotation && !R.isRotation) {
-							const [lx, ly, lz] = L.comps;
-							const [rx, ry, rz] = R.comps;
-							if (lx !== undefined && ly !== undefined && lz !== undefined && rx !== undefined && ry !== undefined && rz !== undefined) {
-								return vectorVal([ly * rz - lz * ry, lz * rx - lx * rz, lx * ry - ly * rx]);
-							}
 						}
 						const lv = vectorValue(l);
 						const rv = vectorValue(r);
@@ -680,15 +660,16 @@ function evalExprInner(expr: Expr | null, env: Env, ctx: EvalContext): Value {
 					if (userFn && userFn.returnType && userFn.returnType !== 'void') {
 						if (!expr.args.every(arg => isEvalSideEffectFreeArg(arg, env))) return runtime.unknown(userFn.returnType);
 						const args = expr.args.map(a => evalExprInner(a, env, ctx));
-						const callEnv = env.child();
+						const callEnv = env.functionChild();
 						let index = 0;
 						for (const [paramName, paramType] of userFn.parameters) {
 							callEnv.setVar(paramName, coerceParameterValue(args[index], paramType));
 							index++;
 						}
 						try {
-							return evalStmtInner(userFn.body, callEnv, ctx) ?? runtime.unknown(userFn.returnType);
-						} catch {
+							return coerceParameterValue(evalStmtInner(userFn.body, callEnv, ctx) ?? undefined, userFn.returnType);
+						} catch (signal: unknown) {
+							if (signal instanceof UnknownFlowSignal) throw signal;
 							return runtime.unknown(userFn.returnType);
 						}
 					}
@@ -754,9 +735,12 @@ class UnknownFlowSignal extends Error {
 
 const isTruthy = (v: Value): boolean | null => {
 	if (v.kind !== 'value') return null;
-	if (v.type === 'integer' || v.type === 'float') return Math.trunc(v.value) !== 0;
+	if (v.type === 'integer' || v.type === 'float') return v.value !== 0;
 	if (v.type === 'string') return v.value.length !== 0;
-	if (v.type === 'key') return v.value !== '' && v.value !== NULL_KEY_VALUE;
+	if (v.type === 'key') {
+		const key = keyValueFromString(v.value);
+		return key !== null && key !== '' && key !== NULL_KEY_VALUE;
+	}
 	if (v.type === 'list') return v.value.length !== 0;
 	if (v.type === 'vector' || v.type === 'rotation') return v.value.some(component => component !== 0);
 	return null;
@@ -781,7 +765,7 @@ export function evalStmt(stmt: Stmt, env: Env = new Env(), options?: EvalOptions
 function evalStmtInner(stmt: Stmt, env: Env, ctx: EvalContext): Value | null {
 	if (!ctx.enter()) {
 		ctx.leave();
-		return null;
+		throw new UnknownFlowSignal();
 	}
 	try {
 		switch (stmt.kind) {
@@ -798,8 +782,8 @@ function evalStmtInner(stmt: Stmt, env: Env, ctx: EvalContext): Value | null {
 
 			case 'VarDecl': {
 				const name = stmt.name;
-				const init = stmt.initializer ? evalExprInner(stmt.initializer, env, ctx) : runtime.unknown(stmt.varType);
-				env.setVar(name, init);
+				const init = stmt.initializer ? evalExprInner(stmt.initializer, env, ctx) : defaultValue(stmt.varType);
+				env.setVar(name, coerceParameterValue(init, stmt.varType));
 				return null;
 			}
 
@@ -829,7 +813,7 @@ function evalStmtInner(stmt: Stmt, env: Env, ctx: EvalContext): Value | null {
 					// c === true
 					const r = evalStmtInner(stmt.body, env.child(), ctx);
 					if (r !== null) return r;          // propagate a definite return
-					if (++iters > ctx.opts.maxLoopIters) return null; // avoid infinite analysis
+					if (++iters > ctx.opts.maxLoopIters) throw new UnknownFlowSignal();
 				}
 				return null;
 			}
@@ -842,7 +826,7 @@ function evalStmtInner(stmt: Stmt, env: Env, ctx: EvalContext): Value | null {
 					const c = isTruthy(evalExprInner(stmt.condition, env.child(), ctx));
 					if (c === false) break;
 					if (c === null) throw new UnknownFlowSignal();
-					if (++iters > ctx.opts.maxLoopIters) return null;
+					if (++iters > ctx.opts.maxLoopIters) throw new UnknownFlowSignal();
 				}
 				return null;
 			}
@@ -864,7 +848,7 @@ function evalStmtInner(stmt: Stmt, env: Env, ctx: EvalContext): Value | null {
 					if (r !== null) return r;
 					// update
 					if (stmt.update) evalExprInner(stmt.update, env, ctx);
-					if (++iters > ctx.opts.maxLoopIters) return null;
+					if (++iters > ctx.opts.maxLoopIters) throw new UnknownFlowSignal();
 				}
 				return null;
 			}

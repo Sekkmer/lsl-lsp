@@ -1,4 +1,6 @@
 import type { Expr, Function as FnNode, GlobalVar, Script, State, Stmt } from './types';
+import { inferExprTypeFromAst } from './infer';
+import { parseNumberLiteral } from './numberLiteral';
 import { AssertNever } from '../utils';
 
 type NameMap = Map<string, Expr>;
@@ -8,12 +10,26 @@ const ASSIGNMENT_OPS = new Set(['=', '+=', '-=', '*=', '/=', '%=']);
 export function inlineConstantGlobals(script: Script): Script {
 	const written = collectWrittenNames(script);
 	const rawConstants = new Map<string, Expr>();
+	const removableConstants = new Map<string, Expr>();
+	const globalTypes = new Map([...script.globals].map(([name, global]) => [name, global.varType]));
 	for (const [name, global] of script.globals) {
 		if (written.has(name)) continue;
 		if (!global.initializer || !isInlineableInitializer(global.initializer)) continue;
-		rawConstants.set(name, global.initializer);
+		removableConstants.set(name, global.initializer);
+		let initializer = global.initializer;
+		if (inferExprTypeFromAst(initializer, globalTypes) !== global.varType) {
+			// Preserve implicit declaration conversion without introducing casts
+			// into global initializers, where SL only accepts literal forms.
+			if (global.varType !== 'float' || initializer.kind !== 'NumberLiteral') continue;
+			const literal = parseNumberLiteral(initializer.raw);
+			if (!literal || literal.type !== 'integer') continue;
+			const value = Math.fround(literal.value | 0);
+			const raw = String(value);
+			initializer = { ...initializer, raw: /[.eE]/.test(raw) ? raw : `${raw}.0` };
+		}
+		rawConstants.set(name, initializer);
 	}
-	if (rawConstants.size === 0) return script;
+	if (rawConstants.size === 0) return removeUnreferencedConstants(script, removableConstants);
 
 	const constants = resolveConstants(rawConstants);
 	const globals = new Map<string, GlobalVar>();
@@ -30,7 +46,7 @@ export function inlineConstantGlobals(script: Script): Script {
 		functions: mapValues(script.functions, fn => inlineFunction(fn, constants)),
 		states: mapValues(script.states, state => inlineState(state, constants)),
 	};
-	return removeUnreferencedConstants(inlined, constants);
+	return removeUnreferencedConstants(inlined, removableConstants);
 }
 
 function resolveConstants(rawConstants: NameMap): NameMap {
@@ -253,7 +269,7 @@ function inlineStmt(stmt: Stmt, constants: NameMap, scopes: Array<Set<string>>):
 			return { ...stmt, statements: stmt.statements.map(child => inlineStmt(child, constants, nextScopes)) };
 		}
 		case 'JumpStmt':
-			return { ...stmt, target: inlineExpr(stmt.target, constants, scopes) };
+			return stmt;
 		default:
 			AssertNever(stmt);
 			return stmt;
@@ -369,7 +385,7 @@ function collectWrittenNamesFromExpr(expr: Expr, out: Set<string>): void {
 			collectWrittenNamesFromExpr(expr.object, out);
 			return;
 		case 'Unary':
-			if ((expr.op === '++' || expr.op === '--') && expr.argument.kind === 'Identifier') out.add(expr.argument.name);
+			if (expr.op === '++' || expr.op === '--') collectAssignmentTarget(expr.argument, out);
 			collectWrittenNamesFromExpr(expr.argument, out);
 			return;
 		case 'Binary':

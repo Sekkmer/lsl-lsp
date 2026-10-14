@@ -169,7 +169,9 @@ export class Lexer {
 		}
 
 		// numbers (int/float)
-		// hex number: 0x... with optional fractional part and optional binary exponent (p/P[+/-]digits)
+		// Hex literals are integers. Keep unsupported hex-float forms in one token
+		// so the parser reports them as invalid, rather than silently treating their
+		// numeric prefix as a different valid number.
 		if (c === '0' && (this.text[this.i + 1] === 'x' || this.text[this.i + 1] === 'X')) {
 			const start = this.i; let j = this.i + 2;
 			// integer part (hex digits)
@@ -209,6 +211,7 @@ export class Lexer {
 				while (j < this.n && /[0-9]/.test(this.text[j]!)) { j++; }
 				// tolerate missing digits to avoid splitting tokens; downstream may handle
 			}
+			if (sawDot && (this.text[j] === 'f' || this.text[j] === 'F')) j++;
 			const raw = this.text.slice(start, j);
 			this.i = j;
 			return this.mk('number', raw, start, j);

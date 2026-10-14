@@ -73,7 +73,7 @@ function emitStmtInner(stmt: Stmt): string {
 		case 'WhileStmt':
 			return `while(${emitExpr(stmt.condition)})${emitControlledStmt(stmt.body)}`;
 		case 'DoWhileStmt':
-			return `do${emitControlledStmt(stmt.body)}while(${emitExpr(stmt.condition)});`;
+			return `do ${emitControlledStmt(stmt.body)}while(${emitExpr(stmt.condition)});`;
 		case 'ForStmt':
 			return `for(${stmt.init ? emitExpr(stmt.init) : ''};${stmt.condition ? emitExpr(stmt.condition) : ''};${stmt.update ? emitExpr(stmt.update) : ''})${emitControlledStmt(stmt.body)}`;
 		case 'BlockStmt':
@@ -190,6 +190,8 @@ function unaryArgumentNeedsParens(expr: Extract<Expr, { kind: 'Unary' }>): boole
 }
 
 function binaryOperandNeedsParens(expr: Expr, parentOp: BinOp): boolean {
+	// Keep a binary + or - from merging with the following prefix token.
+	if ((parentOp === '+' || parentOp === '-') && expr.kind === 'Unary' && !expr.postfix && expr.op.startsWith(parentOp)) return true;
 	if (parentOp !== '*' && parentOp !== '/' && parentOp !== '%') return false;
 	return expr.kind === 'Unary' && expr.argument.kind === 'Unary';
 }

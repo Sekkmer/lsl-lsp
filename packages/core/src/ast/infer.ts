@@ -1,6 +1,6 @@
 import { Expr, Type } from './types';
 import { AssertNever } from '../utils';
-import { numberLiteralType } from './numberLiteral';
+import { numberLiteralType, parseNumberLiteral } from './numberLiteral';
 
 // Include 'void' so inference can represent void-returning calls distinctly
 export type SimpleType = Type | 'any' | 'void';
@@ -54,6 +54,9 @@ export function inferExprTypeFromAst(
 			const lt = inferExprTypeFromAst(expr.left, symbolTypes, functionReturnTypes);
 			const rt = inferExprTypeFromAst(expr.right, symbolTypes, functionReturnTypes);
 			const op = expr.op;
+			// Assignment expressions yield the value stored in the left operand,
+			// including its declared type after implicit conversion.
+			if (op === '=' || op === '+=' || op === '-=' || op === '*=' || op === '/=' || op === '%=') return lt;
 			// Logical/relational/bitwise ops yield integer
 			if (op === '&&' || op === '||' || op === '==' || op === '!=' || op === '<' || op === '>' || op === '<=' || op === '>=' || op === '&' || op === '|' || op === '^' || op === '<<' || op === '>>') return 'integer';
 			if (isNumeric(lt) && isNumeric(rt)) return lt === 'float' || rt === 'float' ? 'float' : 'integer';
@@ -97,8 +100,7 @@ export function inferExprTypeFromAst(
 export function isZeroLiteral(expr: Expr | null): boolean {
 	if (!expr) return false;
 	if (expr.kind === 'NumberLiteral') {
-		const n = Number.parseFloat(expr.raw);
-		return Number.isFinite(n) && n === 0;
+		return parseNumberLiteral(expr.raw)?.value === 0;
 	}
 	return false;
 }

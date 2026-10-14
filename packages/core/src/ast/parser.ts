@@ -8,7 +8,7 @@ import { canonicalType, isTypeName, spanFrom } from './types';
 import { Lexer } from './lexer';
 import type { Token } from '../core/tokens';
 import { preprocessForAst } from '../core/pipeline';
-import type { MacroDefines } from '../core/macro';
+import { copyMacroDefines, type MacroDefines } from '../core/macro';
 import type { DynamicMacros } from '../core/preproc';
 import type { Defs } from '../defs';
 import { basenameFromUri } from '../builtins';
@@ -17,6 +17,8 @@ import { Tokenizer } from '../core/tokenizer';
 import { TokenStream } from '../core/tokens';
 import { fileUriToPath } from '../protocol';
 import fs from 'node:fs';
+import { inferExprTypeFromAst, type SimpleType } from './infer';
+import { isNumberLiteral } from './numberLiteral';
 // (macro expansion already applied via preprocessForAst.expandedTokens)
 
 type ParseOptions = {
@@ -33,7 +35,7 @@ export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', op
 	const fromPath = uri.startsWith('file://') ? fileUriToPath(uri) : undefined;
 	const basename = basenameFromUri(uri);
 	// Avoid redefining __FILE__ early; builtin expansion handles it.
-	const baseDefines = { ...(opts?.macros ?? {}) };
+	const baseDefines = copyMacroDefines(opts?.macros ?? {});
 	const dynamicMacros = opts?.dynamicMacros ?? opts?.pre?.dynamicMacros;
 	const pre = opts?.pre ?? preprocessForAst(text, { includePaths: opts?.includePaths ?? [], fromPath, defines: baseDefines, dynamicMacros });
 	const tz = new Tokenizer(text);
@@ -48,7 +50,14 @@ export function parseScriptFromText(text: string, uri = 'file:///memory.lsl', op
 		peek: () => ts.peek(),
 		pushBack: (t: Token) => ts.pushBack(t)
 	} as unknown as Lexer;
-	const P = new Parser(lxAdapter as Lexer, text, { disableSourceHeuristics: true, lazyLists: !!pre.extensions.lazyLists, switchStatements: !!pre.extensions.switch });
+	const P = new Parser(lxAdapter as Lexer, text, {
+		disableSourceHeuristics: true,
+		lazyLists: !!pre.extensions.lazyLists,
+		switchStatements: !!pre.extensions.switch,
+		identifiers: pre.extensions.switch ? builtinsExpanded.filter(t => t.kind === 'id' || t.kind === 'keyword').map(t => t.value) : undefined,
+		defs: opts?.defs,
+		dynamicMacros,
+	});
 	const script = P.parseScript();
 	return pre.extensions.lazyLists ? lowerLazyListExpressions(script, { defs: opts?.defs }) : script;
 }
@@ -131,7 +140,14 @@ function mergeTokensWithComments(code: Token[], comments: Token[]): Token[] {
 	return out;
 }
 
-interface ParserOptions { disableSourceHeuristics?: boolean; lazyLists?: boolean; switchStatements?: boolean }
+interface ParserOptions {
+	disableSourceHeuristics?: boolean;
+	lazyLists?: boolean;
+	switchStatements?: boolean;
+	identifiers?: Iterable<string>;
+	defs?: Defs;
+	dynamicMacros?: DynamicMacros;
+}
 
 class Parser {
 	private readonly lx: Lexer;
@@ -145,8 +161,23 @@ class Parser {
 	private readonly switchStatements: boolean;
 	private syntheticLabelCounter = 0;
 	private switchBreakLabels: string[] = [];
+	private readonly identifiers: Set<string>;
+	private readonly switchValues = new Set<Extract<Stmt, { kind: 'VarDecl' }>>();
+	private readonly defs?: Defs;
+	private readonly dynamicMacros?: DynamicMacros;
 
-	constructor(lx: Lexer, src: string, opts?: ParserOptions) { this.lx = lx; this.src = src; this.disableSourceHeuristics = !!opts?.disableSourceHeuristics; this.lazyLists = !!opts?.lazyLists; this.switchStatements = !!opts?.switchStatements; }
+	constructor(lx: Lexer, src: string, opts?: ParserOptions) {
+		this.lx = lx;
+		this.src = src;
+		this.disableSourceHeuristics = !!opts?.disableSourceHeuristics;
+		this.lazyLists = !!opts?.lazyLists;
+		this.switchStatements = !!opts?.switchStatements;
+		// Use the complete expanded stream, including includes and declarations after a
+		// switch, so generated locals and labels cannot shadow a user's identifiers.
+		this.identifiers = new Set(opts?.identifiers);
+		this.defs = opts?.defs;
+		this.dynamicMacros = opts?.dynamicMacros;
+	}
 
 	private next(): Token {
 		if (this.look) { const t = this.look; this.look = null; return t; }
@@ -462,7 +493,63 @@ class Parser {
 			this.next();
 		}
 		const end = this.peek().span.end;
-		return { span: spanFrom(start, end), kind: 'Script', functions, states, globals, diagnostics: this.diagnostics } as Script;
+		const script: Script = { span: spanFrom(start, end), kind: 'Script', functions, states, globals, diagnostics: this.diagnostics };
+		this.resolveSwitchValueTypes(script);
+		return script;
+	}
+
+	private resolveSwitchValueTypes(script: Script): void {
+		if (this.switchValues.size === 0) return;
+		const globals = new Map<string, SimpleType>();
+		const returns = new Map<string, SimpleType>();
+		for (const [name, constant] of this.defs?.consts ?? []) {
+			if (isTypeName(constant.type)) globals.set(name, canonicalType(constant.type));
+		}
+		for (const [name, overloads] of this.defs?.funcs ?? []) {
+			const type = overloads[0]?.returns;
+			if (type === 'void') returns.set(name, 'void');
+			else if (type && isTypeName(type)) returns.set(name, canonicalType(type));
+		}
+		for (const [name, type] of Object.entries(this.dynamicMacros ?? {})) globals.set(name, type);
+		for (const [name, global] of script.globals) globals.set(name, global.varType);
+		for (const [name, fn] of script.functions) returns.set(name, fn.returnType ?? 'void');
+		const visit = (stmt: Stmt, scope: Map<string, SimpleType>): void => {
+			switch (stmt.kind) {
+				case 'VarDecl': {
+					if (this.switchValues.has(stmt)) {
+						const type = inferExprTypeFromAst(stmt.initializer ?? null, scope, returns);
+						if (isTypeName(type)) stmt.varType = canonicalType(type);
+						else this.diagnostics.push({
+							span: stmt.span,
+							file: stmt.span.file,
+							severity: 'error',
+							code: 'LSL000',
+							message: 'Cannot infer switch expression type; use an explicit cast',
+						});
+					}
+					scope.set(stmt.name, stmt.varType);
+					break;
+				}
+				case 'BlockStmt': {
+					const nested = new Map(scope);
+					for (const child of stmt.statements) visit(child, nested);
+					break;
+				}
+				case 'IfStmt':
+					visit(stmt.then, new Map(scope));
+					if (stmt.else) visit(stmt.else, new Map(scope));
+					break;
+				case 'WhileStmt':
+				case 'DoWhileStmt':
+				case 'ForStmt':
+					visit(stmt.body, new Map(scope));
+					break;
+			}
+		};
+		for (const fn of script.functions.values()) visit(fn.body, new Map([...globals, ...fn.parameters]));
+		for (const state of script.states.values()) {
+			for (const event of state.events) visit(event.body, new Map([...globals, ...event.parameters]));
+		}
 	}
 
 	private parseTopLevel(): FnNode | { span: Span; kind: 'GlobalVar'; varType: Type; name: string; initializer?: Expr; comment?: string; } {
@@ -1142,8 +1229,11 @@ class Parser {
 		const discriminator = this.parseExpr();
 		this.eat('punct', ')');
 		this.eat('punct', '{');
-		const switchId = this.syntheticLabelCounter++;
-		const breakLabel = `__lsl_switch_${switchId}_break`;
+		let prefix: string;
+		do { prefix = `__lsl_switch_${this.syntheticLabelCounter++}_`; }
+		while ([...this.identifiers].some(name => name.startsWith(prefix)));
+		const breakLabel = `${prefix}break`;
+		const valueName = `${prefix}value`;
 		const cases: SwitchCase[] = [];
 		let defaultCase: SwitchCase | undefined;
 		let current: SwitchCase | undefined;
@@ -1156,14 +1246,14 @@ class Parser {
 					const caseTok = this.eat('id', 'case');
 					const test = this.parseExpr();
 					this.eat('punct', ':');
-					current = { label: `__lsl_switch_${switchId}_case_${caseIndex++}`, test, statements: [], span: caseTok.span };
+					current = { label: `${prefix}case_${caseIndex++}`, test, statements: [], span: caseTok.span };
 					cases.push(current);
 					continue;
 				}
 				if (look.kind === 'keyword' && look.value === 'default') {
 					const defTok = this.eat('keyword', 'default');
 					this.eat('punct', ':');
-					current = { label: `__lsl_switch_${switchId}_default`, statements: [], span: defTok.span };
+					current = { label: `${prefix}default`, statements: [], span: defTok.span };
 					if (defaultCase) this.report(defTok, 'Duplicate default label in switch', 'LSL000');
 					defaultCase = current;
 					cases.push(current);
@@ -1171,7 +1261,7 @@ class Parser {
 				}
 				if (!current) {
 					this.report(look, 'expected case or default in switch body', 'LSL000');
-					current = { label: `__lsl_switch_${switchId}_case_${caseIndex++}`, statements: [], span: look.span };
+					current = { label: `${prefix}case_${caseIndex++}`, statements: [], span: look.span };
 					cases.push(current);
 				}
 				current.statements.push(this.parseStmt(inFunctionOrEvent));
@@ -1180,13 +1270,21 @@ class Parser {
 			this.switchBreakLabels.pop();
 		}
 		const close = this.eat('punct', '}');
-		const statements: Stmt[] = [];
+		// Resolve the type after parsing the entire script: a discriminator may call
+		// a function declared later. A local also evaluates empty/default-only
+		// switches exactly once and keeps side effects out of case comparisons.
+		const value: Extract<Stmt, { kind: 'VarDecl' }> = {
+			span: { ...discriminator.span, file: kw.file }, kind: 'VarDecl',
+			varType: 'integer', name: valueName, initializer: discriminator,
+		};
+		this.switchValues.add(value);
+		const statements: Stmt[] = [value];
 		for (const entry of cases) {
 			if (!entry.test) continue;
 			statements.push({
 				span: spanFrom(kw.span.start, entry.test.span.end),
 				kind: 'IfStmt',
-				condition: { span: spanFrom(discriminator.span.start, entry.test.span.end), kind: 'Binary', op: '==', left: discriminator, right: entry.test },
+				condition: { span: spanFrom(discriminator.span.start, entry.test.span.end), kind: 'Binary', op: '==', left: { span: discriminator.span, kind: 'Identifier', name: valueName }, right: entry.test },
 				then: this.switchJumpStmt(entry.label, entry.test.span)
 			});
 		}
@@ -1309,7 +1407,10 @@ class Parser {
 
 	private parsePrimary(): Expr {
 		const t = this.next();
-		if (t.kind === 'number') return this.parsePostfix({ span: t.span, kind: 'NumberLiteral', raw: t.value });
+		if (t.kind === 'number') {
+			if (!isNumberLiteral(t.value)) this.report(t, `Invalid number literal '${t.value}'`, 'LSL000');
+			return this.parsePostfix({ span: t.span, kind: 'NumberLiteral', raw: t.value });
+		}
 		if (t.kind === 'string') return this.parsePostfix({ span: t.span, kind: 'StringLiteral', value: this.unquote(t.value) });
 		if (t.kind === 'punct' && t.value === '(') {
 			// Special-case C-style cast syntax: (type)expr
