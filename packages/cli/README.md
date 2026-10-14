@@ -91,3 +91,15 @@ lsl-lsp dump-defs llOwnerSay PI state_entry
 ```
 
 `--definitions-cache`, `--definitions-url`, and `--force-definition-update` control the cache location and update request. Custom definitions take precedence over the cache.
+
+## Testing a group of scripts
+
+The CLI checks and generates individual scripts; it does not execute a virtual world. For integration tests involving linked prims, multiple objects, attachments, chat, or linkset data, use the separate experimental [simulator library](../simulator/README.md).
+
+Its [message-world example](../simulator/examples/message-world) includes the required object/prim/script directories and a runnable JavaScript test. From the repository root after `pnpm build`:
+
+```sh
+node packages/simulator/examples/message-world/run.cjs
+```
+
+There is currently no `lsl-lsp simulate` command, and the simulator is not included in the standalone CLI release bundle.

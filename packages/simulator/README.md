@@ -1,8 +1,29 @@
 # LSL linkset simulator
 
-Run cooperating LSL scripts in a deterministic local world. This experimental package helps test message routing, shared data, script lifecycle, and asynchronous workflows without a viewer. It is a TypeScript test library, not a replacement for the Second Life simulator.
+Run cooperating LSL scripts in a deterministic local world. This experimental package helps test message routing, shared data, script lifecycle, and asynchronous workflows without a viewer. It is a JavaScript/TypeScript test library, not a replacement for the Second Life simulator.
 
-## Project layout
+## Run an example
+
+The simulator currently lives in this source checkout; it is not published as a separate npm package or included in the standalone CLI bundle. With Node.js 22+ and pnpm installed, run from the repository root:
+
+```sh
+git submodule update --init --recursive
+pnpm install
+pnpm --filter '@lsl-lsp/simulator...' build
+node packages/simulator/examples/message-world/run.cjs
+```
+
+Expected output:
+
+```text
+PASS: rezzed panel -> attachment root -> child prim -> panel reply
+```
+
+The [example directory](examples/message-world) contains two objects and a JavaScript runner. A rezzed panel sends private chat to its owner's attachment. The attachment's root forwards the request to a child prim with a linked message, then returns the reply to the panel. The runner checks the reply and verifies that the objects have separate linkset data.
+
+Use `node /path/to/lsl-lsp/packages/simulator/examples/message-world/run.cjs` to run it from another directory. The runner resolves its fixtures relative to itself.
+
+## Describe one object
 
 Arrange test scripts like object inventory:
 
@@ -21,18 +42,30 @@ project/
           receiver.lsl
 ```
 
-The loader accepts either the project directory or its `linkset` directory. A `scripts` directory is optional, so empty prims are valid.
+Each `linkset` is one object, whether it is attached or rezzed. Each directory under `prims` is one linked prim, and each `.lsl` file directly inside a prim's `scripts` directory is one inventory script. Several scripts can share a prim, and separate prims can contain scripts with the same filename. A `scripts` directory is optional, so empty prims are valid.
 
-`linkset.json` can set `name`, `key`, `owner`, and `attached`:
+The loader accepts `project/`, `project/linkset/`, or another directory containing `prims/` directly. It does not recursively search for objects or scripts.
+
+`linkset.json` describes the object:
 
 ```json
 {
   "name": "Message test",
+  "owner": "20000000-0000-0000-0000-000000000001",
   "attached": false
 }
 ```
 
-Use `{ "link": 1 }` for the root's `prim.json` and `{ "link": 2 }` for the worker's. Explicit link numbers make routing tests easier to read; the loader assigns unused numbers when omitted. Names default to directory names, and omitted keys receive deterministic UUIDs.
+| Field | Meaning and default |
+| --- | --- |
+| `name` | Object name; defaults to the linkset directory's name |
+| `key` | Object UUID; generated from the absolute linkset path if omitted |
+| `owner` | Avatar UUID; also generated from the path if omitted |
+| `attached` | `true` for an attachment, `false` for a rezzed object; defaults to `true` |
+
+These manifests are optional, but explicit owners and attachment flags make tests easier to understand. Generated IDs are repeatable at the same path; moving a fixture changes its generated IDs. Different fixture directories get different default owners, so set the same `owner` when modeling objects belonging to one avatar. Loading with `{ owner: avatarUuid }` overrides the manifest owner.
+
+Use `{ "link": 1 }` for the root's `prim.json` and `{ "link": 2 }` for the worker's. Link numbers must be unique and contiguous starting at 1. The directory name `root` is just a convention; `link: 1` identifies the root. When link numbers are omitted, the loader processes directories alphabetically and assigns unused numbers.
 
 A prim manifest can also set its `name`, `key`, and initial script state:
 
@@ -47,33 +80,67 @@ A prim manifest can also set its `name`, `key`, and initial script state:
 
 Scripts are running by default. The manifest above stops the receiver until a test starts it.
 
-## A request/reply test
+The other prim fields are `name` (defaults to the directory name) and `key` (generated from the object key and link number). The `scripts` object uses exact inventory filenames; each entry accepts `{ "running": false }` or the shorthand `false`. It configures initial running/stopped status, not a named LSL state. Scripts begin in their normal initial state when started.
 
-The original fixtures in [tests/fixtures/communication](tests/fixtures/communication) demonstrate linked messages, cross-prim chat, shared data, timers, and script inventory. A test can load them, inject a touch, and inspect the reply:
+Keep include-only headers out of `scripts/*.lsl`, which would load them as separate inventory scripts. Use `.lslh` headers or a separate include directory. Include lookup covers the script directory, its prim directory, the linkset directory, and the project directory passed to the loader; for example, a project-level `include/protocol.lslh` can be referenced as `#include "include/protocol.lslh"`.
 
-```ts
-import assert from 'node:assert/strict';
-import { intValue, loadLinksetProject } from '@lsl-lsp/simulator';
+## Put several objects in one world
 
-// This path assumes the test runs from the repository root.
-const { world, linkset } = await loadLinksetProject(
-  'packages/simulator/tests/fixtures/communication',
-);
-world.start();
-world.runUntilIdle();
+A world is created by JavaScript or TypeScript code. There is no `world.json` format or automatic scan of an `objects` directory. Group object projects however you prefer and load each into the same world:
 
-const sender = linkset.prim(1)!.script('sender.lsl')!;
-world.fireEvent(sender, 'touch_start', [intValue(1)]);
-world.runUntilIdle();
-
-assert.equal(linkset.data.get('root:reply'), '2:pong:request-1');
-assert.equal(linkset.data.get('root:chat'), 'ack');
-assert.ok(world.trace.some(entry => entry.kind === 'linked-message'));
+```text
+message-world/
+  run.cjs
+  attachment/
+    linkset/
+      linkset.json              # attached: true, owner A
+      prims/
+        root/prim.json          # link 1
+        root/scripts/bridge.lsl
+        worker/prim.json        # link 2
+        worker/scripts/worker.lsl
+  panel/
+    linkset/
+      linkset.json              # attached: false, owner A
+      prims/
+        root/prim.json          # link 1 in this object
+        root/scripts/panel.lsl
 ```
 
-Linkset data belongs to the whole object. Linked messages reach scripts in the selected prims. Chat cannot be heard by another script in the speaking prim; a script in another prim can listen. This distinction makes small routing fixtures useful for catching communication mistakes.
+In a workspace that depends on `@lsl-lsp/simulator`, the setup is:
 
-Load more objects into one world by passing `{ world }` to subsequent `loadLinksetProject` calls. Supply `{ owner }` to override a fixture's owner or `{ defs }` to use custom definitions.
+```ts
+import { SimulatorWorld, intValue, loadLinksetProject } from '@lsl-lsp/simulator';
+
+const world = new SimulatorWorld();
+const { linkset: attachment } = await loadLinksetProject('message-world/attachment', { world });
+const { linkset: panel } = await loadLinksetProject('message-world/panel', { world });
+
+world.start();
+world.runUntilIdle(); // Let each script initialize its listeners.
+
+const panelScript = panel.prim(1)!.script('panel.lsl')!;
+world.fireEvent(panelScript, 'touch_start', [intValue(1)]);
+world.runUntilIdle();
+
+console.log(attachment.data.get('worker:received')); // ping
+console.log(panel.data.get('panel:reply'));          // pong
+```
+
+Those relative paths are resolved from the process working directory. The [runnable CommonJS version](examples/message-world/run.cjs) uses `__dirname` for stable paths and imports this checkout's built simulator directly; it needs no package published to npm.
+
+Each object has its own prim numbering, inventory, and data store. `llMessageLinked` and linkset data stay within that object. Region chat can cross objects. `llRegionSayTo(avatarUuid, nonzeroChannel, ...)` reaches that avatar's attachments, while targeting an object/prim UUID addresses that object. Scripts in the speaking prim cannot hear their own chat.
+
+For another avatar, load more attachments with a different `owner`; no rendered avatar or separate avatar directory is required. `attached` is a logical flag, not a wearable body/attachment-point simulation. To place objects for supported distance calculations, set their public options in the test:
+
+```ts
+panel.options.position = [128, 128, 20];
+attachment.options.position = [130, 128, 20];
+```
+
+Position and rotation are currently programmatic `LinksetOptions`, not `linkset.json` fields. For generated scenarios you can also use `world.addLinkset(...)`, `linkset.addPrim(...)`, and `prim.addScript(...)` with a parsed LSL AST instead of directories.
+
+The original [communication fixtures](tests/fixtures/communication) and [package tests](tests/simulator.test.ts) cover additional cases such as timers, stopped scripts, remote loading, and hover text. Supply `{ defs }` to `loadLinksetProject` to use custom definitions; otherwise it loads the checkout's bundled Second Life definitions.
 
 ## Time and lifecycle
 

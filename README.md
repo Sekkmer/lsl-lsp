@@ -1,10 +1,10 @@
 # LSL LSP
 
-Write and check Second Life LSL scripts in VS Code or from the command line. LSL LSP provides code completion, diagnostics, navigation, formatting, preprocessing, and optimized script output from the same analyzer.
+Language tooling for Second Life LSL: a VS Code extension, a standalone CLI, and an experimental simulator for cooperating scripts. The editor and CLI share the analyzer for diagnostics, navigation, formatting, preprocessing, and optimized script output.
 
 For the editor extension, see the [VS Code guide](packages/client-vscode/README.md). For automated checks and generated scripts, see the [CLI guide](packages/cli/README.md). The experimental [linkset simulator](packages/simulator/README.md) runs cooperating scripts in local integration tests.
 
-## Getting started
+## VS Code extension
 
 Install **LSL LSP** by **Sekkmer** in VS Code, then open an `.lsl` file. The extension also recognizes `.lslp`, `.lsli`, and `.lslh` files. It includes Second Life function, event, and constant definitions; no separate language server installation is needed.
 
@@ -28,6 +28,39 @@ node lsl-lsp.cjs optimize script.lsl
 ```
 
 `optimize` prints output by default. Add `--write` to replace input files, or `--check` to report whether they would change. Parsing, preprocessing, and semantic errors must be fixed before optimization; an invalid script prevents writes for the whole batch.
+
+## Testing linked scripts and multiple objects
+
+The experimental simulator runs LSL scripts in a shared local world. Use it to test linked messages between prims, chat between separate objects, shared linkset data, and script start/stop/reset behavior. It is a workspace library used from JavaScript or TypeScript tests; the CLI bundle does not contain a `simulate` command.
+
+Each object has its own inventory-shaped directory. A world can contain several of these objects, including attachments and rezzed objects:
+
+```text
+message-world/
+  run.cjs
+  attachment/linkset/
+    linkset.json              # owner and attached: true
+    prims/
+      root/prim.json          # link 1
+      root/scripts/bridge.lsl
+      worker/prim.json        # link 2
+      worker/scripts/worker.lsl
+  panel/linkset/
+    linkset.json              # same owner, attached: false
+    prims/root/
+      prim.json               # link 1 in this separate object
+      scripts/panel.lsl
+```
+
+Load each object with `loadLinksetProject(path, { world })` into the same `SimulatorWorld`, then start the world and inject events. `attached` and `owner` are explicit fixture settings; directory names do not determine them. Each object has its own link numbers and linkset data.
+
+The [simulator guide](packages/simulator/README.md) covers the full file format, defaults, multiple-object setup, virtual time, and limitations. The [runnable message-world example](packages/simulator/examples/message-world) sends a request from a rezzed panel to an attachment, routes it to a child prim, and checks the reply. From a built checkout:
+
+```sh
+node packages/simulator/examples/message-world/run.cjs
+```
+
+Simulation checks supported script behavior; actual SL remains necessary for viewer behavior, physics, and runtime memory measurements.
 
 ## Using a coding agent
 

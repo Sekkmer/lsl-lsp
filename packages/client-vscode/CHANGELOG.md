@@ -14,7 +14,7 @@ All notable changes to this project will be documented in this file.
 - Fixed completion scope, shadowed parameter analysis, loop/jump diagnostics, and return/type checking. Fixed semantic-token deltas, quick fixes, and analysis refresh after configuration or definition changes.
 - Protected CLI optimization from overwriting invalid or incomplete inputs. Packaged extensions use their bundled server; workspace server discovery is limited to extension development. Definition updates now serialize overlapping writes and respect source changes.
 - Added an experimental workspace-only simulator with generic, original communication fixtures, deterministic events, linked messages/chat, linkset data, script lifecycle, and virtual timers/delays. It supports a subset of LSL and does not replace SL validation.
-- Rewrote the main, Marketplace, CLI, and simulator guides and added an optional CLI skill for Codex and Claude Code.
+- Rewrote the main, Marketplace, CLI, and simulator guides, including object/prim/script manifests and a runnable communication example between an attachment and a rezzed panel. Added an optional CLI skill for Codex and Claude Code.
 - Added CLI/server protocol tests and all-package release gates. Missing mandatory bundled definitions now fail the build.
 
 ## 0.1.22

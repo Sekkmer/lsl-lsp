@@ -95,6 +95,15 @@ Semantic highlighting depends on your theme and can be disabled with `lsl.enable
 
 The analyzer does not replace the Second Life compiler or test viewer behavior. Rename changes identifiers rather than strings or comments; ambiguous include definitions and unindexed headers can limit cross-file renames. Preprocessor and dialect compatibility can also differ from a particular viewer's implementation.
 
-Report issues with a small script that reproduces the problem at [Sekkmer/lsl-lsp](https://github.com/Sekkmer/lsl-lsp). The repository also includes a command-line tool for checks and script generation outside VS Code.
+Report issues with a small script that reproduces the problem at [Sekkmer/lsl-lsp](https://github.com/Sekkmer/lsl-lsp).
+
+## CLI and script integration tests
+
+The project also provides tools outside the editor:
+
+- The [standalone CLI](https://github.com/Sekkmer/lsl-lsp/tree/master/packages/cli) checks, formats, preprocesses, optimizes, and estimates memory from the terminal. Download its single Node.js bundle from [GitHub releases](https://github.com/Sekkmer/lsl-lsp/releases).
+- The experimental [linkset simulator](https://github.com/Sekkmer/lsl-lsp/tree/master/packages/simulator) tests cooperating scripts in a local virtual world. Fixtures describe separate objects, linked prims, script inventory, owners, and attachment state. The [message-world example](https://github.com/Sekkmer/lsl-lsp/tree/master/packages/simulator/examples/message-world) demonstrates a rezzed controller communicating with a two-prim attachment.
+
+The simulator is a JavaScript/TypeScript library in the source checkout. It is not an editor command or part of the CLI bundle, and it does not simulate viewer RLV behavior, physics, or heap/stack memory.
 
 Licensed under MIT. See [release notes](CHANGELOG.md) for changes.
