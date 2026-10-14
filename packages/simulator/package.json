@@ -1,0 +1,33 @@
+{
+  "name": "@lsl-lsp/simulator",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "author": {
+    "name": "Sekkmer",
+    "email": "sekkmer@gmail.com"
+  },
+  "main": "out/index.js",
+  "types": "out/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./out/index.d.ts",
+      "default": "./out/index.js"
+    }
+  },
+  "scripts": {
+    "build": "node ../../scripts/clean-dir.cjs out && tsc -p tsconfig.json",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix",
+    "test": "tsc -p tsconfig.test.json --noEmit && vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@lsl-lsp/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.4",
+    "typescript": "^6.0.3",
+    "vitest": "4.1.7"
+  }
+}
