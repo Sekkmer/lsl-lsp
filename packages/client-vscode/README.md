@@ -1,163 +1,100 @@
 # LSL LSP
 
-A Visual Studio Code extension providing rich, AST‑based support for LSL (Linden Scripting Language):
+LSL language support for Visual Studio Code. Get completion, documentation, diagnostics, formatting, and navigation while writing scripts for Second Life.
 
-- Language Server features: diagnostics, hover, completion, go to definition, find all references, rename symbol, document symbols, and semantic tokens.
-- Preprocessor awareness: `#include`, `#if`/`#elif`/`#endif`, macros (built‑ins like `__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`, varargs with `__VA_ARGS__`/`__VA_OPT__`, `#` stringification and `##` token pasting), and disabled ranges.
-- Formatter: full document, range, and on-type formatting.
-- Syntax highlighting and semantic tokens aligned with the parser’s understanding.
-- A shared core analyzer also powers the repository's standalone `lsl-lsp` CLI for non-VS Code workflows.
+## Start writing
 
-## Features
+Install **LSL LSP** by **Sekkmer**, then open an `.lsl` file. The extension also recognizes `.lslp`, `.lsli`, and `.lslh` files. It includes Second Life's function, event, and constant definitions and starts its language server automatically.
 
-- Type‑aware completions
-	- Learns from your code: variables, parameters, and return types
-	- Contextual hints for state names and member access (e.g., `.x/.y/.z/.s`)
-	- `#include` path suggestions from workspace folder(s) and configured include paths
-- Rich hovers with documentation
-	- Functions and events show signatures, parameter docs, and a direct "Wiki" link
-	- Deprecated calls, god-mode requirements, sleep/energy/experience metadata, and must-use return values are surfaced from the bundled definitions when available
-	- User‑defined functions show JSDoc‑style comments (`/** ... */`) placed immediately above the declaration
-	- Constants show inferred value (with hex for integers) and docs
-	- Includes show resolution info and a summary of available symbols
-- Navigation
-	- Go to definition for functions, variables, and macros (object‑like and function‑like)
-	- Find all references (scope‑aware and include‑aware)
-	- Rename symbol (scope/shadow aware, works across includes when uniquely resolvable)
-	- Document symbols for quick outline
-- Preprocessor support
-	- `#include`, conditional compilation, and macros
-	- Built‑ins: `__LINE__`, `__FILE__`, `__DATE__`, `__TIME__`
-	- Varargs: `__VA_ARGS__` and `__VA_OPT__`
-	- Operators: `#` (stringify) and `##` (token pasting)
-	- Configurable typed dynamic macros, such as Firestorm runtime values that should be preserved instead of expanded
-	- Commands to open generated preprocessed and optimized script output in read-only editor tabs
-	- Diagnostics for common preprocessor issues and disabled code ranges
-	- Works across included files; external symbols are indexed for hover/defs
-- Formatting
-	- Full document, range, and on‑type formatting
-	- Respects disabled preprocessor blocks
-	- Consistent brace/semicolon/newline handling
-- Generated script output
-	- `LSL: Open Preprocessed Script` opens the include/macro-expanded output in a read-only editor tab
-	- `LSL: Open Optimized Script` opens a readable optimized copy beside the source file without modifying the source
-	- `LSL: Open Firestorm Original Source` reconstructs the original source embedded in a Firestorm-style preprocessor header
-	- Generated-output commands are available from the command palette and from the editor context menu in LSL files
-- Memory estimate
-	- Inlay hints show estimated Mono free memory at the script state, the optimized free-memory estimate, and the calibrated error band
-- Diagnostics (server‑side analysis)
-	- AST‑based checks for common LSL issues: arity/return mismatches, unused/duplicate declarations, dead code, and precise operator/type rules
-	- Constant conditions are evaluated with bounded folding for literals, local constants, LSL truthiness, assignment-valued `if` conditions, and known vector/rotation equality
-	- Unary operators: numeric `+`/`-`; integer `!`/`~`
-	- Postfix `++/--`: require assignable integer variables
-	- Bitwise and shifts: integer operands
-	- Casts: redundant cast hints; `integer`⇄`float` allowed; everything→`string`/`list` allowed; extra guidance for string→number/vector/rotation/key
-	- Vectors/rotations: components must be numeric; `.x/.y/.z/.s` member access validated
-	- Conditions: warns on suspicious assignment inside `if/while/for` conditions
-	- Indexing operator `[]`: flagged as unsupported in LSL
-	- List equality advisory: `list == list` compares length only (comparisons to `[]` treated as emptiness checks)
-	- Function calls: parameter types validated (string parameters accept integer/float/key; key parameters accept UUID-like strings and the empty string as `NULL_KEY`-style shorthand)
-	- Definition metadata: deprecated calls, god-mode-required calls, and must-use result checks
-	- Diagnostics can be selectively suppressed where needed
-	- Includes checks for invalid state declarations/changes and for empty event/function bodies or empty if/else branches
-- Semantic tokens
-	- Accurate coloring driven by the language server (full and delta updates)
-	- Readonly and modification modifiers for variables/parameters when applicable
+Hover over `llOwnerSay` or another built-in to see its signature, documentation, and wiki link. Use **Go to Definition**, **Find All References**, or **Rename Symbol** for your own code. Format a document with VS Code's **Format Document** command.
 
-## Configuration
+Requires VS Code 1.90 or newer.
 
-- `lsl.definitionsPath`: Custom path to definitions JSON/YAML. Leave empty to use the bundled official definitions.
-- `lsl.definitions.autoUpdate`: Download and use validated official definition updates when no custom definitions path is configured.
-- `lsl.definitions.updateUrl`: Source URL for automatic official definition updates.
-- `lsl.definitions.updateIntervalHours`: Minimum time between automatic update checks.
-- `lsl.includePaths`: Additional search paths for `#include`.
-	- The workspace folder(s) are always searched by default. In multi-root workspaces, all roots are included.
-	- Resolution order: the current file’s directory, then workspace roots, then any paths listed in `lsl.includePaths`.
-- `lsl.macros`: Project-wide predefined macros for conditionals
-- `lsl.dynamicMacros`: Macros to preserve as unknown typed values instead of expanding, written as `name:type` entries such as `__AGENTID__:string` or `__UNIXTIME__:integer`
-- `lsl.optimize`: Optimizer feature switches used by `LSL: Open Optimized Script`. All optimizer features are enabled by default; set individual flags to `false` to disable them.
-- `lsl.output.firestormHeaderForOptimized`: Prefix generated optimized output with a Firestorm-compatible reversible original-source header. Off by default.
-- `lsl.measure.inlayHints`: Show or hide Mono memory estimate inlay hints.
-- `lsl.enableSemanticTokens`: Toggle semantic tokens
-- `lsl.diagnostics.disable`: Diagnostic codes or friendly names to disable globally
-- `lsl.trace`: LSP protocol trace level (`off`, `messages`, `verbose`)
+## Working with includes and macros
 
-### Diagnostics and suppression
+The extension understands `#include`, `#define`, conditional compilation, and common preprocessor features such as stringification, token pasting, and variadic macros. Completion also suggests include paths.
 
-- Identifiers: use either the friendly dash-separated name (e.g., `wrong-arity`, `dead-code`, `unused-param`) or the numeric `LSL###` code. Hover shows both; either form works for suppression.
-- Inline suppression directives (omit list to disable all diagnostics for that scope):
-	- `// lsl-disable-line wrong-arity`
-	- `// lsl-disable-next-line unused-param, duplicate-decl`
-	- `// lsl-disable dead-code` (opens a block until `// lsl-enable`)
-	- `// lsl-enable` (ends a block)
-- Global disable list: set `lsl.diagnostics.disable` in settings (string or array). Examples:
+Quoted includes search the current file's directory first, followed by configured include paths and workspace folders. A project's `.vscode/settings.json` can contain:
 
 ```json
 {
-	"lsl.diagnostics.disable": ["wrong-arity", "unused-param"],
-	"lsl.diagnostics.disable": "LSL010, LSL102"
+  "lsl.includePaths": ["includes", "shared"],
+  "lsl.macros": { "DEBUG": 1 },
+  "lsl.dynamicMacros": ["__AGENTID__:string"]
 }
 ```
 
-### Customize readonly colors (semantic tokens)
+Dynamic macros remain in generated output with an unknown value and a known type. Use them for values that a viewer or another build step supplies later.
 
-The server marks parameters as readonly and variables as readonly when they’re effectively immutable. Whether this shows as a different color depends on your theme. You can enforce or tweak colors via VS Code settings:
+Optional dialect extensions are disabled by default. Enable them in settings, or in source with a directive such as `// lsl-lsp extensions: switch`:
 
-Workspace or User Settings (JSON):
-
-```
+```json
 {
-	"editor.semanticHighlighting.enabled": true,
-	"editor.semanticTokenColorCustomizations": {
-		"enabled": true,
-		"rules": {
-			// Darken readonly variables and parameters
-			"variable.readonly": { "foreground": "#4FC1FF" },
-			"parameter.readonly": { "foreground": "#4FC1FF" }
-		}
-	}
+  "lsl.extensions": {
+    "switch": true,
+    "lazyLists": true,
+    "constGlobalExpressions": true
+  }
 }
 ```
 
-Notes:
-- Themes may override semantic tokens. If your theme doesn’t pick up these rules, set:
+Optimized output converts these extensions to standard LSL before upload. Preprocessed output expands includes and macros but preserves dialect syntax.
 
-```
+## Inspect generated scripts
+
+Open the command palette or right-click an LSL editor:
+
+- **LSL: Open Preprocessed Script** expands includes and macros.
+- **LSL: Open Optimized Script** opens optimized output beside the source.
+- **LSL: Open Firestorm Original Source** recovers source embedded in a compatible preprocessor header.
+
+These commands open read-only tabs and keep the source file editable. Optimization requires valid source; fix preprocessing, parsing, and semantic errors first. Set `lsl.output.firestormHeaderForOptimized` to `true` to embed the original source in optimized output.
+
+All optimizer features are enabled by default. Individual features can be disabled through `lsl.optimize`, for example:
+
+```json
 {
-	"editor.semanticTokenColorCustomizations": {
-		"allSemanticTokens": true,
-		"rules": { /* as above */ }
-	}
+  "lsl.optimize": { "inlineFunctions": false, "shrinkNames": false }
 }
 ```
-- The examples above use a darker gray for readonly variables and the Default Dark+ blue for readonly parameters. Adjust to taste.
 
-## Requirements
+## Diagnostics and memory hints
 
-- VS Code ≥ 1.90.0
-- Node.js ≥ 18 for the language server runtime
+Diagnostics check types, function arguments and returns, declarations, state changes, unreachable code, and common LSL mistakes. Hovers also show definition metadata such as deprecated functions, required privileges, and built-in delays when available. Documentation comments immediately above your own functions appear in their hovers.
 
-## How it works
+Suppress a diagnostic by its friendly name or `LSL###` code:
 
-The client bundles a TypeScript language server. On activation, it starts the server, provides the workspace settings, and wires up LSP features (hover, completion, diagnostics, rename, references, symbols).
+```lsl
+// lsl-disable-next-line unused-param
+handleMessage(string message) { }
 
-Under the hood, the server uses an AST‑based pipeline (preprocess → parse → analyze) to understand your code and perform precise type and operator checks.
+// lsl-disable dead-code
+// ...
+// lsl-enable
+```
 
-Data powering function/event/constant docs comes from the official `secondlife/lsl-definitions` YAML bundled with the server/extension.
+`lsl-disable-line` applies to its own line. Omitting the code list suppresses all diagnostics in that scope. To suppress selected diagnostics throughout the workspace:
 
-Hovers display documentation and links from the bundled definitions when available. JSDoc comments above your own functions are shown inline.
+```json
+{
+  "lsl.diagnostics.disable": ["wrong-arity", "unused-param"]
+}
+```
 
-## Known limitations
+Memory inlay hints compare estimated source and optimized Mono free memory and show a calibrated error band. They are estimates, not live script measurements. Runtime lists, temporary copies, call stacks, and garbage collection can change the actual margin. A root-source comment such as `// lsl-memory-reserve: 8192 bytes` adds a fixed runtime budget to both estimates. Verify tight scripts in Second Life. Hide the hints with `"lsl.measure.inlayHints": false`.
 
-- Preprocessing aims to be compatible with common LSL usage; report any edge cases.
-- Rename does not refactor strings or comments; only identifiers.
-- Rename for include‑defined symbols occurs when a unique definition is found in indexed includes; ambiguous names are intentionally blocked.
-- Macro rename works for the current file and indexed includes, but cannot follow unindexed or generated headers.
+## Definitions and troubleshooting
 
-## Repository
+The extension uses bundled official [Second Life definitions](https://github.com/secondlife/lsl-definitions) and checks for validated updates by default. Use **LSL: Update Definitions**, **LSL: Show Active Definitions**, or **LSL: Use Bundled Definitions** to inspect or change that choice. Set `lsl.definitions.autoUpdate` to `false` to disable update checks, or set `lsl.definitionsPath` to a custom JSON/YAML file.
 
-- GitHub: https://github.com/Sekkmer/lsl-lsp
+If results appear stale, try **LSL: Clear Caches** or **LSL: Restart Language Server**. **LSL: Show Client Logs** and **LSL: Show Language Server Trace** open the relevant output channels. Set `lsl.trace` to `messages` or `verbose` when diagnosing protocol issues.
 
-## License
+Semantic highlighting depends on your theme and can be disabled with `lsl.enableSemanticTokens`. Readonly parameters and variables use semantic token modifiers, which themes may style differently.
 
-MIT
+## Limitations and feedback
+
+The analyzer does not replace the Second Life compiler or test viewer behavior. Rename changes identifiers rather than strings or comments; ambiguous include definitions and unindexed headers can limit cross-file renames. Preprocessor and dialect compatibility can also differ from a particular viewer's implementation.
+
+Report issues with a small script that reproduces the problem at [Sekkmer/lsl-lsp](https://github.com/Sekkmer/lsl-lsp). The repository also includes a command-line tool for checks and script generation outside VS Code.
+
+Licensed under MIT. See [release notes](CHANGELOG.md) for changes.

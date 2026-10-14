@@ -1,61 +1,80 @@
 # LSL LSP
 
-LSL (Linden Scripting Language) language tooling for VS Code.
+Write and check Second Life LSL scripts in VS Code or from the command line. LSL LSP provides code completion, diagnostics, navigation, formatting, preprocessing, and optimized script output from the same analyzer.
 
-## Repository Layout
+For the editor extension, see the [VS Code guide](packages/client-vscode/README.md). For automated checks and generated scripts, see the [CLI guide](packages/cli/README.md). The experimental [linkset simulator](packages/simulator/README.md) runs cooperating scripts in local integration tests.
 
-- `packages/core/`: Reusable LSL preprocessing, parsing, analysis, diagnostics, hover, completions, signature help, semantic tokens, formatting, optimization, and navigation.
-- `packages/cli/`: Standalone command-line diagnostics, formatting, preprocessing, optimization, symbol, definition, hover, definition-update, and definition-dump tool backed by core.
-- `packages/server/`: Language Server Protocol process that wires core analysis into VS Code/editor LSP requests.
-- `packages/client-vscode/`: VS Code extension that bundles and starts the server.
-- `third_party/lsl-definitions/`: Git submodule for the official [secondlife/lsl-definitions](https://github.com/secondlife/lsl-definitions) YAML used by the server, tests, and extension bundle.
-- `common/`: Local schema and override metadata used while loading official definitions.
+## Getting started
 
-The runtime definition source is `third_party/lsl-definitions/lsl_definitions.yaml`. Core builds copy it to `packages/core/out/lsl_definitions.yaml`, server builds copy it to `packages/server/out/lsl_definitions.yaml`, and extension packaging includes the built server output.
+Install **LSL LSP** by **Sekkmer** in VS Code, then open an `.lsl` file. The extension also recognizes `.lslp`, `.lsli`, and `.lslh` files. It includes Second Life function, event, and constant definitions; no separate language server installation is needed.
 
-## Requirements
+The command palette includes:
 
-- Node 22+
-- pnpm
-- Git submodules initialized with `git submodule update --init --recursive`
+- **LSL: Open Preprocessed Script** — inspect expanded includes and macros.
+- **LSL: Open Optimized Script** — review generated output beside your source.
+- **LSL: Open Firestorm Original Source** — recover source embedded in a compatible preprocessor header.
 
-## Dev quickstart
+Generated editor tabs are read-only. Keep the editable source in your project and use generated output when uploading a script.
 
-- Install dependencies: `pnpm install`
-- Build all: `pnpm build`
-- Watch during dev: `pnpm watch`
-- Lint: `pnpm lint`
-- Format/lint fix: `pnpm lint:fix`
-- Run core tests: `pnpm -C packages/core test`
-- Run CLI diagnostics after build: `node packages/cli/out/lsl-lsp.cjs check path/to/script.lsl`
-- Inspect preprocessing after build: `node packages/cli/out/lsl-lsp.cjs preprocess --json path/to/script.lsl`
-- Render Firestorm-style reversible preprocessor output after build: `node packages/cli/out/lsl-lsp.cjs preprocess --firestorm-header path/to/script.lsl`
-- Reconstruct original source from Firestorm-style preprocessor output: `node packages/cli/out/lsl-lsp.cjs preprocess --decode-firestorm-header path/to/preprocessed.lsl`
-- Estimate AST/Mono memory shape after build: `node packages/cli/out/lsl-lsp.cjs measure --compare-optimized path/to/script.lsl`
-- Optimize a script after build: `node packages/cli/out/lsl-lsp.cjs optimize path/to/script.lsl`
-- Check whether optimizer output would change a script: `node packages/cli/out/lsl-lsp.cjs optimize --check path/to/script.lsl`
-- Write optimizer output in place: `node packages/cli/out/lsl-lsp.cjs optimize --write path/to/script.lsl`
-- Preserve typed dynamic macros in analysis/optimization: `node packages/cli/out/lsl-lsp.cjs optimize --dynamic-macro __AGENTID__:string path/to/script.lsl`
-- Inspect a symbol after build: `node packages/cli/out/lsl-lsp.cjs hover path/to/script.lsl 10 5`
-- Dump bundled definitions after build: `node packages/cli/out/lsl-lsp.cjs dump-defs llOwnerSay`
-- Update the CLI definition cache: `node packages/cli/out/lsl-lsp.cjs update-defs`
-- Build VS Code package: `pnpm -C packages/client-vscode package`
+## Command-line use
 
-VS Code exposes generated-output commands in the command palette:
+The CLI is distributed as a single `lsl-lsp.cjs` file with bundled definitions. It can be downloaded from [GitHub releases](https://github.com/Sekkmer/lsl-lsp/releases) or built from this repository.
 
-- `LSL: Open Preprocessed Script`
-- `LSL: Open Optimized Script`
+```sh
+node lsl-lsp.cjs check script.lsl
+node lsl-lsp.cjs preprocess -I includes script.lsl
+node lsl-lsp.cjs measure --compare-optimized script.lsl
+node lsl-lsp.cjs optimize script.lsl
+```
 
-The optimizer is intended for generated review output first: VS Code opens a read-only optimized copy beside the source file, and the CLI writes only when `--write` is provided. Optimizer feature flags are enabled by default and can be disabled individually through the VS Code `lsl.optimize` setting. The `measure` command and VS Code memory inlay hints are static estimates calibrated from SL Mono probes; SL-side `.test` probe results remain the source of truth for release-critical memory margins.
+`optimize` prints output by default. Add `--write` to replace input files, or `--check` to report whether they would change. Parsing, preprocessing, and semantic errors must be fixed before optimization; an invalid script prevents writes for the whole batch.
 
-## Definitions
+## Using a coding agent
 
-The server accepts official YAML definitions or the older JSON/YAML shape. If no custom path is configured, VS Code can download validated official definition updates into extension global storage and otherwise resolves definitions from the built server output and the official submodule fallback. The CLI embeds bundled definitions by default; use `update-defs` or `--auto-update-defs` to opt into an OS cache. Definition metadata such as deprecated calls, god-mode requirements, must-use results, sleep/energy/experience flags, docs, links, and overrides is loaded into diagnostics and hovers where applicable.
+An agent can start with `node lsl-lsp.cjs --help`, then run `check --json`, `preprocess`, and `measure --json --compare-optimized` against the project's scripts. Match its include paths and defines before interpreting the results. No MCP server is needed.
 
-## Release Notes
+The optional [LSL tooling skill](.agents/skills/lsl-lsp/SKILL.md) explains this workflow. Codex discovers it in this repository's `.agents/skills`; copy the `lsl-lsp` skill folder to another project's `.agents/skills` to use it there. For Claude Code, copy the same folder to `.claude/skills`. No global installation or configuration is required. See the [Codex skill guide](https://learn.chatgpt.com/docs/build-skills) and [Claude Code skill guide](https://code.claude.com/docs/en/skills) for skill discovery details.
 
-Release-facing notes live in [packages/client-vscode/CHANGELOG.md](packages/client-vscode/CHANGELOG.md).
+## Optimization and memory estimates
 
-## Notes
+The optimizer folds constants, removes unused functions, simplifies expressions, shortens names, and inlines suitable helpers. It evaluates inlining against the Mono memory estimate; call depth can break a tie when compact output does not grow. These changes preserve LSL evaluation order and rename inlined parameters, locals, and labels to avoid collisions.
 
-Developed with assistance from GPT-5.5 and GitHub Copilot in VS Code.
+`measure` and the editor's memory hints estimate static Mono memory use using calibration from Second Life probes. They also report reachable recursion and the deepest static user-function call chain. For recursive components, the reported depth counts each function once and is a static upper bound for that summary, not a bound on runtime recursion.
+
+Growing lists, strings, or queues can use an explicit budget in the root source:
+
+```lsl
+// lsl-memory-reserve: 8192 bytes
+```
+
+The reserve is added equally to source and optimized estimates. Used memory is capped at the script limit and free memory at zero, so comparisons lose meaning after saturation. The estimate does not model peak stack use, temporary copies, garbage collection, or actual runtime heap growth. Use Second Life measurements for release-critical memory margins; smaller startup estimates alone cannot establish that a script will avoid stack/heap collisions.
+
+## Building and contributing
+
+Use Node.js 22+ and pnpm. Initialize the definitions submodule before building:
+
+```sh
+git submodule update --init --recursive
+pnpm install
+pnpm build
+pnpm test
+pnpm lint
+```
+
+Run the built CLI with `node packages/cli/out/lsl-lsp.cjs`. Use `pnpm watch` while developing or `pnpm -C packages/client-vscode package` to create a VSIX.
+
+| Directory | Purpose |
+| --- | --- |
+| `packages/core` | Shared preprocessing, parsing, analysis, editor features, optimization, and measurement |
+| `packages/cli` | Standalone command-line bundle |
+| `packages/server` | Language Server Protocol process |
+| `packages/client-vscode` | VS Code client and extension package |
+| `packages/simulator` | Experimental deterministic LSL integration-test runtime |
+| `third_party/lsl-definitions` | Official [Second Life definitions](https://github.com/secondlife/lsl-definitions) submodule |
+| `common` | Definition schema and local metadata overrides |
+
+The core and server builds copy `third_party/lsl-definitions/lsl_definitions.yaml` into their output; the CLI embeds it, and the extension packages the built server. Definition updates are validated before use. VS Code checks for updates by default; the CLI uses bundled definitions unless you opt into its update cache.
+
+For an LSL behavior change, add a focused regression and confirm uncertain semantics against Second Life. Local probe scripts and captured evidence belong in ignored `.local` directories; portable, original test fixtures belong with the package tests.
+
+Release notes live in [CHANGELOG.md](packages/client-vscode/CHANGELOG.md). The project is licensed under [MIT](LICENSE).

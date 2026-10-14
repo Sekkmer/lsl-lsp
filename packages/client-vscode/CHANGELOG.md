@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.23
+
+- Fixed `optimize --check` to compare the same newline-normalized output used by printing and `--write`, avoiding repeated change reports caused only by a trailing newline.
+- Improved helper inlining with multiple call sites, collision-free names, and memory/call-depth comparisons. Preserved parameter copies, numeric conversions, lexical scope, snapshots, and LSL evaluation order.
+- Fixed unsafe optimizer rewrites involving overflowing integer arithmetic, list construction and append grouping, shadowed variables, and computations that can fail or never return. Added boundary-value differential tests and fresh Second Life probes.
+- Added static call-graph and reachable-recursion reporting to CLI measurements and editor hints. Shared helper graphs no longer cause exponential measurement time. A `lsl-memory-reserve` source comment can include an explicit runtime allowance; estimates still do not measure live heap peaks or stack frames.
+- Fixed preprocessing source order, redefinitions, included `#undef`, nested conditions, include diagnostics, quoted macro arguments, token boundaries, stringification, and `__VA_OPT__`.
+- Fixed switch lowering to evaluate its expression once with the correct type. Aligned numeric literal validation with SL, including decimal `f/F` suffixes and rejection of direct hexadecimal float literals.
+- Corrected SL-backed evaluator behavior for integer overflow, operand order, string/list ranges, Unicode indexing, list conversions/sorting/strides, and Base64 padding. Source-sensitive JSON and Unicode cases remain unfolded when equivalence is uncertain.
+- Fixed completion scope, shadowed parameter analysis, loop/jump diagnostics, and return/type checking. Fixed semantic-token deltas, quick fixes, and analysis refresh after configuration or definition changes.
+- Protected CLI optimization from overwriting invalid or incomplete inputs. Packaged extensions use their bundled server; workspace server discovery is limited to extension development. Definition updates now serialize overlapping writes and respect source changes.
+- Added an experimental workspace-only simulator with generic, original communication fixtures, deterministic events, linked messages/chat, linkset data, script lifecycle, and virtual timers/delays. It supports a subset of LSL and does not replace SL validation.
+- Rewrote the main, Marketplace, CLI, and simulator guides and added an optional CLI skill for Codex and Claude Code.
+- Added CLI/server protocol tests and all-package release gates. Missing mandatory bundled definitions now fail the build.
+
 ## 0.1.22
 - Fixed global diagnostic disable settings so empty or unrelated LSP configuration-change notifications cannot clear the active disable list.
 
