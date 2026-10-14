@@ -99,6 +99,29 @@ describe('definition updater', () => {
 		})).rejects.toThrow(/missing required entries/);
 		await expect(cachedDefinitionPath(dir)).resolves.toBeNull();
 	});
+
+	it('checks a changed source URL immediately without waiting for the old interval', async () => {
+		const dir = await tempDir();
+		await updateDefinitions({ cacheDir: dir, sourceUrl: 'https://example.test/old.yaml', now: new Date('2026-05-26T10:00:00Z'), fetch: okFetch(VALID_DEFS) });
+		await expect(shouldCheckDefinitionUpdate(dir, 86400000, new Date('2026-05-26T10:01:00Z'), 'https://example.test/new.yaml')).resolves.toBe(true);
+	});
+
+	it('serializes overlapping updates so the most recent request owns the cache', async () => {
+		const dir = await tempDir();
+		const fetchOrder: string[] = [];
+		const fetch: FetchLike = async url => {
+			fetchOrder.push(url);
+			if (url.endsWith('first.yaml')) await new Promise(resolve => setTimeout(resolve, 20));
+			return okFetch(VALID_DEFS.replace('test-update', url.endsWith('first.yaml') ? 'first' : 'second'))(url);
+		};
+		await Promise.all([
+			updateDefinitions({ cacheDir: dir, sourceUrl: 'https://example.test/first.yaml', fetch }),
+			updateDefinitions({ cacheDir: dir, sourceUrl: 'https://example.test/second.yaml', fetch }),
+		]);
+		expect(fetchOrder).toEqual(['https://example.test/first.yaml', 'https://example.test/second.yaml']);
+		expect((await readDefinitionUpdateMetadata(dir))?.version).toBe('second');
+		expect(await fs.readFile((await cachedDefinitionPath(dir))!, 'utf8')).toContain('version: second');
+	});
 });
 
 async function tempDir(): Promise<string> {

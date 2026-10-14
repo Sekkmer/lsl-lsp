@@ -75,15 +75,30 @@ export async function cachedDefinitionPath(cacheDir: string): Promise<string | n
 	}
 }
 
-export async function shouldCheckDefinitionUpdate(cacheDir: string, intervalMs: number, now = new Date()): Promise<boolean> {
+export async function shouldCheckDefinitionUpdate(cacheDir: string, intervalMs: number, now = new Date(), sourceUrl?: string): Promise<boolean> {
 	if (intervalMs <= 0) return true;
 	const metadata = await readDefinitionUpdateMetadata(cacheDir);
 	if (!metadata) return true;
+	if (sourceUrl && metadata.sourceUrl !== sourceUrl) return true;
 	const checkedAt = Date.parse(metadata.checkedAt);
 	return !Number.isFinite(checkedAt) || now.getTime() - checkedAt >= intervalMs;
 }
 
+const updatesInProgress = new Map<string, Promise<DefinitionUpdateResult>>();
+
 export async function updateDefinitions(options: DefinitionUpdateOptions): Promise<DefinitionUpdateResult> {
+	const cacheKey = path.resolve(options.cacheDir);
+	const previous = updatesInProgress.get(cacheKey);
+	const current = (previous ? previous.catch(() => undefined) : Promise.resolve()).then(() => updateDefinitionsOnce(options));
+	updatesInProgress.set(cacheKey, current);
+	try {
+		return await current;
+	} finally {
+		if (updatesInProgress.get(cacheKey) === current) updatesInProgress.delete(cacheKey);
+	}
+}
+
+async function updateDefinitionsOnce(options: DefinitionUpdateOptions): Promise<DefinitionUpdateResult> {
 	const sourceUrl = options.sourceUrl || DEFAULT_DEFINITIONS_UPDATE_URL;
 	const now = options.now || new Date();
 	const fetcher = options.fetch ?? defaultFetch;
@@ -176,9 +191,13 @@ function hashSha256(raw: string): string {
 }
 
 async function writeTextAtomic(file: string, raw: string): Promise<void> {
-	const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-	await fs.writeFile(tmp, raw, 'utf8');
-	await fs.rename(tmp, file);
+	const tmp = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+	try {
+		await fs.writeFile(tmp, raw, 'utf8');
+		await fs.rename(tmp, file);
+	} finally {
+		await fs.rm(tmp, { force: true });
+	}
 }
 
 async function writeJsonAtomic(file: string, value: unknown): Promise<void> {

@@ -153,7 +153,8 @@ export async function activate(context: vscode.ExtensionContext) {
 			? [siblingRepoServer, workspacePackagesServer, workspaceServer]
 			: [workspacePackagesServer, workspaceServer, siblingRepoServer])
 	];
-	const devPath = candidateOrder.find(p => p && fs.existsSync(p)) || '';
+	const developmentMode = context.extensionMode === vscode.ExtensionMode.Development;
+	const devPath = developmentMode ? candidateOrder.find(p => p && fs.existsSync(p)) || '' : '';
 
 	// Debug/trace configuration
 	const cfg = vscode.workspace.getConfiguration('lsl');
@@ -204,19 +205,19 @@ export async function activate(context: vscode.ExtensionContext) {
 		if (!p || !requireExists(p)) {
 			const cached = cachedDefinitionsPathSync();
 			if (cached) return cached;
-			if (firstWs) {
+			if (developmentMode && firstWs) {
 				const wsPackagesServer = resolveCandidates(firstWs, 'packages', 'server', 'out');
 				if (wsPackagesServer) return wsPackagesServer;
 				const wsServer = resolveCandidates(firstWs, 'server', 'out');
 				if (wsServer) return wsServer;
 			}
 			// When running the extension from its folder (Run Extension), also try the sibling package server output.
-			const packageSiblingServer = resolveCandidates(packagesRootFromExt, 'server', 'out');
+			const packageSiblingServer = developmentMode ? resolveCandidates(packagesRootFromExt, 'server', 'out') : undefined;
 			if (packageSiblingServer) return packageSiblingServer;
-			const repoPackageServer = resolveCandidates(repoRootFromExt, 'packages', 'server', 'out');
+			const repoPackageServer = developmentMode ? resolveCandidates(repoRootFromExt, 'packages', 'server', 'out') : undefined;
 			if (repoPackageServer) return repoPackageServer;
 			// Keep the old-layout fallback for local checkouts that have not moved yet.
-			const repoSiblingServer = resolveCandidates(repoRootFromExt, 'server', 'out');
+			const repoSiblingServer = developmentMode ? resolveCandidates(repoRootFromExt, 'server', 'out') : undefined;
 			if (repoSiblingServer) return repoSiblingServer;
 			// Fall back to the extension-bundled server output.
 			const extServer = resolveCandidates(context.extensionUri.fsPath, 'server', 'out');
@@ -281,14 +282,17 @@ export async function activate(context: vscode.ExtensionContext) {
 			optimize: currentCfg.get('optimize'),
 			output: { firestormHeaderForOptimized: currentCfg.get('output.firestormHeaderForOptimized') },
 			measure: { inlayHints: currentCfg.get('measure.inlayHints') },
+			enableSemanticTokens: currentCfg.get('enableSemanticTokens'),
 			logFile,
 			diagnostics: { disable: currentCfg.get('diagnostics.disable') },
-			debug: !!currentCfg.get<boolean>('debugLogging')
+			debug: !!currentCfg.get<boolean>('debugLogging'),
+			debugLogging: !!currentCfg.get<boolean>('debugLogging'),
 		};
 	}
 
 	async function notifyServerConfigurationChanged(): Promise<void> {
 		if (client.state !== State.Running) return;
+		watchActiveDefinitions();
 		await client.sendNotification('workspace/didChangeConfiguration', {
 			settings: { lsl: getServerSettings() }
 		});
@@ -305,8 +309,8 @@ export async function activate(context: vscode.ExtensionContext) {
 		if (!force && !autoUpdate) return;
 		const intervalHours = currentCfg.get<number>('definitions.updateIntervalHours', 24);
 		const intervalMs = Math.max(0, intervalHours) * 60 * 60 * 1000;
-		if (!force && !await shouldCheckDefinitionUpdate(definitionsCacheDir, intervalMs)) return;
 		const sourceUrl = currentCfg.get<string>('definitions.updateUrl', DEFAULT_DEFINITIONS_UPDATE_URL).trim() || DEFAULT_DEFINITIONS_UPDATE_URL;
+		if (!force && !await shouldCheckDefinitionUpdate(definitionsCacheDir, intervalMs, new Date(), sourceUrl)) return;
 		try {
 			const result = await updateDefinitions({
 				cacheDir: definitionsCacheDir,
@@ -330,14 +334,29 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	const clientOptions: LanguageClientOptions = {
 		documentSelector: [{ language: 'lsl' }],
-		initializationOptions: getServerSettings(),
+		initializationOptions: getServerSettings,
 		traceOutputChannel: traceChannel,
 		synchronize: {
-			fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{lsl,lsli,lslp}')
+			fileEvents: vscode.workspace.createFileSystemWatcher('**/*.{lsl,lsli,lslp,lslh}')
 		}
 	};
 
 	client = new LanguageClient('lslLsp', 'LSL Language Server', serverOptions, clientOptions);
+	let definitionsWatcher: vscode.FileSystemWatcher | undefined;
+	function watchActiveDefinitions(): void {
+		definitionsWatcher?.dispose();
+		const file = resolveDefinitionsPath(vscode.workspace.getConfiguration('lsl').get('definitionsPath'));
+		if (!file) { definitionsWatcher = undefined; return; }
+		definitionsWatcher = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(path.dirname(file), path.basename(file)));
+		const notify = (uri: vscode.Uri, type: number) => {
+			if (client.state === State.Running) void client.sendNotification('workspace/didChangeWatchedFiles', { changes: [{ uri: uri.toString(), type }] });
+		};
+		definitionsWatcher.onDidCreate(uri => notify(uri, 1));
+		definitionsWatcher.onDidChange(uri => notify(uri, 2));
+		definitionsWatcher.onDidDelete(uri => notify(uri, 3));
+	}
+	watchActiveDefinitions();
+	context.subscriptions.push({ dispose: () => definitionsWatcher?.dispose() });
 	const generatedProvider = new GeneratedDocumentProvider();
 	const generatedProviderRegistration = vscode.workspace.registerTextDocumentContentProvider('lsl-output', generatedProvider);
 
@@ -480,6 +499,10 @@ export async function activate(context: vscode.ExtensionContext) {
 		for (const ed of vscode.window.visibleTextEditors) {
 			if (ed.document === ev.document) applyDisabledDecorationsForEditor(ed);
 		}
+	}));
+	context.subscriptions.push(vscode.workspace.onDidCloseTextDocument(doc => {
+		disabledRangesByUri.delete(doc.uri.toString());
+		generatedDocuments.delete(doc.uri.toString());
 	}));
 	context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(async ev => {
 		if (!ev.affectsConfiguration('lsl') || client.state !== State.Running) return;

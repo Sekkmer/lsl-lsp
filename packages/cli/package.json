@@ -16,9 +16,10 @@
     "bundle": "node scripts/bundle.mjs",
     "start": "node out/lsl-lsp.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build && node --test tests/*.test.cjs",
     "watch": "tsc -w -p tsconfig.json --noEmit",
-    "lint": "eslint src",
-    "lint:fix": "eslint src --fix"
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix"
   },
   "dependencies": {
     "@lsl-lsp/core": "workspace:*"

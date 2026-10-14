@@ -50,6 +50,7 @@ import {
 	documentSymbols,
 	filterDiagnostics,
 	detectFirestormRuntimeDirective,
+	detectLslMemoryReserve,
 	findAllReferences,
 	foldConstGlobalExpressions,
 	formatDocumentEdits,
@@ -63,6 +64,7 @@ import {
 	lslHover,
 	lslSignatureHelp,
 	measureAst,
+	normalizeDiagCode,
 	optimizeScript,
 	parseDisabledDiagList,
 	parseDynamicMacroList,
@@ -249,13 +251,15 @@ type PipelineCache = {
 	analysis: Analysis;
 	// AST script used by the analysis pipeline
 	ast?: Script;
-	sem?: SemanticTokens & { resultId?: string };
 	// Track macros-only includes to avoid unnecessary reindex work
 	macrosOnlyIncludes?: string[];
 	// Hash of macros+includePaths to guard cache reuse
 	configHash: number;
 };
 const pipelineCache = new Map<string, PipelineCache>(); // key: doc.uri
+// Token baselines must survive analysis invalidation between client delta requests.
+const semanticTokenCache = new Map<string, SemanticTokens>();
+let semanticTokenResultId = 0;
 // Reverse include index: include file URI -> set of doc URIs that include it
 const includeToDocs = new Map<string, Set<string>>();
 
@@ -392,6 +396,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 	settings.dynamicMacros = parseConfiguredDynamicMacros(initOpts.dynamicMacros);
 	settings.extensions = parseConfiguredExtensions(initOpts.extensions);
 	settings.optimize = parseOptimizeSettings(initOpts.optimize);
+	if (typeof initOpts.enableSemanticTokens === 'boolean') settings.enableSemanticTokens = initOpts.enableSemanticTokens;
 	if (initOpts.output && typeof initOpts.output === 'object' && typeof initOpts.output.firestormHeaderForOptimized === 'boolean') {
 		settings.output.firestormHeaderForOptimized = initOpts.output.firestormHeaderForOptimized;
 	}
@@ -400,7 +405,7 @@ connection.onInitialize(async (params: InitializeParams): Promise<InitializeResu
 	}
 	baselineMacros = { ...settings.macros }; // capture baseline after init options
 	settings.logFile = initOpts.logFile || '';
-	settings.debug = !!initOpts.debug;
+	settings.debug = !!(initOpts.debugLogging ?? initOpts.debug);
 	updateDisabledDiagnostics(initOpts.diagnostics?.disable);
 
 	// Merge workspace folder(s) into includePaths by default
@@ -555,6 +560,7 @@ connection.onRequest('lsl/renderScript', (params: RenderScriptParams): RenderScr
 			};
 		}
 		if (!pipeline.ast) return { ok: false, error: 'Unable to parse script for optimization.' };
+		if (hasOptimizationErrors(pipeline)) return { ok: false, error: 'Fix script or preprocessing errors before optimizing.' };
 		const optimized = optimizeScript(pipeline.ast, optimizeOptionsFromSettings(defs));
 		const formatted = formatLslText(optimized.code, { ...settings.format, enabled: true });
 		const content = settings.output.firestormHeaderForOptimized
@@ -596,6 +602,12 @@ function renderedSuffix(mode: RenderMode): string {
 
 function ensureTrailingNewline(text: string): string {
 	return text.endsWith('\n') ? text : `${text}\n`;
+}
+
+function hasOptimizationErrors(pipeline: PipelineCache): boolean {
+	return !!pipeline.pre.preprocDiagnostics?.length || !!pipeline.pre.missingIncludes?.length
+		|| !!pipeline.ast?.diagnostics?.some(d => d.severity !== 'warning' && d.severity !== 'info')
+		|| pipeline.analysis.diagnostics.some(d => d.severity === DiagnosticSeverity.Error);
 }
 
 function optimizeOptionsFromSettings(defs: Defs): OptimizeOptions {
@@ -652,10 +664,16 @@ connection.onDidChangeConfiguration(async change => {
 	const newSettings = lslSettingsFromConfigPayload(change.settings);
 	if (!newSettings) return;
 	const prevIncludePaths = settings.includePaths?.slice() ?? [];
+	const prevPipelineConfigHash = computeConfigHash(settings.macros, settings.includePaths, settings.dynamicMacros, settings.extensions);
 	const prevMeasureInlayHints = settings.measure.inlayHints;
-	if (newSettings.definitionsPath && newSettings.definitionsPath !== settings.definitionsPath) {
+	const prevSemanticTokens = settings.enableSemanticTokens;
+	let definitionsChanged = false;
+	if (typeof newSettings.definitionsPath === 'string') {
+		// The cache can be updated in place without changing its path.
+		const nextDefs = await loadDefs(newSettings.definitionsPath);
 		settings.definitionsPath = newSettings.definitionsPath;
-		defs = await loadDefs(settings.definitionsPath);
+		defs = nextDefs;
+		definitionsChanged = true;
 	}
 	settings.includePaths = newSettings.includePaths ?? settings.includePaths;
 	// Always ensure workspace roots remain part of include paths
@@ -689,7 +707,9 @@ connection.onDidChangeConfiguration(async change => {
 		settings.format.braceStyle = newSettings.format.braceStyle ?? settings.format.braceStyle;
 	}
 	if (typeof newSettings.debugLogging === 'boolean') settings.debug = newSettings.debugLogging;
-	const disabledChanged = updateDisabledDiagnostics(newSettings.diagnostics?.disable);
+	const disabledChanged = !!newSettings.diagnostics && Object.prototype.hasOwnProperty.call(newSettings.diagnostics, 'disable')
+		? updateDisabledDiagnostics(newSettings.diagnostics.disable)
+		: false;
 	// If include paths changed, clear include symbols cache and revalidate docs
 	const changed = (() => {
 		const a = prevIncludePaths, b = settings.includePaths || [];
@@ -700,10 +720,15 @@ connection.onDidChangeConfiguration(async change => {
 	if (prevMeasureInlayHints !== settings.measure.inlayHints) {
 		try { await connection.languages.inlayHint.refresh(); } catch { /* client may not support refresh */ }
 	}
-	if (changed || disabledChanged) {
+	if (prevSemanticTokens !== settings.enableSemanticTokens) {
+		try { await connection.languages.semanticTokens.refresh(); } catch { /* client may not support refresh */ }
+	}
+	const pipelineConfigChanged = prevPipelineConfigHash !== computeConfigHash(settings.macros, settings.includePaths, settings.dynamicMacros, settings.extensions);
+	if (changed || pipelineConfigChanged || definitionsChanged || disabledChanged) {
 		pipelineCache.clear();
 		includeToDocs.clear();
 		await revalidateAllOpenDocs();
+		scheduleInlayHintRefresh();
 	}
 });
 
@@ -716,6 +741,12 @@ documents.onDidChangeContent(async change => {
 
 documents.onDidClose(e => {
 	pipelineCache.delete(e.document.uri);
+	semanticTokenCache.delete(e.document.uri);
+	for (const [include, dependents] of includeToDocs) {
+		dependents.delete(e.document.uri);
+		if (!dependents.size) includeToDocs.delete(include);
+	}
+	connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
 });
 
 async function validateTextDocument(doc: TextDocument) {
@@ -807,23 +838,24 @@ connection.languages.semanticTokens.on((params: SemanticTokensParams, token): Se
 	const entry = getPipeline(doc); if (!entry) return { data: [] };
 	const current = buildSemanticTokens(doc, entry.tokens, defs, entry.pre, entry.analysis);
 	// Attach a simple resultId for delta support
-	const resultId = String(getDocVersion(doc)) + ':' + Date.now();
+	const resultId = String(++semanticTokenResultId);
 	current.resultId = resultId;
-	entry.sem = current;
+	semanticTokenCache.set(doc.uri, current);
 	return current;
 });
 
 connection.languages.semanticTokens.onDelta((params, token) => {
-	const doc = documents.get(params.textDocument.uri); if (!doc || !defs || !settings.enableSemanticTokens) return { edits: [] };
+	const doc = documents.get(params.textDocument.uri); if (!doc || !defs || !settings.enableSemanticTokens) return { data: [] };
 	if (token?.isCancellationRequested) return { edits: [] };
 	const entry = getPipeline(doc); if (!entry) return { edits: [] };
-	const prev = entry.sem;
+	const prev = semanticTokenCache.get(doc.uri);
 	const current = buildSemanticTokens(doc, entry.tokens, defs, entry.pre, entry.analysis) as SemanticTokens & { resultId?: string };
-	const resultId = String(getDocVersion(doc)) + ':' + Date.now();
+	const resultId = String(++semanticTokenResultId);
 	current.resultId = resultId;
+	semanticTokenCache.set(doc.uri, current);
+	if (!prev || prev.resultId !== params.previousResultId) return current;
 	// simplest replace-all edit
 	const deleteCount = prev?.data?.length || 0;
-	entry.sem = current;
 	return { resultId, edits: [{ start: 0, deleteCount, data: current.data }] };
 });
 
@@ -837,25 +869,33 @@ connection.languages.inlayHint.on((params: InlayHintParams, token): InlayHint[] 
 	const position = doc.positionAt(offset);
 	if (!positionInRange(position, params.range)) return [];
 
-	const current = measureAst(entry.ast, { sourceText: doc.getText() });
-	const optimizedFree = (() => {
+	const runtimeReserveBytes = detectLslMemoryReserve(doc.getText());
+	const current = measureAst(entry.ast, {
+		sourceText: doc.getText(),
+		runtimeReserveBytes,
+	});
+	const optimizedMeasure = (() => {
 		try {
 			const optimized = optimizeScript(entry.ast, optimizeOptionsFromSettings(defs!));
 			if (!optimized.stable) return null;
-			if (!optimized.changed) return current.estimatedMonoFreeMemory;
+			if (!optimized.changed) return current;
 			const optimizedAst = parseScriptFromText(optimized.code, 'file:///optimized.lsl', { dynamicMacros: settings.dynamicMacros });
 			if (optimizedAst.diagnostics?.some(d => d.severity !== 'warning' && d.severity !== 'info')) return null;
-			return measureAst(optimizedAst, { sourceText: optimized.code }).estimatedMonoFreeMemory;
+			return measureAst(optimizedAst, {
+				sourceText: optimized.code,
+				runtimeReserveBytes,
+			});
 		} catch {
 			return null;
 		}
 	})();
+	const optimizedFree = optimizedMeasure?.estimatedMonoFreeMemory ?? null;
 	const label = memoryHintLabel(current.estimatedMonoFreeMemory, optimizedFree);
 	return [{
 		position,
 		label,
 		paddingLeft: true,
-		tooltip: memoryHintTooltip(current.estimatedMonoFreeMemory, optimizedFree),
+		tooltip: memoryHintTooltip(current, optimizedMeasure),
 	}];
 });
 
@@ -892,11 +932,22 @@ function memoryHintLabel(currentFree: number, optimizedFree: number | null): str
 	return ` [${current}; opt ${formatBytes(optimizedFree)}]`;
 }
 
-function memoryHintTooltip(currentFree: number, optimizedFree: number | null): string {
-	const optimized = optimizedFree === null
+function memoryHintTooltip(
+	current: ReturnType<typeof measureAst>,
+	optimizedMeasure: ReturnType<typeof measureAst> | null,
+): string {
+	const optimized = optimizedMeasure === null
 		? ''
-		: ` Optimized estimate: ${formatBytes(optimizedFree)} free.`;
-	return `Estimated Mono free memory from the static AST model: ${formatBytes(currentFree)} free.${optimized} Typical absolute error is about ${formatBytes(MONO_MEASURE_ERROR_BYTES)}; validate in SL for release-critical margins.`;
+		: ` Optimized estimate: ${formatBytes(optimizedMeasure.estimatedMonoFreeMemory)} free, ${memoryHintDepth(optimizedMeasure)}.`;
+	const recursion = current.callGraph.reachableRecursiveFunctions.length > 0
+		? ` Reachable recursion: ${current.callGraph.reachableRecursiveFunctions.join(', ')}; runtime depth depends on input.`
+		: '';
+	return `Estimated Mono free memory from the static AST model: ${formatBytes(current.estimatedMonoFreeMemory)} free; ${memoryHintDepth(current)}.${optimized}${recursion} Typical absolute error is about ${formatBytes(MONO_MEASURE_ERROR_BYTES)}; validate in SL for release-critical margins.`;
+}
+
+function memoryHintDepth(measure: ReturnType<typeof measureAst>): string {
+	const label = measure.callGraph.staticDepthIsUpperBound ? 'static user-call depth upper bound' : 'max user-call depth';
+	return `${label} ${measure.callGraph.maxStaticUserCallDepth}`;
 }
 
 function formatBytes(value: number): string {
@@ -1074,8 +1125,14 @@ connection.onCodeAction((params): CodeAction[] => {
 	if (!doc) return [];
 	const actions: CodeAction[] = [];
 	for (const d of params.context.diagnostics || []) {
-		if (d.code === LSL_DIAGCODES.SUSPICIOUS_ASSIGNMENT) {
-			const edit = TextEdit.replace(d.range as Range, '==');
+		const code = typeof d.code === 'string' ? normalizeDiagCode(d.code) : null;
+		if (code === LSL_DIAGCODES.SUSPICIOUS_ASSIGNMENT) {
+			const start = doc.offsetAt(d.range.start);
+			const end = doc.offsetAt(d.range.end);
+			const assignments = lex(doc, []).filter(t => t.kind === 'op' && t.value === '=' && t.start >= start && t.end <= end);
+			if (assignments.length !== 1) continue;
+			const assignment = assignments[0];
+			const edit = TextEdit.replace({ start: doc.positionAt(assignment.start), end: doc.positionAt(assignment.end) }, '==');
 			actions.push({
 				title: 'Change "=" to "=="',
 				kind: CodeActionKind.QuickFix,
@@ -1083,7 +1140,7 @@ connection.onCodeAction((params): CodeAction[] => {
 				edit: { changes: { [doc.uri]: [edit] } }
 			});
 		}
-		if (d.code === LSL_DIAGCODES.REDUNDANT_CAST) {
+		if (code === LSL_DIAGCODES.REDUNDANT_CAST) {
 			// Try to remove a leading (type) segment from the text within diagnostic range.
 			const text = doc.getText(d.range as Range);
 			// Capture any identifier as a potential type and validate via isType to avoid hardcoding lists.

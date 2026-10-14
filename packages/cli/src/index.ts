@@ -41,6 +41,7 @@ import {
 	preprocessForAst,
 	decodeFirestormPreprocessorHeader,
 	detectFirestormRuntimeDirective,
+	detectLslMemoryReserve,
 	measureAst,
 	optimizeScript,
 	formatLslText,
@@ -176,6 +177,16 @@ function filterFunctionForDump(item: DefFunction, names: Set<string>, hasFilter:
 
 async function runOptimize(opts: CliOptions, defs: Defs): Promise<number> {
 	const results = await Promise.all(opts.files.map(file => analyzeFile(file, opts, defs)));
+	const invalid = results.filter(result => !!result.pre.preprocDiagnostics?.length || !!result.pre.missingIncludes?.length
+		|| !!result.ast.diagnostics?.some(d => d.severity !== 'warning' && d.severity !== 'info')
+		|| result.analysis.diagnostics.some(d => d.severity === 1));
+	if (invalid.length) {
+		for (const result of invalid) {
+			process.stderr.write(`lsl-lsp: cannot optimize ${result.filePath}: fix script or preprocessing errors first.\n`);
+			for (const diagnostic of result.diagnostics) process.stderr.write(`${formatDiagnostic(result.filePath, diagnostic)}\n`);
+		}
+		return 1;
+	}
 	const optimizeOptions = cliOptimizeOptions(defs, opts);
 	const optimized = results.map(result => {
 		const out = optimizeScript(result.ast, optimizeOptions);
@@ -270,7 +281,11 @@ async function runMeasure(opts: CliOptions, defs: Defs): Promise<number> {
 	const results = await Promise.all(opts.files.map(file => analyzeFile(file, opts, defs)));
 	const optimizeOptions = opts.compareOptimized ? cliOptimizeOptions(defs, opts) : null;
 	const payload = results.map(result => {
-		const base = measureAst(result.ast, { sourceText: result.text });
+		const runtimeReserveBytes = detectLslMemoryReserve(result.text);
+		const base = measureAst(result.ast, {
+			sourceText: result.text,
+			runtimeReserveBytes,
+		});
 		if (!optimizeOptions) return { result, base, optimized: null };
 		const optimizedOut = optimizeScript(result.ast, optimizeOptions);
 		if (!optimizedOut.stable) {
@@ -292,7 +307,10 @@ async function runMeasure(opts: CliOptions, defs: Defs): Promise<number> {
 			dynamicMacros: opts.dynamicMacros,
 			includePaths: opts.includePaths,
 		});
-		const optimizedMeasure = measureAst(optimizedAst, { sourceText: optimizedText });
+		const optimizedMeasure = measureAst(optimizedAst, {
+			sourceText: optimizedText,
+			runtimeReserveBytes,
+		});
 		return {
 			result,
 			base,
@@ -322,6 +340,7 @@ function measureDelta(
 	return {
 		estimatedMonoUsedMemory: optimized.estimatedMonoUsedMemory - base.estimatedMonoUsedMemory,
 		estimatedMonoFreeMemory: optimized.estimatedMonoFreeMemory - base.estimatedMonoFreeMemory,
+		maxStaticUserCallDepth: optimized.callGraph.maxStaticUserCallDepth - base.callGraph.maxStaticUserCallDepth,
 		compactCharacters: optimized.compactCharacters - base.compactCharacters,
 	};
 }
@@ -362,10 +381,10 @@ function printMeasure(item: {
 		if (!item.optimized.measure || !item.optimized.delta) {
 			process.stdout.write(`  optimized: skipped; optimizer did not reach a stable output in ${item.optimized.passes} pass(es)\n`);
 		} else {
-			const delta = item.optimized.delta as { estimatedMonoUsedMemory: number; estimatedMonoFreeMemory: number; compactCharacters: number };
+			const delta = item.optimized.delta as { estimatedMonoUsedMemory: number; estimatedMonoFreeMemory: number; maxStaticUserCallDepth: number; compactCharacters: number };
 			printMeasureBlock('  optimized', item.optimized.measure);
 			process.stdout.write(
-				`  delta: used ${signed(delta.estimatedMonoUsedMemory)}, free ${signed(delta.estimatedMonoFreeMemory)}, compact chars ${signed(delta.compactCharacters)}\n`,
+				`  delta: used ${signed(delta.estimatedMonoUsedMemory)}, free ${signed(delta.estimatedMonoFreeMemory)}, call depth ${signed(delta.maxStaticUserCallDepth)}, compact chars ${signed(delta.compactCharacters)}\n`,
 			);
 		}
 	}
@@ -374,10 +393,20 @@ function printMeasure(item: {
 
 function printMeasureBlock(label: string, measure: ReturnType<typeof measureAst>): void {
 	process.stdout.write(
-		`${label}: estimated used ${measure.estimatedMonoUsedMemory}, free ${measure.estimatedMonoFreeMemory}, compact chars ${measure.compactCharacters}\n`,
+		`${label}: estimated used ${measure.estimatedMonoUsedMemory}, free ${measure.estimatedMonoFreeMemory}, reserve ${measure.runtimeReserveBytes}, compact chars ${measure.compactCharacters}\n`,
 	);
 	process.stdout.write(
 		`${label} counts: globals=${measure.counts.globals} functions=${measure.counts.functions} states=${measure.counts.states} events=${measure.counts.events} statements=${measure.counts.statements} expressions=${measure.counts.expressions} calls=${measure.counts.calls} lists=${measure.counts.listLiterals} listCasts=${measure.counts.listCasts}\n`,
+	);
+	const chain = measure.callGraph.deepestStaticUserCallChain.length > 0
+		? measure.callGraph.deepestStaticUserCallChain.join(' -> ')
+		: 'none';
+	const recursion = measure.callGraph.reachableRecursiveFunctions.length > 0
+		? measure.callGraph.reachableRecursiveFunctions.join(',')
+		: 'none';
+	const depthLabel = measure.callGraph.staticDepthIsUpperBound ? 'static user depth upper bound' : 'max user depth';
+	process.stdout.write(
+		`${label} call graph: ${depthLabel}=${measure.callGraph.maxStaticUserCallDepth}, chain=${chain}, reachable recursion=${recursion}\n`,
 	);
 }
 
@@ -389,7 +418,7 @@ async function loadCliDefs(opts: CliOptions): Promise<Defs> {
 	if (opts.definitionsPath.trim()) return loadDefs(opts.definitionsPath);
 	if (opts.definitionsAutoUpdate) {
 		try {
-			if (opts.definitionsForceUpdate || await shouldCheckDefinitionUpdate(opts.definitionsCacheDir, 24 * 60 * 60 * 1000)) {
+			if (opts.definitionsForceUpdate || await shouldCheckDefinitionUpdate(opts.definitionsCacheDir, 24 * 60 * 60 * 1000, new Date(), opts.definitionsUrl)) {
 				const result = await updateDefinitions({
 					cacheDir: opts.definitionsCacheDir,
 					sourceUrl: opts.definitionsUrl,
@@ -876,7 +905,7 @@ function parseArgs(argv: string[]): CliOptions | null {
 			continue;
 		}
 		if (arg === '--disable') {
-			opts.disabledDiagnostics = parseDisabledDiagList(expectValue(args, ++i, arg));
+			for (const code of parseDisabledDiagList(expectValue(args, ++i, arg))) opts.disabledDiagnostics.add(code);
 			continue;
 		}
 		if (arg === '--brace-style') {

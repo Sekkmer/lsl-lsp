@@ -13,8 +13,9 @@
     "postbuild": "node ../core/scripts/copy-defs.cjs out/lsl_definitions.yaml",
     "watch": "tsc -w -p tsconfig.json",
     "start": "node out/index.js",
-    "lint": "eslint src",
-    "lint:fix": "eslint src --fix"
+    "test": "pnpm run build && node --test tests/*.test.cjs",
+    "lint": "eslint src tests",
+    "lint:fix": "eslint src tests --fix"
   },
   "dependencies": {
     "@lsl-lsp/core": "workspace:*",

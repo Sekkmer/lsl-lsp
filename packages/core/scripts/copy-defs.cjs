@@ -1,6 +1,5 @@
 #!/usr/bin/env node
-/* eslint-env node */
-/* globals console, __dirname */
+/* globals console, __dirname, process */
 const fs = require('node:fs');
 const path = require('node:path');
 const src = path.resolve(__dirname, '../../../third_party/lsl-definitions/lsl_definitions.yaml');
@@ -13,5 +12,6 @@ try {
 	fs.copyFileSync(src, dest);
 	console.log(`[defs] copied defs to ${dest}`);
 } catch (e) {
-	console.warn('[defs] copy defs failed:', e.message);
+	console.error('[defs] copy defs failed:', e.message);
+	process.exitCode = 1;
 }
