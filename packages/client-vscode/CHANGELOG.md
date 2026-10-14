@@ -13,7 +13,8 @@ All notable changes to this project will be documented in this file.
 - Corrected SL-backed evaluator behavior for integer overflow, operand order, string/list ranges, Unicode indexing, list conversions/sorting/strides, and Base64 padding. Source-sensitive JSON and Unicode cases remain unfolded when equivalence is uncertain.
 - Fixed completion scope, shadowed parameter analysis, loop/jump diagnostics, and return/type checking. Fixed semantic-token deltas, quick fixes, and analysis refresh after configuration or definition changes.
 - Protected CLI optimization from overwriting invalid or incomplete inputs. Packaged extensions use their bundled server; workspace server discovery is limited to extension development. Definition updates now serialize overlapping writes and respect source changes.
-- Added an experimental workspace-only simulator with generic, original communication fixtures, deterministic events, linked messages/chat, linkset data, script lifecycle, and virtual timers/delays. It supports a subset of LSL and does not replace SL validation.
+- Added an experimental simulator with generic, original communication fixtures, deterministic events, linked messages/chat, linkset data, script lifecycle, and virtual timers/delays. It supports a subset of LSL and does not replace SL validation.
+- Added a separate standalone simulator CJS release bundle with embedded LSL definitions, a source map, self-contained TypeScript declarations, and license notices. CLI and simulator artifacts remain separate.
 - Rewrote the main, Marketplace, CLI, and simulator guides, including object/prim/script manifests and a runnable communication example between an attachment and a rezzed panel. Added an optional CLI skill for Codex and Claude Code.
 - Added CLI/server protocol tests and all-package release gates. Missing mandatory bundled definitions now fail the build.
 

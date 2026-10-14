@@ -58,10 +58,12 @@ Keep local IPC configuration, probe scripts, and raw evidence in an ignored
 `.local/` directory. Do not treat a simulator or static estimate as proof of
 viewer behavior, no-script parcel behavior, timing, or heap safety.
 
-The optional `@lsl-lsp/simulator` workspace package can test cooperating scripts
-with deterministic events and virtual time. It is experimental and supports a
-subset of LSL; unsupported behavior should surface as an error. Use small
-independent fixtures rather than importing application-specific frameworks.
+The optional simulator can test cooperating scripts with deterministic events
+and virtual time. Use the `@lsl-lsp/simulator` workspace package or import the
+standalone `lsl-simulator.cjs` release bundle, which embeds its definitions.
+It is experimental and supports a subset of LSL; unsupported behavior should
+surface as an error. Use small independent fixtures rather than importing
+application-specific frameworks.
 
 Report which inputs/options were checked, what changed, and which observations
 come from static checks, simulation, or actual SL execution.

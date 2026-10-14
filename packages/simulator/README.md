@@ -2,9 +2,40 @@
 
 Run cooperating LSL scripts in a deterministic local world. This experimental package helps test message routing, shared data, script lifecycle, and asynchronous workflows without a viewer. It is a JavaScript/TypeScript test library, not a replacement for the Second Life simulator.
 
-## Run an example
+## Use the release bundle
 
-The simulator currently lives in this source checkout; it is not published as a separate npm package or included in the standalone CLI bundle. With Node.js 22+ and pnpm installed, run from the repository root:
+The simulator ships separately from the CLI as a Node.js 22+ library. From [GitHub releases](https://github.com/Sekkmer/lsl-lsp/releases), download:
+
+- `lsl-simulator.cjs` — standalone runtime with LSL definitions embedded; no npm install or checkout needed.
+- `lsl-simulator.cjs.map` — optional source map for debugging with `node --enable-source-maps`.
+- `lsl-simulator.d.cts` — optional TypeScript declarations; keep beside the CJS file for editor type information.
+- `lsl-simulator.LICENSE.txt` — license notices for the bundled code and definitions.
+
+During release preparation, the same files are available in the GitHub Actions artifact named `lsl-lsp-simulator`. A tagged release attaches the four individual files. The simulator remains experimental and is not published as a separate npm package.
+
+Save this as `test.cjs` beside the downloaded bundle, with an object project in `./project` using the layout below:
+
+```js
+const { loadLinksetProject } = require('./lsl-simulator.cjs');
+
+async function main() {
+  const { world, linkset } = await loadLinksetProject('./project');
+  world.start();
+  world.runUntilIdle();
+  console.log(linkset.data);
+}
+
+main().catch(error => {
+  console.error(error);
+  process.exitCode = 1;
+});
+```
+
+Run `node test.cjs` from that directory. Object paths are relative to the working directory; the bundle can live anywhere. TypeScript can import the same `./lsl-simulator.cjs` path and resolves the adjacent `.d.cts` automatically.
+
+## Run the source example
+
+The checkout includes a complete two-object example. With Node.js 22+ and pnpm installed, run from the repository root:
 
 ```sh
 git submodule update --init --recursive
@@ -22,6 +53,12 @@ PASS: rezzed panel -> attachment root -> child prim -> panel reply
 The [example directory](examples/message-world) contains two objects and a JavaScript runner. A rezzed panel sends private chat to its owner's attachment. The attachment's root forwards the request to a child prim with a linked message, then returns the reply to the panel. The runner checks the reply and verifies that the objects have separate linkset data.
 
 Use `node /path/to/lsl-lsp/packages/simulator/examples/message-world/run.cjs` to run it from another directory. The runner resolves its fixtures relative to itself.
+
+To exercise a downloaded bundle against those fixtures, pass its path as an argument:
+
+```sh
+node packages/simulator/examples/message-world/run.cjs /path/to/lsl-simulator.cjs
+```
 
 ## Describe one object
 
@@ -127,7 +164,7 @@ console.log(attachment.data.get('worker:received')); // ping
 console.log(panel.data.get('panel:reply'));          // pong
 ```
 
-Those relative paths are resolved from the process working directory. The [runnable CommonJS version](examples/message-world/run.cjs) uses `__dirname` for stable paths and imports this checkout's built simulator directly; it needs no package published to npm.
+Those relative paths are resolved from the process working directory. With the standalone release, replace the package import with `require('./lsl-simulator.cjs')` or an equivalent TypeScript import. The [runnable CommonJS version](examples/message-world/run.cjs) uses `__dirname` for stable fixture paths and defaults to this checkout's built simulator.
 
 Each object has its own prim numbering, inventory, and data store. `llMessageLinked` and linkset data stay within that object. Region chat can cross objects. `llRegionSayTo(avatarUuid, nonzeroChannel, ...)` reaches that avatar's attachments, while targeting an object/prim UUID addresses that object. Scripts in the speaking prim cannot hear their own chat.
 

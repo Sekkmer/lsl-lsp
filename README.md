@@ -31,7 +31,9 @@ node lsl-lsp.cjs optimize script.lsl
 
 ## Testing linked scripts and multiple objects
 
-The experimental simulator runs LSL scripts in a shared local world. Use it to test linked messages between prims, chat between separate objects, shared linkset data, and script start/stop/reset behavior. It is a workspace library used from JavaScript or TypeScript tests; the CLI bundle does not contain a `simulate` command.
+The experimental simulator runs LSL scripts in a shared local world. Use it to test linked messages between prims, chat between separate objects, shared linkset data, and script start/stop/reset behavior. It is a JavaScript/TypeScript library with a separate standalone release bundle; the CLI does not contain a `simulate` command.
+
+Download `lsl-simulator.cjs` from [GitHub releases](https://github.com/Sekkmer/lsl-lsp/releases) and import it with `require('./lsl-simulator.cjs')`. LSL definitions are embedded, so only Node.js 22+ and your fixture files are needed. The matching `.cjs.map`, `.d.cts`, and license notices are available alongside it. Branch builds provide the same files in the `lsl-lsp-simulator` Actions artifact.
 
 Each object has its own inventory-shaped directory. A world can contain several of these objects, including attachments and rezzed objects:
 

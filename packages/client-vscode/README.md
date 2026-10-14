@@ -102,8 +102,8 @@ Report issues with a small script that reproduces the problem at [Sekkmer/lsl-ls
 The project also provides tools outside the editor:
 
 - The [standalone CLI](https://github.com/Sekkmer/lsl-lsp/tree/master/packages/cli) checks, formats, preprocesses, optimizes, and estimates memory from the terminal. Download its single Node.js bundle from [GitHub releases](https://github.com/Sekkmer/lsl-lsp/releases).
-- The experimental [linkset simulator](https://github.com/Sekkmer/lsl-lsp/tree/master/packages/simulator) tests cooperating scripts in a local virtual world. Fixtures describe separate objects, linked prims, script inventory, owners, and attachment state. The [message-world example](https://github.com/Sekkmer/lsl-lsp/tree/master/packages/simulator/examples/message-world) demonstrates a rezzed controller communicating with a two-prim attachment.
+- The experimental [linkset simulator](https://github.com/Sekkmer/lsl-lsp/tree/master/packages/simulator) tests cooperating scripts in a local virtual world. Its separate `lsl-simulator.cjs` release bundle includes LSL definitions and comes with a source map and TypeScript declarations. Fixtures describe separate objects, linked prims, script inventory, owners, and attachment state. The [message-world example](https://github.com/Sekkmer/lsl-lsp/tree/master/packages/simulator/examples/message-world) demonstrates a rezzed controller communicating with a two-prim attachment.
 
-The simulator is a JavaScript/TypeScript library in the source checkout. It is not an editor command or part of the CLI bundle, and it does not simulate viewer RLV behavior, physics, or heap/stack memory.
+The simulator is imported by JavaScript/TypeScript tests, either from its standalone release or the source checkout. It is not an editor command or part of the CLI bundle, and it does not simulate viewer RLV behavior, physics, or heap/stack memory.
 
 Licensed under MIT. See [release notes](CHANGELOG.md) for changes.

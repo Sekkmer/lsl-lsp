@@ -16,10 +16,11 @@
     }
   },
   "scripts": {
-    "build": "node ../../scripts/clean-dir.cjs out && tsc -p tsconfig.json",
-    "lint": "eslint src tests",
-    "lint:fix": "eslint src tests --fix",
-    "test": "tsc -p tsconfig.test.json --noEmit && vitest run",
+    "build": "node ../../scripts/clean-dir.cjs out && tsc -p tsconfig.json && pnpm run bundle",
+    "bundle": "node scripts/bundle.mjs",
+    "lint": "eslint src tests scripts examples",
+    "lint:fix": "eslint src tests scripts examples --fix",
+    "test": "tsc -p tsconfig.test.json --noEmit && vitest run && node --test tests/release.test.cjs",
     "test:watch": "vitest"
   },
   "dependencies": {
@@ -27,6 +28,8 @@
   },
   "devDependencies": {
     "@types/node": "^24.12.4",
+    "dts-bundle-generator": "9.5.1",
+    "esbuild": "0.28.0",
     "typescript": "^6.0.3",
     "vitest": "4.1.7"
   }

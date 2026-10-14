@@ -96,7 +96,9 @@ lsl-lsp dump-defs llOwnerSay PI state_entry
 
 The CLI checks and generates individual scripts; it does not execute a virtual world. For integration tests involving linked prims, multiple objects, attachments, chat, or linkset data, use the separate experimental [simulator library](../simulator/README.md).
 
-Its [message-world example](../simulator/examples/message-world) includes the required object/prim/script directories and a runnable JavaScript test. From the repository root after `pnpm build`:
+Download the separate `lsl-simulator.cjs` library from [GitHub releases](https://github.com/Sekkmer/lsl-lsp/releases) to use it directly from JavaScript/TypeScript tests. Its definitions are embedded; no workspace dependencies are required. A source map, type declarations, and license notices accompany the bundle.
+
+The [message-world example](../simulator/examples/message-world) includes the required object/prim/script directories and a runnable JavaScript test. From the repository root after `pnpm build`:
 
 ```sh
 node packages/simulator/examples/message-world/run.cjs

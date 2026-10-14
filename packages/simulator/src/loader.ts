@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { access, readFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { builtinConstantValuesFromDefs, loadDefs, parseScriptFromText, type Defs } from '@lsl-lsp/core';
+import { builtinConstantValuesFromDefs, Defs, loadDefs, parseScriptFromText, type DefFile } from '@lsl-lsp/core';
 import {
 	SimLinkset,
 	SimulatorWorld,
@@ -43,7 +43,14 @@ export interface LoadedProject {
 
 let bundledDefs: Promise<Defs> | undefined;
 
+// Replaced only when building the standalone release. Workspace builds keep
+// resolving the core package's definitions as before.
+declare const SIMULATOR_BUNDLED_DEFINITIONS: DefFile;
+
 function defaultDefs(): Promise<Defs> {
+	if (typeof SIMULATOR_BUNDLED_DEFINITIONS !== 'undefined') {
+		return bundledDefs ??= Promise.resolve(new Defs(SIMULATOR_BUNDLED_DEFINITIONS));
+	}
 	return bundledDefs ??= loadDefs(
 		path.join(path.dirname(require.resolve('@lsl-lsp/core')), 'lsl_definitions.yaml'),
 	);

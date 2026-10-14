@@ -1,7 +1,9 @@
 /* globals __dirname, console, process */
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { SimulatorWorld, intValue, loadLinksetProject } = require('../../out/index.js');
+const { SimulatorWorld, intValue, loadLinksetProject } = process.argv[2]
+	? require(path.resolve(process.argv[2]))
+	: require('../../out/index.js');
 
 async function main() {
 	const world = new SimulatorWorld();

@@ -62,6 +62,17 @@ jobs:
             packages/cli/out/lsl-lsp.cjs
             packages/cli/out/lsl-lsp.cjs.map
 
+      - name: Upload simulator artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lsl-lsp-simulator
+          if-no-files-found: error
+          path: |
+            packages/simulator/out/lsl-simulator.cjs
+            packages/simulator/out/lsl-simulator.cjs.map
+            packages/simulator/out/lsl-simulator.d.cts
+            packages/simulator/out/lsl-simulator.LICENSE.txt
+
       - name: Add run summary
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -72,10 +83,12 @@ jobs:
             echo "- Open the run: ${RUN_URL}";
             echo "- Download from the Artifacts section: vscode-lsl-lsp-vsix";
             echo "- CLI bundle artifact: lsl-lsp-cli";
+            echo "- Simulator library artifact: lsl-lsp-simulator";
             echo;
             echo "Tip (GitHub CLI):";
             echo "\`gh run download ${{ github.run_id }} -n vscode-lsl-lsp-vsix\`";
             echo "\`gh run download ${{ github.run_id }} -n lsl-lsp-cli\`";
+            echo "\`gh run download ${{ github.run_id }} -n lsl-lsp-simulator\`";
           } >> "$GITHUB_STEP_SUMMARY"
 
   release:
@@ -101,6 +114,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: lsl-lsp-cli
+          path: release-assets
+
+      - name: Download simulator artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lsl-lsp-simulator
           path: release-assets
 
       - name: Build release notes from changelog
@@ -142,4 +161,8 @@ jobs:
             release-assets/*.vsix
             release-assets/lsl-lsp.cjs
             release-assets/lsl-lsp.cjs.map
+            release-assets/lsl-simulator.cjs
+            release-assets/lsl-simulator.cjs.map
+            release-assets/lsl-simulator.d.cts
+            release-assets/lsl-simulator.LICENSE.txt
           fail_on_unmatched_files: true
