@@ -110,6 +110,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
     steps:
       - name: Checkout release sources
         uses: actions/checkout@v4
@@ -206,3 +207,10 @@ jobs:
             release-assets/SHA256SUMS
             release-assets/RELEASE_PROVENANCE.json
           fail_on_unmatched_files: true
+      - name: Setup Node.js for Marketplace publishing
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Publish the verified pipeline VSIX to Marketplace
+        run: npm exec --yes --package=@vscode/vsce@4.1.0 -- vsce publish --oidc --packagePath release-assets/*.vsix
