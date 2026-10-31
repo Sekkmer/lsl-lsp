@@ -30,6 +30,18 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Verify release versions and tag
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          const packages = ['core', 'cli', 'server', 'client-vscode', 'simulator'];
+          const version = JSON.parse(fs.readFileSync('packages/client-vscode/package.json')).version;
+          for (const name of packages) assert.equal(JSON.parse(fs.readFileSync(`packages/${name}/package.json`)).version, version, `${name} version mismatch`);
+          if (process.env.GITHUB_REF_TYPE === 'tag') assert.equal(process.env.GITHUB_REF_NAME, `v${version}`, 'Tag must match package versions');
+          assert.ok(fs.readFileSync('packages/client-vscode/CHANGELOG.md', 'utf8').includes(`## ${version}\n`));
+          NODE
+
       - name: Lint (all packages)
         run: pnpm -r lint
 
@@ -122,6 +134,32 @@ jobs:
           name: lsl-lsp-simulator
           path: release-assets
 
+      - name: Verify pipeline VSIX and record provenance
+        env:
+          RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_RUN_ID: ${{ github.run_id }}
+          RELEASE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib, json, os, pathlib, subprocess, zipfile
+          assets = pathlib.Path('release-assets')
+          files = list(assets.glob('*.vsix'))
+          assert len(files) == 1
+          with zipfile.ZipFile(files[0]) as z:
+              package = json.loads(z.read('extension/package.json'))
+          assert package['publisher'] == 'Sekkmer'
+          assert package['name'] == 'vscode-lsl-lsp'
+          assert os.environ['RELEASE_TAG'] == 'v' + package['version']
+          record = {k: os.environ[k] for k in ['RELEASE_REPOSITORY', 'RELEASE_RUN_ID', 'RELEASE_RUN_ATTEMPT', 'RELEASE_TAG']}
+          record['commit'] = subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode().strip()
+          record['vsixArtifact'] = 'vscode-lsl-lsp-vsix'
+          record['vsixSha256'] = hashlib.sha256(files[0].read_bytes()).hexdigest()
+          (assets / 'RELEASE_PROVENANCE.json').write_text(json.dumps(record, indent=2) + '\n')
+          sums = [hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name for p in sorted(assets.iterdir()) if p.is_file() and p.name != 'SHA256SUMS']
+          (assets / 'SHA256SUMS').write_text('\n'.join(sums) + '\n')
+          PYCODE
+
       - name: Build release notes from changelog
         id: release_notes
         shell: bash
@@ -165,4 +203,6 @@ jobs:
             release-assets/lsl-simulator.cjs.map
             release-assets/lsl-simulator.d.cts
             release-assets/lsl-simulator.LICENSE.txt
+            release-assets/SHA256SUMS
+            release-assets/RELEASE_PROVENANCE.json
           fail_on_unmatched_files: true

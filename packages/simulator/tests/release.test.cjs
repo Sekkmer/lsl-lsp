@@ -27,6 +27,8 @@ test('standalone release runs a multi-object fixture with no workspace dependenc
 		default { link_message(integer sender, integer number, string text, key id) {
 			if (number == 200) switch (llGetOwner()) {
 				case llGetOwner():
+					llLinksetDataWrite("worker:json", llList2Json(JSON_ARRAY, [1]));
+					llLinksetDataWrite("worker:zero", (string)ZERO_VECTOR);
 					llLinksetDataWrite("worker:received", text);
 					llMessageLinked(LINK_ROOT, 201, "pong", id);
 					break;
@@ -44,6 +46,8 @@ test('standalone release runs a multi-object fixture with no workspace dependenc
 			world.fireEvent(panel.prim(1).script('panel.lsl'), 'touch_start', [intValue(1)]);
 			world.runUntilIdle();
 			assert.equal(attachment.data.get('worker:received'), 'ping');
+			assert.equal(attachment.data.get('worker:json'), '[1]');
+			assert.equal(attachment.data.get('worker:zero'), '<0.00000, 0.00000, 0.00000>');
 			assert.equal(panel.data.get('panel:reply'), 'pong');
 			assert.equal(panel.data.has('worker:received'), false);
 			console.log('standalone request/reply passed');

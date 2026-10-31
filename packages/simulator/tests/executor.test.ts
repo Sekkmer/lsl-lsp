@@ -1,7 +1,25 @@
 import { describe, expect, it } from 'vitest';
+import { parseScriptFromText } from '@lsl-lsp/core';
+import { ScriptExecutor, intValue } from '../src/index.js';
 import { scriptWorld } from './helpers.js';
 
 describe('LSL execution semantics', () => {
+	it('retains decoded and compound runtime constants when supplied a partial definition map', () => {
+		const executor = new ScriptExecutor(parseScriptFromText(`
+			string sentinel = JSON_ARRAY;
+			vector position = ZERO_VECTOR;
+			rotation orientation = ZERO_ROTATION;
+			integer override = TRUE;
+			default { state_entry() {} }
+		`, 'constants.lsl'), { callBuiltin() { throw new Error('unexpected builtin'); } }, {
+			constants: new Map([['TRUE', intValue(7)]]),
+		});
+		expect(executor.getGlobal('sentinel')).toMatchObject({ value: '\uFDD2' });
+		expect(executor.getGlobal('position')).toMatchObject({ value: [0, 0, 0] });
+		expect(executor.getGlobal('orientation')).toMatchObject({ value: [0, 0, 0, 1] });
+		expect(executor.getGlobal('override')).toMatchObject({ value: 7 });
+	});
+
 	it('evaluates binary operands right to left and arguments/list elements left to right', () => {
 		const { world, script } = scriptWorld(`
 			string calls;

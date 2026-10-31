@@ -203,7 +203,12 @@ export class ScriptExecutor {
 		options: ExecuteOptions = {},
 	) {
 		this.maxInstructions = options.maxInstructions ?? DEFAULT_MAX_INSTRUCTIONS;
-		this.constants = options.constants ?? CONSTANTS;
+		// Definition-derived maps omit escaped sentinels and compound constants
+		// because they are unsafe to fold as source literals. Keep the runtime's
+		// decoded values for those entries while allowing explicit overrides.
+		this.constants = options.constants
+			? new Map([...CONSTANTS, ...options.constants])
+			: CONSTANTS;
 		this.initializeGlobals();
 	}
 

@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## 0.1.23
 
+- Fixed standalone simulator initialization to retain decoded JSON sentinels and compound runtime constants when applying partial definition maps, while preserving explicit overrides.
+
 - Fixed `optimize --check` to compare the same newline-normalized output used by printing and `--write`, avoiding repeated change reports caused only by a trailing newline.
 - Improved helper inlining with multiple call sites, collision-free names, and memory/call-depth comparisons. Preserved parameter copies, numeric conversions, lexical scope, snapshots, and LSL evaluation order.
 - Fixed unsafe optimizer rewrites involving overflowing integer arithmetic, list construction and append grouping, shadowed variables, and computations that can fail or never return. Added boundary-value differential tests and fresh Second Life probes.
