@@ -614,7 +614,8 @@ async function readAndPreprocessFile(file: string, opts: CliOptions) {
 	const doc = TextDocument.create(filePathToUri(filePath), 'lsl', 1, text);
 	const full = preprocessForAst(text, {
 		includePaths: [...opts.includePaths],
-		fromPath: filePath,
+		// Match the URI-derived paths used by parsing and diagnostics (notably Windows drive casing).
+		fromPath: fileUriToPath(doc.uri) ?? filePath,
 		defines: { ...opts.defines },
 		dynamicMacros: opts.dynamicMacros,
 		extensions: opts.extensions,

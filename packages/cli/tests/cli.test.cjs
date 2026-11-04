@@ -11,7 +11,8 @@ async function fixture(t, source) {
 	t.after(() => fs.rm(dir, { recursive: true, force: true }));
 	const file = path.join(dir, 'script.lsl');
 	await fs.writeFile(file, source);
-	return file;
+	// Exercise the drive casing returned by Windows path.resolve(), even when TEMP uses a lowercase drive.
+	return file.replace(/^[a-z]:/i, drive => drive.toUpperCase());
 }
 
 function run(...args) {
@@ -44,4 +45,47 @@ test('repeated --disable options accumulate diagnostic codes', async t => {
 	const result = run('check', '--json', '--disable', 'unused-var', '--disable', 'empty-event-body', file);
 	assert.equal(result.status, 0, result.stdout + result.stderr);
 	assert.deepEqual(JSON.parse(result.stdout)[0].diagnostics, []);
+});
+
+test('check accepts a transition to a declared named state', async t => {
+	const file = await fixture(t, 'default { state_entry() { state ready; } } state ready { state_entry() { llOwnerSay("ready"); } }');
+	const result = run('check', '--json', file);
+	assert.equal(result.status, 0, result.stdout + result.stderr);
+	assert.deepEqual(JSON.parse(result.stdout)[0].diagnostics, []);
+});
+
+test('check resolves includes relative to the root file', async t => {
+	const file = await fixture(t, '#include "constants.lslh"\ndefault { state_entry() { llOwnerSay((string)sharedValue); } }');
+	await fs.writeFile(path.join(path.dirname(file), 'constants.lslh'), 'integer sharedValue = 1;');
+	const result = run('check', '--json', file);
+	assert.equal(result.status, 0, result.stdout + result.stderr);
+	assert.deepEqual(JSON.parse(result.stdout)[0].diagnostics, []);
+});
+
+test('check analyzes references inside root event bodies', async t => {
+	const file = await fixture(t, 'default { state_entry() { missingFunction(); } }');
+	const result = run('check', '--json', file);
+	assert.equal(result.status, 1, result.stdout + result.stderr);
+	assert.ok(JSON.parse(result.stdout)[0].diagnostics.some(d => /missingFunction/.test(d.message)));
+});
+
+test('check retains parser diagnostics for duplicate named states', async t => {
+	const file = await fixture(t, 'default { state_entry() {} } state ready { state_entry() {} } state ready { state_entry() {} }');
+	const result = run('check', '--json', file);
+	assert.equal(result.status, 1, result.stdout + result.stderr);
+	assert.ok(JSON.parse(result.stdout)[0].diagnostics.some(d => d.code === 'LSL070' && /state ready/.test(d.message)));
+});
+
+test('check retains root preprocessor diagnostics', async t => {
+	const file = await fixture(t, '#endif\ndefault { state_entry() { llOwnerSay("ok"); } }');
+	const result = run('check', '--json', file);
+	assert.equal(result.status, 1, result.stdout + result.stderr);
+	assert.ok(JSON.parse(result.stdout)[0].diagnostics.some(d => /Stray #endif/i.test(d.message)));
+});
+
+test('check retains root syntax errors', async t => {
+	const file = await fixture(t, 'default { state_entry() { llOwnerSay("broken"; } }');
+	const result = run('check', '--json', file);
+	assert.equal(result.status, 1, result.stdout + result.stderr);
+	assert.ok(JSON.parse(result.stdout)[0].diagnostics.some(d => d.severity === 'error'));
 });
